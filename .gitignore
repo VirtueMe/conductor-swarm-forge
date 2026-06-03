@@ -1,0 +1,7 @@
+.conductor/
+.conductor-test/
+.worktrees/
+CLAUDE.md
+AGENTS.md
+*.pid
+*.log

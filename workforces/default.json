@@ -1,0 +1,11 @@
+{
+  "name": "default",
+  "members": [
+    { "role": "conductor",  "agent": "claude", "adapter": "claude-code" },
+    { "role": "architect",  "agent": "claude", "adapter": "claude-code" },
+    { "role": "coder",      "agent": "claude", "adapter": "claude-code" },
+    { "role": "validator",  "agent": "claude", "adapter": "claude-code" },
+    { "role": "reviewer",   "agent": "claude", "adapter": "claude-code" },
+    { "role": "merger",     "agent": "claude", "adapter": "claude-code" }
+  ]
+}
