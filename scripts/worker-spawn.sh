@@ -148,7 +148,10 @@ TASK_BODY=$(yaml_body "$TASK_FILE")
 TITLE=$(yaml_field "title" "$TASK_FILE")
 IFS=$'\t' read -r WORKTREE_PATH BRANCH < <(integration_prepare_workspace "$TASK_ID" "$WORKER_TYPE" "$TITLE")
 
-# Write assigned artifact and move to in-progress
+# Write assigned artifact, then move the card to the role's working stage.
+# stage_for_role maps the role back to the stage that spawns it: for the coder
+# this is the ready→in-progress transition; for reviewer/merger it matches the
+# column the conductor already routed the card to (so the move is idempotent).
 "$SCRIPTS_DIR/task-signal.sh" \
   --task "$TASK_ID" \
   --type assigned \
@@ -156,7 +159,8 @@ IFS=$'\t' read -r WORKTREE_PATH BRANCH < <(integration_prepare_workspace "$TASK_
   --branch "$BRANCH" \
   --worktree "$WORKTREE_PATH"
 
-"$SCRIPTS_DIR/task-move.sh" "$TASK_ID" in-progress
+WORK_STAGE=$(stage_for_role "$WORKER_TYPE")
+"$SCRIPTS_DIR/task-move.sh" "$TASK_ID" "$WORK_STAGE"
 
 # Write briefing and launch via adapter
 adapter_write_briefing \
