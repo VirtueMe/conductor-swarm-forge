@@ -70,11 +70,14 @@ brief.md ──▶ architect ──▶ tasks (with dependencies)
   configured) and review before it's eligible to merge. Rejections and failures
   route back to the coder automatically.
 
-Each role is defined by three things: a **prompt** (`prompts/*.prompt`, the
-agent's system prompt), a set of **skills** (`skills/<role>/*.md`, step-by-step
-instructions per event), and an **adapter** (`adapters/*.sh`, how the agent is
-spawned and briefed). Swap the adapter to run a different agent backend — a
-`claude-code` and a `codex` adapter ship by default.
+Roles come in two shapes. The **conductor** and **architect** are long-lived
+orchestrating roles, each launched from a **prompt** (`prompts/*.prompt`, a
+persona/system prompt) at startup. The **workers** — coder, validator, reviewer,
+merger — are task-scoped: each spawn is driven by a **skill**
+(`skills/<role>/<event>.md`, step-by-step instructions for that specific event),
+not a prompt. Every role is launched through an **adapter** (`adapters/*.sh`,
+which writes the briefing and opens the tmux window); swap the adapter to run a
+different agent backend — a `claude-code` and a `codex` adapter ship by default.
 
 ---
 
@@ -97,27 +100,35 @@ anything missing.
 
 ---
 
-## ⚠️ The conductor self-repairs
+## ⚠️ The conductor invents missing skills
 
 The conductor is built to keep the development cycle moving rather than halt on
-problems. **As it currently works, if a skill or prompt is referenced but missing
-during a session, the conductor will create the missing piece itself and carry
-on** — instead of stopping and asking you.
+problems. Workers are spawned from **skill** files
+(`skills/<role>/<event>.md` — e.g. `validator/validate`, `coder/on-rejection`),
+which `worker-spawn.sh` reads when it dispatches a task.
+
+**As it currently works, if a worker needs a skill that doesn't exist, the
+conductor will write that skill itself and carry on** — instead of stopping and
+asking you. It self-repairs the gap.
 
 That makes the swarm resilient, but it also means it can **invent behavior you
 never defined**:
 
-- Generated skills/prompts are written from the conductor's own judgement, not
-  your spec — they may not match your intent.
-- Self-created pieces can quietly change how downstream roles (coder, reviewer,
-  merger, …) behave.
-- The new files land in the project's `.conductor/skills/` and
-  `.conductor/prompts/` copies, so they persist for the rest of the run.
+- The generated skill is written from the conductor's own judgement, not your
+  spec — it may not match what you intended that role to do.
+- A self-authored skill can quietly change how a role (coder, validator,
+  reviewer, merger) behaves for the rest of the run.
+- The new file lands in the project's `.conductor/skills/` copy, so it persists
+  for the remainder of the session.
 
-**Recommendation:** keep `skills/` and `prompts/` complete before you start, and
-**review anything the conductor adds to `.conductor/` during a run** before
-trusting its output. If you want strict behavior, treat any conductor-authored
-skill/prompt as a signal that something was missing — not as an approved change.
+**Recommendation:** keep `skills/` complete before you start, and **review any
+skill the conductor adds to `.conductor/skills/` during a run** before trusting
+its output. Treat a conductor-authored skill as a signal that something was
+missing from your definition — not as an approved change.
+
+> Note: this applies to **skills**, which are the per-task worker instructions.
+> Prompts (`prompts/`) are only loaded for the conductor and architect, so a
+> missing worker prompt is never referenced and never triggers this behavior.
 
 ---
 
@@ -220,7 +231,7 @@ mobile app, without being at the host machine.
 ```text
 conductor-swarm-forge/
 ├── scripts/         Core orchestration (swarm-start, task-*, watch-dir, …)
-├── prompts/         System prompts: conductor, architect, coder, reviewer, merger
+├── prompts/         System prompts for the orchestrating roles: conductor, architect
 ├── skills/          Per-role, per-event step-by-step instructions (markdown)
 │   ├── conductor/   Event handlers: on-signal-complete, on-review-rejected, …
 │   ├── architect/   on-brief, on-drift, on-blocked
