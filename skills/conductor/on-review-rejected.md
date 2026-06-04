@@ -16,20 +16,25 @@ Triggered when a `review-*.md` artifact with `outcome: rejected` appears in `wor
 
 2. Read the review artifact body — it contains specific findings the coder must address.
 
-2. Move the task back to in-progress:
+3. **Ask the topology where this task goes.** This event takes no guards — the
+   destination is unconditional — but resolve it through `route` rather than
+   hardcoding the column:
    ```bash
-   task-move.sh $TASK_ID in-progress
+   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" review-rejected)
+   task-move.sh $TASK_ID "$DEST"
    ```
 
-3. Write a conductor note summarising the rejection so the next coder has immediate context:
+4. Write a conductor note summarising the rejection so the next coder has immediate context:
    ```bash
    task-signal.sh --task $TASK_ID --type progress \
      --notes "conductor: review rejected — <paste the key findings here>"
    ```
 
-4. Spawn a new coder. The coder's CLAUDE.md will include the full work history, including the review artifact, so it can read exactly what needs to change:
+5. **Spawn the worker bound to the destination stage.** The destination is the
+   coding loopback, so spawn a coder; its CLAUDE.md will include the full work
+   history, including the review artifact, so it can read exactly what needs to change:
    ```bash
    worker-spawn.sh $TASK_ID coder
    ```
 
-5. Run `task-list.sh` to confirm.
+6. Run `task-list.sh` to confirm.

@@ -11,22 +11,25 @@ Triggered when a new file appears in `tasks/`.
 
 1. Read `$TASK_FILE` and extract the `depends-on` field.
 
-2. **If `depends-on` is empty or `[]`** — no dependencies, task is immediately ready:
+2. **Determine the `deps` guard** — the only input this event's routing needs:
+   - If `depends-on` is empty or `[]`, or every listed ID has a card in
+     `kanban/done/`, then dependencies are satisfied → `deps=all-done`.
+   - If any listed ID is not yet in `kanban/done/`, dependencies are pending →
+     `deps=pending`.
+
+3. **Ask the topology where this task goes.** Do not hardcode the column — call
+   `route` with the event and the `deps` guard:
    ```bash
-   task-move.sh $TASK_ID ready
+   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" new-task deps=<all-done|pending>)
+   task-move.sh $TASK_ID "$DEST"
+   ```
+
+4. **Spawn the worker bound to the destination stage.** A task landing on `ready`
+   gets a coder; a task parked on `backlog` is a holding column with no worker —
+   it will be unblocked by `on-merge-success.md` when its dependencies complete:
+   ```bash
+   # if $DEST is ready:
    worker-spawn.sh $TASK_ID coder
    ```
 
-3. **If `depends-on` has entries** — check each listed ID:
-   - If every ID has a card in `kanban/done/`:
-     ```bash
-     task-move.sh $TASK_ID ready
-     worker-spawn.sh $TASK_ID coder
-     ```
-   - If any ID is not yet in `done/`:
-     ```bash
-     task-move.sh $TASK_ID backlog
-     ```
-     The task will be unblocked by `on-merge-success.md` when its dependencies complete.
-
-4. Run `task-list.sh` to confirm placement.
+5. Run `task-list.sh` to confirm placement.

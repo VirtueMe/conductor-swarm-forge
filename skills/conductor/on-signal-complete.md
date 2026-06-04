@@ -13,38 +13,34 @@ Triggered when a `signal-*.md` artifact with `outcome: complete` appears in `wor
    tmux kill-window -t "swarm:coder-$TASK_ID" 2>/dev/null || true
    ```
 
-2. Read the task's kanban card to get its `type` field.
+2. **Gather the routing guards** the topology may consult for this event:
+   - `type=<...>` — read the `type` field from the task's kanban card.
+   - `config.test-cmd=<value-or-empty>` — read `test-cmd` from
+     `.conductor/config.md`. Pass the value through; an empty/unset `test-cmd`
+     means "not configured".
+   - `locks=<free|held>` — only needed if routing lands on a merge. Run
+     `task-locks.sh` for the active merge lock set and compare against the card's
+     `files-changed`: any overlap → `held`, otherwise `free`. (You may compute
+     this up front, or re-call `route` once the merge macro is reached — see
+     `on-review-approved.md` for the lock check.)
 
-2. Check if a test command is configured:
+3. **Ask the topology where this task goes.** Do not hardcode the design /
+   test-cmd / type branching — call `route` with the event and guards:
    ```bash
-   # Read test-cmd from .conductor/config.md
+   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
+     signal-complete type=<type> config.test-cmd=<value-or-empty> locks=<free|held>)
+   task-move.sh $TASK_ID "$DEST"
    ```
-   If `test-cmd` is set and non-empty → route through validation.
-   If not set → skip validation.
+   The topology decides: a `design` task short-circuits to `done`; a configured
+   `test-cmd` routes to `validation` before any type check; `chore`/`spike` go to
+   merge (`merging` or `merge-pending` depending on `locks`); everything else
+   goes to `review`.
 
-3. **With test-cmd configured:**
-   ```bash
-   task-move.sh $TASK_ID validation
-   worker-spawn.sh $TASK_ID validator
-   ```
-   The validator will signal `passed` or `failed`, and the conductor handles each via the matching skill.
-
-4. **Without test-cmd — route by type:**
-
-   **`design`** — no coder or validator needed; the architect wrote the content directly. Move to done:
-   ```bash
-   task-move.sh $TASK_ID done
-   ```
-
-   **`chore` or `spike`** — skip review, go straight to merge:
-   - Run the file lock check (see `on-review-approved.md`)
-   - Either `task-move.sh $TASK_ID merging` → `worker-spawn.sh $TASK_ID merger`
-   - Or `task-move.sh $TASK_ID merge-pending` if files are locked
-
-   **`feature`, `test`, or anything else** — send to review:
-   ```bash
-   task-move.sh $TASK_ID review
-   worker-spawn.sh $TASK_ID reviewer
-   ```
+4. **Spawn the worker bound to the destination stage** (no worker for the
+   holding columns `done` / `merge-pending`):
+   - `validation` → `worker-spawn.sh $TASK_ID validator`
+   - `review` → `worker-spawn.sh $TASK_ID reviewer`
+   - `merging` → `worker-spawn.sh $TASK_ID merger`
+   - `done` / `merge-pending` → no worker
 
 5. Run `task-list.sh` to confirm.
