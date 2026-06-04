@@ -8,9 +8,10 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
 
 ## Steps
 
-1. Close the merger's tmux window:
+1. Close the finishing worker's tmux window (named `<role>-<id>` — find it by task id):
    ```bash
-   tmux kill-window -t "swarm:merger-$TASK_ID" 2>/dev/null || true
+   WIN=$(tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null | grep -E -- "-$TASK_ID\$" | head -1)
+   [[ -n "$WIN" ]] && tmux kill-window -t "swarm:$WIN" 2>/dev/null || true
    ```
 
 2. **Ask the topology where this task goes, then close it.** This event takes no
@@ -29,10 +30,12 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
    `kanban/backlog/` whose `depends-on` includes `$TASK_ID`:
    - For each candidate, read its `depends-on` list
    - Check whether every listed ID now has a card in `kanban/done/`
-   - If all dependencies are satisfied:
+   - If all dependencies are satisfied, move it to `ready` and spawn the entry
+     worker (the role of the first working stage):
      ```bash
      task-move.sh <dependent-id> ready
-     worker-spawn.sh <dependent-id> coder
+     ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
+     worker-spawn.sh <dependent-id> "$ROLE"
      ```
 
 4. **Release merge-pending tasks** (`then: release-merge-pending`) — for each card

@@ -15,7 +15,7 @@ Triggered when a `drift-*.md` artifact appears in `work/<id>/`.
    judgement call — read the artifact and decide:
    - **Task invalidation** — the drift reveals the original task no longer makes
      sense (`assess=invalidation`).
-   - **Scope expansion** — the coder is doing significantly more than the task
+   - **Scope expansion** — the worker is doing significantly more than the task
      asked (`assess=scope`).
    - **Minor drift** — a small, justified deviation within the spirit of the task
      (e.g. `assess=minor`). Anything other than `invalidation`/`scope` stays put.
@@ -36,7 +36,7 @@ Triggered when a `drift-*.md` artifact appears in `work/<id>/`.
      task-move.sh $TASK_ID "$DEST"
      ```
    - **`@escalate`** (scope expansion) — do not move the card; escalate to the
-     architect by writing the inbox file, then write a note to the coder to pause
+     architect by writing the inbox file, then write a note to the worker to pause
      the extra work until the architect responds:
      ```bash
      mkdir -p "$CONDUCTOR_DIR/architect-inbox"
@@ -48,7 +48,7 @@ Triggered when a `drift-*.md` artifact appears in `work/<id>/`.
      $(cat $ARTIFACT)
      EOF
      ```
-   - **`@stay`** (minor drift) — no column change; write a note and let the coder
+   - **`@stay`** (minor drift) — no column change; write a note and let the worker
      continue:
      ```bash
      task-signal.sh --task $TASK_ID --type progress \
