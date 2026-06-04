@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 
 ID="${1:?Usage: task-replay.sh <task-id>}"
@@ -11,6 +12,13 @@ KANBAN_DIR="$CONDUCTOR_DIR/kanban"
 
 TASK_FILE="$TASKS_DIR/${ID}.md"
 [[ -f "$TASK_FILE" ]] || { echo "Task $ID not found" >&2; exit 1; }
+
+# Kanban stages for the active topology — used to locate the card's current
+# column and to default a brand-new card to the topology's first stage.
+# shellcheck source=scripts/stages-resolve.sh
+source "$SCRIPTS_DIR/stages-resolve.sh"
+STAGES="$(topology_stages "$CONDUCTOR_DIR")"
+FIRST_STAGE="$(printf '%s\n' "$STAGES" | head -1)"
 
 # Extract a scalar field from YAML frontmatter
 yaml_field() {
@@ -111,7 +119,7 @@ fi
 # Find current kanban location
 CURRENT_COLUMN=""
 CURRENT_CARD=""
-for col in backlog ready in-progress validation review merge-pending merging done; do
+for col in $STAGES; do
   if [[ -f "$KANBAN_DIR/$col/${ID}.md" ]]; then
     CURRENT_COLUMN="$col"
     CURRENT_CARD="$KANBAN_DIR/$col/${ID}.md"
@@ -120,9 +128,9 @@ for col in backlog ready in-progress validation review merge-pending merging don
 done
 
 if [[ -z "$CURRENT_COLUMN" ]]; then
-  CURRENT_COLUMN="backlog"
-  mkdir -p "$KANBAN_DIR/backlog"
-  CURRENT_CARD="$KANBAN_DIR/backlog/${ID}.md"
+  CURRENT_COLUMN="$FIRST_STAGE"
+  mkdir -p "$KANBAN_DIR/$FIRST_STAGE"
+  CURRENT_CARD="$KANBAN_DIR/$FIRST_STAGE/${ID}.md"
 fi
 
 # Build files-changed YAML block
@@ -134,7 +142,9 @@ if [[ ${#FILES_CHANGED[@]} -gt 0 ]]; then
   done
 fi
 
-# Clear worker info when task is done — no active worker
+# Clear worker info when task is done — no active worker.
+# NOTE: the terminal stage is still the literal "done" by convention (every
+# pack ends there); deferred until the topology declares a `terminal` field.
 if [[ "$CURRENT_COLUMN" == "done" ]]; then
   WORKER_TYPE=""
   BRANCH=""

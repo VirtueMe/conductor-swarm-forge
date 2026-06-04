@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 
 ID="${1:?Usage: task-move.sh <task-id> <column>}"
@@ -9,8 +10,11 @@ COLUMN="${2:?Usage: task-move.sh <task-id> <column>}"
 KANBAN_DIR="$CONDUCTOR_DIR/kanban"
 WORK_DIR="$CONDUCTOR_DIR/work/$ID"
 
-VALID_COLUMNS="backlog ready in-progress validation review merge-pending merging done"
-[[ " $VALID_COLUMNS " =~ " $COLUMN " ]] || { echo "Invalid column: $COLUMN. Valid: $VALID_COLUMNS" >&2; exit 1; }
+# Valid columns are the active topology's stages, not a hardcoded list.
+# shellcheck source=scripts/stages-resolve.sh
+source "$SCRIPTS_DIR/stages-resolve.sh"
+VALID_COLUMNS="$(topology_stages "$CONDUCTOR_DIR" | tr '\n' ' ')"
+[[ " $VALID_COLUMNS " == *" $COLUMN "* ]] || { echo "Invalid column: $COLUMN. Valid: $VALID_COLUMNS" >&2; exit 1; }
 
 mkdir -p "$KANBAN_DIR/$COLUMN" "$WORK_DIR"
 
@@ -35,4 +39,4 @@ for col in $VALID_COLUMNS; do
 done
 
 # Regenerate card content in new location
-"$(dirname "$0")/task-replay.sh" "$ID"
+"$SCRIPTS_DIR/task-replay.sh" "$ID"
