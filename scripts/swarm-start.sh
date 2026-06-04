@@ -102,15 +102,12 @@ fi
 mkdir -p \
   "$CONDUCTOR_DIR/tasks" \
   "$CONDUCTOR_DIR/work" \
-  "$CONDUCTOR_DIR/architect-inbox" \
-  "$CONDUCTOR_DIR/kanban/backlog" \
-  "$CONDUCTOR_DIR/kanban/ready" \
-  "$CONDUCTOR_DIR/kanban/in-progress" \
-  "$CONDUCTOR_DIR/kanban/validation" \
-  "$CONDUCTOR_DIR/kanban/review" \
-  "$CONDUCTOR_DIR/kanban/merge-pending" \
-  "$CONDUCTOR_DIR/kanban/merging" \
-  "$CONDUCTOR_DIR/kanban/done"
+  "$CONDUCTOR_DIR/architect-inbox"
+
+# Kanban columns come from the topology's stage list (one stage per line)
+while IFS= read -r stage; do
+  [[ -n "$stage" ]] && mkdir -p "$CONDUCTOR_DIR/kanban/$stage"
+done < <("$SCRIPTS_DIR/topology-load.sh" stages "$TOPOLOGY_FILE")
 
 # Copy skills, prompts, and the active topology into the project so agents
 # never read outside it
