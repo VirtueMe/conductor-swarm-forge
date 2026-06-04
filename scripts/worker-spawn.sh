@@ -23,8 +23,11 @@ SESSION="swarm"
 TASK_ID="${1:?Usage: worker-spawn.sh <task-id> <worker-type>}"
 WORKER_TYPE="${2:?Usage: worker-spawn.sh <task-id> <worker-type>}"
 
-VALID_TYPES="coder validator reviewer merger"
-[[ " $VALID_TYPES " =~ " $WORKER_TYPE " ]] || {
+TOPOLOGY_JSON="$CONDUCTOR_DIR/topology.json"
+
+# Valid worker types are the working-stage roles declared in the active topology.
+VALID_TYPES="$("$SCRIPTS_DIR/topology-load.sh" roles "$TOPOLOGY_JSON" | tr '\n' ' ')"
+[[ " $VALID_TYPES " == *" $WORKER_TYPE "* ]] || {
   echo "Invalid worker type: $WORKER_TYPE. Valid: $VALID_TYPES" >&2; exit 1
 }
 
@@ -51,36 +54,57 @@ sys.stderr.write(f"No adapter found for role: {sys.argv[2]}\n"); sys.exit(1)
 EOF
 }
 
-# Select the appropriate skill file based on work history
+# Map a worker-type (role) to its working stage from the topology. worker-spawn
+# is invoked with a ROLE, but the topology's skill accessor is keyed by STAGE, so
+# we find the working stage whose role equals the worker-type. Kept local (rather
+# than added to topology-load.sh) — it's the caller's role→stage concern.
+stage_for_role() {
+  local role="$1"
+  python3 - "$TOPOLOGY_JSON" "$role" << 'EOF'
+import json, sys
+t = json.load(open(sys.argv[1]))
+for stage, spec in t["working_stages"].items():
+    if spec.get("role") == sys.argv[2]:
+        print(stage); sys.exit(0)
+sys.stderr.write(f"No working stage for role: {sys.argv[2]}\n"); sys.exit(1)
+EOF
+}
+
+# Select the appropriate skill file based on work history.
+# Reading history (which artifact is most recent + its outcome) is the caller's
+# job; we distil it into a `last_artifact` token (merge checked before review)
+# and hand it to the topology's skill accessor, which maps token → skill.
 select_skill() {
   local task_id="$1"
   local role="$2"
   local work_dir="$CONDUCTOR_DIR/work/$task_id"
 
-  [[ "$role" == "validator" ]] && echo "validator/validate" && return
-  [[ "$role" == "reviewer"  ]] && echo "reviewer/review"   && return
-  [[ "$role" == "merger"    ]] && echo "merger/merge"      && return
-  [[ "$role" != "coder" ]]    && echo "$role/$role"        && return
+  local stage
+  stage=$(stage_for_role "$role")
 
-  # Most recent merge artifact — conflict?
+  local last_artifact=""
+
+  # Most recent merge artifact — conflict? (checked before review)
   local latest_merge
   latest_merge=$(ls "$work_dir"/merge-*.md 2>/dev/null | sort | tail -1 || true)
   if [[ -n "$latest_merge" ]]; then
-    local outcome
-    outcome=$(yaml_field "outcome" "$latest_merge")
-    [[ "$outcome" == "conflict" ]] && echo "coder/on-conflict" && return
+    [[ "$(yaml_field "outcome" "$latest_merge")" == "conflict" ]] && last_artifact="merge:conflict"
   fi
 
   # Most recent review artifact — rejected?
-  local latest_review
-  latest_review=$(ls "$work_dir"/review-*.md 2>/dev/null | sort | tail -1 || true)
-  if [[ -n "$latest_review" ]]; then
-    local outcome
-    outcome=$(yaml_field "outcome" "$latest_review")
-    [[ "$outcome" == "rejected" ]] && echo "coder/on-rejection" && return
+  if [[ -z "$last_artifact" ]]; then
+    local latest_review
+    latest_review=$(ls "$work_dir"/review-*.md 2>/dev/null | sort | tail -1 || true)
+    if [[ -n "$latest_review" ]]; then
+      [[ "$(yaml_field "outcome" "$latest_review")" == "rejected" ]] && last_artifact="review:rejected"
+    fi
   fi
 
-  echo "coder/fresh-start"
+  if [[ -n "$last_artifact" ]]; then
+    "$SCRIPTS_DIR/topology-load.sh" skill "$TOPOLOGY_JSON" "$stage" "$last_artifact"
+  else
+    "$SCRIPTS_DIR/topology-load.sh" skill "$TOPOLOGY_JSON" "$stage"
+  fi
 }
 
 # --- Main --------------------------------------------------------------------
