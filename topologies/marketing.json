@@ -1,0 +1,42 @@
+{
+  "name": "marketing",
+  "description": "A marketing strategy team — proves the topology is domain-agnostic. A campaign deliverable is drafted, fact-checked, editorially reviewed, then published into a shared doc. No code, no branches, no merge: integration is shared-doc.",
+  "integration": "shared-doc",
+
+  "stages": [
+    "backlog",
+    "ready",
+    "draft",
+    "fact-check",
+    "review",
+    "publish",
+    "done"
+  ],
+
+  "working_stages": {
+    "draft":      { "mode": "auto", "role": "drafter",      "skill": "drafter/draft" },
+    "fact-check": { "mode": "auto", "role": "fact-checker", "skill": "fact-checker/check" },
+    "review":     { "mode": "auto", "role": "editor",       "skill": "editor/review" },
+    "publish":    { "mode": "auto", "role": "publisher",    "skill": "publisher/publish" }
+  },
+
+  "transitions": {
+    "new-task": [
+      { "when": { "deps": "all-done" }, "to": "ready" },
+      { "to": "backlog" }
+    ],
+    "signal-complete":   [ { "_comment": "Each working stage emits a distinct signal channel so the conductor can route forward: draft→signal-complete, fact-check→validation-*, review→review-*, publish→merge-success. The conductor passes type/config/locks guards these rules don't consult — the single fallback rule always matches.",
+                             "to": "fact-check" } ],
+    "validation-passed": [ { "to": "review" } ],
+    "validation-failed": [ { "to": "draft" } ],
+    "review-approved":   [ { "to": "publish" } ],
+    "review-rejected":   [ { "to": "draft" } ],
+    "merge-success":     [ { "_integration": "shared-doc: publish consolidated the deliverable into the shared folder; no locks to release.",
+                             "to": "done", "then": ["unblock-dependents", "check-project-done"] } ],
+    "signal-blocked":    [ { "when": { "assess": "hard-dependency" }, "to": "backlog" },
+                           { "to": "@escalate" } ],
+    "signal-drift":      [ { "when": { "assess": "invalidation" }, "to": "done" },
+                           { "when": { "assess": "scope" }, "to": "@escalate" },
+                           { "to": "@stay" } ]
+  }
+}

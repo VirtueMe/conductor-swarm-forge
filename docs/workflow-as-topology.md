@@ -101,7 +101,10 @@ pack**: roles + workflow stages + transitions + integration model + a skill set.
 3. De-hardcode roles in `worker-spawn.sh` (read `working_stages`; drop `VALID_TYPES`).
 4. Make conductor routing read `transitions` rather than one skill per event.
 5. Abstract the integration model so `git` is one option, not an assumption.
-6. Ship a second domain pack (e.g. marketing) to prove the topology is real.
+6. Ship a second domain pack (e.g. marketing) to prove the topology is real. ✅ Done —
+   `topologies/marketing.json` + `integrations/shared-doc.sh` + `workforces/marketing.json`
+   + a skill set (drafter → fact-checker → editor → publisher), selected with
+   `--topology marketing --workforce marketing`.
 
 ## Lineage
 

@@ -14,7 +14,15 @@ if [[ -z "${CONDUCTOR_DIR:-}" ]]; then
 elif [[ "$CONDUCTOR_DIR" != /* ]]; then
   CONDUCTOR_DIR="$(cd "$CONDUCTOR_DIR" 2>/dev/null && pwd || echo "$CONDUCTOR_DIR")"
 fi
-WORKFORCE="${WORKFORCE:-$ROOT_DIR/workforces/default.json}"
+# Workforce (role → adapter) — resolved like topology.json: read the copy
+# swarm-start placed in the conductor dir (so a non-default pack's roles resolve).
+# Fall back to the shipped default only for a legacy .conductor from before
+# swarm-start copied a workforce in.
+if [[ -f "$CONDUCTOR_DIR/workforce.json" ]]; then
+  WORKFORCE="$CONDUCTOR_DIR/workforce.json"
+else
+  WORKFORCE="$ROOT_DIR/workforces/default.json"
+fi
 ADAPTERS_DIR="$ROOT_DIR/adapters"
 # Skills are copied into the project at swarm-start time so agents read locally
 SKILLS_DIR="$CONDUCTOR_DIR/skills"

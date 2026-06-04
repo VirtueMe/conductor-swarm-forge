@@ -164,10 +164,27 @@ from there. Watch the board fill up at `http://localhost:3000`.
 | `--brief <file>` | `-b` | none | Project brief; architect decomposes it into tasks |
 | `--lang <language>` | `-l` | `typescript` | Target language; drives preflight checks |
 | `--test-cmd <cmd>` | `-tc` | none | Test command. If set, all code routes through validation; if not, it skips straight to review |
+| `--topology <name>` | `-tp` | `software-dev` | Workflow topology (`topologies/<name>.json`): stages, roles, transitions, integration |
+| `--workforce <name>` | `-wf` | `default` | Workforce (`workforces/<name>.json`): which agent/adapter runs each role |
 | `--kanban-server` | `-cbs` | off | Start the Node.js kanban dashboard |
 
 Supported `--lang` values include `typescript`/`javascript`, `python`, `rust`,
 `go`, `ruby`, `clojure`, `elixir`, `java`, and `kotlin`.
+
+### Domain packs
+
+The swarm is a **swarm engine**, not just a dev swarm: the workflow lives in a
+declarative *topology* (see [`docs/workflow-as-topology.md`](docs/workflow-as-topology.md)).
+Two packs ship today:
+
+- **`software-dev`** (default) — coder → validator → reviewer → merger, `git` integration
+  (a branch + worktree per task, merge consolidates).
+- **`marketing`** — drafter → fact-checker → editor → publisher, `shared-doc` integration
+  (one shared deliverable folder per task, publish consolidates; no branches, no locks).
+  Run it with `--topology marketing --workforce marketing`.
+
+The marketing pack changes no engine code — it's proof the stages, roles, routing, and
+integration model are all read from the pack, not hardcoded.
 
 ---
 
@@ -230,17 +247,17 @@ mobile app, without being at the host machine.
 
 ```text
 conductor-swarm-forge/
-├── scripts/         Core orchestration (swarm-start, task-*, watch-dir, …)
+├── scripts/         Core orchestration (swarm-start, task-*, topology-load, watch-dir, …)
+├── topologies/      Declarative workflows: software-dev.json, marketing.json
+├── integrations/    How finished work is consolidated: git.sh, shared-doc.sh
 ├── prompts/         System prompts for the orchestrating roles: conductor, architect
 ├── skills/          Per-role, per-event step-by-step instructions (markdown)
 │   ├── conductor/   Event handlers: on-signal-complete, on-review-rejected, …
 │   ├── architect/   on-brief, on-drift, on-blocked
-│   ├── coder/       fresh-start, on-rejection, on-conflict
-│   ├── reviewer/    review
-│   ├── merger/      merge
-│   └── validator/   validate
+│   ├── coder/ reviewer/ merger/ validator/      software-dev roles
+│   ├── drafter/ fact-checker/ editor/ publisher/ marketing roles
 ├── adapters/        Agent backends: claude-code.sh, codex.sh
-├── workforces/      Role → agent → adapter mapping (default.json)
+├── workforces/      Role → agent → adapter mapping (default.json, marketing.json)
 ├── examples/        Sample briefs (hunt-the-wumpus)
 └── kanban-board.js  Real-time SSE kanban dashboard
 ```
