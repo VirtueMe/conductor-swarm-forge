@@ -292,7 +292,7 @@ that inspired it:
 
 ## License
 
-No license file is currently included in this repository.
+[MIT](LICENSE) © 2026 VirtueMe
 
 ## Author
 
