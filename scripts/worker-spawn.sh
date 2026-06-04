@@ -121,11 +121,13 @@ if [[ -f "$CONFIG_FILE" ]]; then
   TEST_CMD=$(yaml_field "test-cmd" "$CONFIG_FILE")
 fi
 
-# Derive branch name and worktree path
-TITLE=$(yaml_field "title" "$TASK_FILE")
-SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
-BRANCH="feature/${TASK_ID}-${SLUG}"
-WORKTREE_PATH=".worktrees/${WORKER_TYPE}-${TASK_ID}"
+# Load the integration adapter (how work is isolated/consolidated) from the
+# topology's `integration` field — git, shared-doc, none.
+INTEGRATION=$("$SCRIPTS_DIR/topology-load.sh" integration "$TOPOLOGY_JSON")
+INTEGRATION_FILE="$ROOT_DIR/integrations/${INTEGRATION}.sh"
+[[ -f "$INTEGRATION_FILE" ]] || { echo "Integration adapter not found: $INTEGRATION_FILE" >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$INTEGRATION_FILE"
 
 # Load adapter
 ADAPTER_NAME=$(get_adapter "$WORKER_TYPE")
@@ -143,11 +145,10 @@ SKILL_CONTENT=$(cat "$SKILL_FILE")
 # Read task body
 TASK_BODY=$(yaml_body "$TASK_FILE")
 
-# Create git worktree
-if [[ ! -d "$WORKTREE_PATH" ]]; then
-  git worktree add "$WORKTREE_PATH" -b "$BRANCH" 2>/dev/null || \
-  git worktree add "$WORKTREE_PATH" "$BRANCH"
-fi
+# Prepare the workspace via the integration adapter. It prints "<workspace>\t<branch>"
+# (branch empty for branchless integration models).
+TITLE=$(yaml_field "title" "$TASK_FILE")
+IFS=$'\t' read -r WORKTREE_PATH BRANCH < <(integration_prepare_workspace "$TASK_ID" "$WORKER_TYPE" "$TITLE")
 
 # Write assigned artifact and move to in-progress
 "$SCRIPTS_DIR/task-signal.sh" \
