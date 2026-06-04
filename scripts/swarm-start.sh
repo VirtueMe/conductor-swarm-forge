@@ -11,9 +11,10 @@ BRIEF_FILE=""
 TARGET_DIR=""
 LANG="typescript"
 TEST_CMD=""
+TOPOLOGY="software-dev"
 
 usage() {
-  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--kanban-server|-cbs]" >&2
+  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--kanban-server|-cbs]" >&2
   exit 1
 }
 
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
     --brief|-b)           BRIEF_FILE="$2"; shift 2 ;;
     --lang|-l)            LANG="$2"; shift 2 ;;
     --test-cmd|-tc)       TEST_CMD="$2"; shift 2 ;;
+    --topology|-tp)       TOPOLOGY="$2"; shift 2 ;;
     --help|-h)            usage ;;
     -*)                   echo "Unknown flag: $1" >&2; usage ;;
     *)
@@ -37,6 +39,11 @@ done
   ${LANG:+--lang "$LANG"} \
   ${TEST_CMD:+--test-cmd "$TEST_CMD"} \
   ${KANBAN_SERVER:+--kanban-server} || exit 1
+
+# Resolve and validate the topology before doing any work — fail fast.
+TOPOLOGY_FILE="$("$SCRIPTS_DIR/topology-load.sh" resolve "$TOPOLOGY")" || {
+  echo "Unknown topology: $TOPOLOGY (looked in $ROOT_DIR/topologies)" >&2; exit 1; }
+"$SCRIPTS_DIR/topology-load.sh" validate "$TOPOLOGY_FILE" || exit 1
 
 # Resolve target dir — create it if it doesn't exist
 if [[ -n "$TARGET_DIR" ]]; then
@@ -105,9 +112,11 @@ mkdir -p \
   "$CONDUCTOR_DIR/kanban/merging" \
   "$CONDUCTOR_DIR/kanban/done"
 
-# Copy skills and prompts into the project so agents never read outside it
+# Copy skills, prompts, and the active topology into the project so agents
+# never read outside it
 cp -r "$ROOT_DIR/skills"  "$CONDUCTOR_DIR/skills"
 cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
+cp "$TOPOLOGY_FILE" "$CONDUCTOR_DIR/topology.json"
 
 # Write project-level permissions: read/write the project, read/execute the scripts
 mkdir -p ".claude"
@@ -149,8 +158,10 @@ fi
   printf -- '---\n'
   printf 'lang: %s\n'     "${LANG:-}"
   printf 'test-cmd: %s\n' "${TEST_CMD:-}"
+  printf 'topology: %s\n' "$TOPOLOGY"
   printf -- '---\n'
 } > "$CONDUCTOR_DIR/config.md"
+echo "Topology : $TOPOLOGY"
 [[ -n "$LANG" ]]     && echo "Language : $LANG"
 if [[ -n "$TEST_CMD" ]]; then
   echo "Test cmd : $TEST_CMD"
