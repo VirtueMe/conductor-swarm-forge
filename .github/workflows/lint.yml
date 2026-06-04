@@ -1,0 +1,24 @@
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  bash-syntax:
+    name: bash -n syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n all scripts
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            if ! bash -n "$f"; then
+              echo "::error file=$f::bash syntax error"
+              fail=1
+            fi
+          done < <(find scripts -name '*.sh')
+          exit $fail
