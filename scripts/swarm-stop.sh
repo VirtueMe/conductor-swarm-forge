@@ -5,7 +5,6 @@ set -euo pipefail
 # Usage:
 #   scripts/swarm-stop.sh [target-dir]
 
-SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="${1:-$(pwd)}"
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"

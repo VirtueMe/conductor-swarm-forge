@@ -85,17 +85,18 @@ select_skill() {
   local last_artifact=""
 
   # Most recent merge artifact — conflict? (checked before review)
-  local latest_merge
-  latest_merge=$(ls "$work_dir"/merge-*.md 2>/dev/null | sort | tail -1 || true)
-  if [[ -n "$latest_merge" ]]; then
+  # Timestamped filenames sort lexically into chronological order; last = latest.
+  local merge_files=("$work_dir"/merge-*.md)
+  if [[ -e "${merge_files[0]}" ]]; then
+    local latest_merge="${merge_files[-1]}"
     [[ "$(yaml_field "outcome" "$latest_merge")" == "conflict" ]] && last_artifact="merge:conflict"
   fi
 
   # Most recent review artifact — rejected?
   if [[ -z "$last_artifact" ]]; then
-    local latest_review
-    latest_review=$(ls "$work_dir"/review-*.md 2>/dev/null | sort | tail -1 || true)
-    if [[ -n "$latest_review" ]]; then
+    local review_files=("$work_dir"/review-*.md)
+    if [[ -e "${review_files[0]}" ]]; then
+      local latest_review="${review_files[-1]}"
       [[ "$(yaml_field "outcome" "$latest_review")" == "rejected" ]] && last_artifact="review:rejected"
     fi
   fi

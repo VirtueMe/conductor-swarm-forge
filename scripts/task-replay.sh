@@ -54,7 +54,8 @@ HISTORY=""
 # Replay all artifacts in timestamp order
 WORK_PATH="$WORK_DIR/$ID"
 if [[ -d "$WORK_PATH" ]]; then
-  while IFS= read -r artifact; do
+  # Timestamped filenames sort lexically into chronological order.
+  for artifact in "$WORK_PATH"/*.md; do
     [[ -f "$artifact" ]] || continue
 
     ART_TYPE=$(yaml_field "$artifact" "type")
@@ -64,7 +65,6 @@ if [[ -d "$WORK_PATH" ]]; then
     case "$ART_TYPE" in
       card)
         PRIORITY=$(yaml_field "$artifact" "priority")
-        NOTES=$(yaml_field "$artifact" "notes")
         HISTORY+="- $ART_TIMESTAMP  card created — priority: $PRIORITY"$'\n'
         ;;
       assigned)
@@ -113,7 +113,7 @@ if [[ -d "$WORK_PATH" ]]; then
         HISTORY+="- $ART_TIMESTAMP  closed"$'\n'
         ;;
     esac
-  done < <(ls "$WORK_PATH"/*.md 2>/dev/null | sort)
+  done
 fi
 
 # Find current kanban location

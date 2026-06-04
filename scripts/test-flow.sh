@@ -174,7 +174,7 @@ info "$T1 moved to ready"
 step "Design task is self-contained — architect signals it complete directly"
 sig --task "$T1" --type signal --outcome complete \
   --notes "Game model defined. Room, Player, Wumpus structs documented in task."
-mov "$T1" done
+mov "$T1" "done"
 info "$T1 done — unblocks $T2, $T3, $T4"
 
 step "Conductor sees $T1 is done — moves all dependents to ready"
@@ -301,7 +301,7 @@ sig --task "$T3" --type merge --outcome "$RESULT" --files "src/player.clj" \
 if [[ "$RESULT" == "success" ]]; then
   # Fast-forward main so subsequent rebases see this work
   git -C "$REPO_DIR" merge -q --ff-only "feature/$T3-player-state"
-  mov "$T3" done
+  mov "$T3" "done"
   info "$T3 merged cleanly onto main"
 fi
 
@@ -338,7 +338,7 @@ if [[ "$RESULT" == "conflict" ]]; then
     --notes "Retry rebase result: $RESULT"
   if [[ "$RESULT" == "success" ]]; then
     git -C "$REPO_DIR" merge -q --ff-only "feature/$T4-wumpus"
-    mov "$T4" done
+    mov "$T4" "done"
     info "$T4 merged cleanly on retry"
   fi
 fi
@@ -349,7 +349,7 @@ sig --task "$T2" --type merge --outcome "$RESULT" --files "src/rooms.clj" \
   --notes "Rebase result: $RESULT"
 if [[ "$RESULT" == "success" ]]; then
   git -C "$REPO_DIR" merge -q --ff-only "feature/$T2-room-graph"
-  mov "$T2" done
+  mov "$T2" "done"
   info "$T2 merged cleanly"
 fi
 
@@ -382,7 +382,7 @@ sig --task "$T5" --type merge --outcome "$RESULT" --files "src/game.clj" \
   --notes "Rebase result: $RESULT"
 if [[ "$RESULT" == "success" ]]; then
   git -C "$REPO_DIR" merge -q --ff-only "feature/$T5-game-loop"
-  mov "$T5" done
+  mov "$T5" "done"
   info "$T5 merged cleanly — Hunt the Wumpus is built"
 fi
 
