@@ -20,5 +20,16 @@ jobs:
               echo "::error file=$f::bash syntax error"
               fail=1
             fi
-          done < <(find scripts -name '*.sh')
+          done < <(find adapters integrations scripts -name '*.sh')
           exit $fail
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck all scripts
+        run: |
+          find adapters integrations scripts -name '*.sh' -print0 \
+            | xargs -0 -r shellcheck -x
