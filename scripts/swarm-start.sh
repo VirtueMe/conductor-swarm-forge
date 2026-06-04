@@ -45,6 +45,11 @@ TOPOLOGY_FILE="$("$SCRIPTS_DIR/topology-load.sh" resolve "$TOPOLOGY")" || {
   echo "Unknown topology: $TOPOLOGY (looked in $ROOT_DIR/topologies)" >&2; exit 1; }
 "$SCRIPTS_DIR/topology-load.sh" validate "$TOPOLOGY_FILE" || exit 1
 
+# The topology's integration model must have a matching adapter.
+INTEGRATION=$("$SCRIPTS_DIR/topology-load.sh" integration "$TOPOLOGY_FILE")
+[[ -f "$ROOT_DIR/integrations/${INTEGRATION}.sh" ]] || {
+  echo "Integration adapter not found: $ROOT_DIR/integrations/${INTEGRATION}.sh" >&2; exit 1; }
+
 # Resolve target dir — create it if it doesn't exist
 if [[ -n "$TARGET_DIR" ]]; then
   mkdir -p "$TARGET_DIR"

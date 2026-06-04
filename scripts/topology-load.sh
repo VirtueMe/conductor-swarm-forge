@@ -14,6 +14,7 @@
 #   topology-load.sh roles  <name|path>                          # working-stage roles, one per line
 #   topology-load.sh skill  <name|path> <stage> [last_artifact]  # resolve the skill for a working stage
 #   topology-load.sh route  <name|path> <event> [guard=value...] # resolve a transition to its destination stage
+#   topology-load.sh integration <name|path>                     # print the integration model (git|shared-doc|none)
 #
 # A bare <name> resolves to topologies/<name>.json under the tool root; a value
 # containing a slash or ending in .json is treated as a path.
@@ -28,7 +29,7 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 TOPOLOGIES_DIR="$ROOT_DIR/topologies"
 
 usage() {
-  echo "Usage: topology-load.sh {resolve|validate|stages|roles|skill|route} <name|path> [args...]" >&2
+  echo "Usage: topology-load.sh {resolve|validate|stages|roles|skill|route|integration} <name|path> [args...]" >&2
   exit 2
 }
 
@@ -183,7 +184,7 @@ print(f"Topology OK: {t['name']} ({len(stages)} stages, integration={t['integrat
 PY
     ;;
 
-  stages|roles|skill|route)
+  stages|roles|skill|route|integration)
     # Read-only queries over the topology. All four share ONE rule evaluator
     # (when_matches/first_match) — skill-selection rules and transition rules are
     # the same construct (guarded, first-match), so they must not drift.
@@ -248,7 +249,10 @@ def parse_guards(args):
         guards[k] = val
     return guards
 
-if cmd == "stages":
+if cmd == "integration":
+    print(t["integration"])
+
+elif cmd == "stages":
     for s in t["stages"]:
         print(s)
 

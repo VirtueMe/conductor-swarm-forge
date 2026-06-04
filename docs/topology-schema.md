@@ -151,5 +151,27 @@ domain-agnostic. The `git` model's `@merge` splits on file-lock state:
 ```
 
 For `integration: shared-doc` or `none`, `@merge` collapses to a direct
-`{ "to": "done" }` and the `merge-pending` / `merging` stages drop out — handled
-in #5.
+`{ "to": "done" }` and the `merge-pending` / `merging` stages drop out.
+
+## Integration adapters
+
+The `integration` field selects an **integration adapter** — a sourced-bash file
+`integrations/<integration>.sh`, mirroring the agent adapters in `adapters/*.sh`.
+The adapter owns the parts of the integration model that live in bash (the rest —
+which skills run, how `@merge`/transitions route — is already declared in the
+topology itself). Contract:
+
+Both functions return through **stdout** (one output convention for the contract):
+
+- `integration_prepare_workspace <task_id> <worker_type> <title>` — ensure the
+  task's workspace exists; print `<workspace>\t<branch>` (branch empty for
+  branchless models). Called by `worker-spawn.sh`.
+- `integration_locks` — print the resource ids currently locked by in-flight
+  consolidations, one per line (empty ⇒ `@merge` stays `free`). Called by
+  `task-locks.sh`.
+
+`integrations/git.sh` ships today: worktree + `feature/…` branch per task, file
+locks derived from the `merging` cards. `swarm-start` fails fast if a topology
+names an integration with no matching adapter. `shared-doc` and `none` adapters
+are future work — e.g. a `shared-doc` adapter would place deliverables in a shared
+folder and define its own (or no) locking.
