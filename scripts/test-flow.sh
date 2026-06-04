@@ -97,6 +97,7 @@ fi
 cleanup() {
   [[ -n "$KANBAN_PID" ]] && kill "$KANBAN_PID" 2>/dev/null && echo "Kanban server stopped"
   [[ -z "${TARGET_DIR:-}" ]] && [[ -n "${REPO_DIR:-}" ]] && rm -rf "$REPO_DIR"
+  return 0
 }
 trap cleanup EXIT
 
