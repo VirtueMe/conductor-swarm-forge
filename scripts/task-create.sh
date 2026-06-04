@@ -31,8 +31,14 @@ WORK_DIR="$CONDUCTOR_DIR/work"
 
 mkdir -p "$TASKS_DIR" "$WORK_DIR"
 
-# Auto-increment ID with zero padding
-LAST_ID=$(ls "$TASKS_DIR" 2>/dev/null | grep -E "^[0-9]+\.md$" | sed 's/\.md$//' | sort -n | tail -1 || true)
+# Auto-increment ID with zero padding — highest numeric task file wins
+LAST_ID=0
+for f in "$TASKS_DIR"/[0-9]*.md; do
+  [[ -f "$f" ]] || continue
+  name=${f##*/}; name=${name%.md}
+  [[ "$name" =~ ^[0-9]+$ ]] || continue
+  (( 10#$name > 10#$LAST_ID )) && LAST_ID=$name
+done
 NEXT_NUM=$(( 10#${LAST_ID:-0} + 1 ))
 ID=$(printf "%0${CONDUCTOR_ID_PADDING}d" "$NEXT_NUM")
 
