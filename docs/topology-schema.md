@@ -106,6 +106,14 @@ Worker/system signals: `new-task`, `signal-complete`, `validation-passed`,
 `merge-conflict`, `signal-blocked`, `signal-drift`. Human signals (manual
 stages): `human:<decision>`.
 
+This event set is **fixed** (the conductor maps each artifact `type`+`outcome` to
+one of these). A non-software pack reuses them as generic stage-completion
+channels rather than inventing its own — e.g. `marketing.json` maps its drafter to
+`signal-complete`, its fact-checker to `validation-passed`/`failed`, its editor to
+`review-approved`/`rejected`, and its publisher to `merge-success`. So
+`merge-success` in a `shared-doc` pack means "the publish stage finished," not a git
+merge. A pack omits the events it doesn't use (marketing has no `merge-conflict`).
+
 ### Guard vocabulary (`when`)
 
 | Guard | Matches when | Decided by |
@@ -170,8 +178,11 @@ Both functions return through **stdout** (one output convention for the contract
   consolidations, one per line (empty ⇒ `@merge` stays `free`). Called by
   `task-locks.sh`.
 
-`integrations/git.sh` ships today: worktree + `feature/…` branch per task, file
-locks derived from the `merging` cards. `swarm-start` fails fast if a topology
-names an integration with no matching adapter. `shared-doc` and `none` adapters
-are future work — e.g. a `shared-doc` adapter would place deliverables in a shared
-folder and define its own (or no) locking.
+Two adapters ship today. `integrations/git.sh`: worktree + `feature/…` branch per
+task, file locks derived from the `merging` cards. `integrations/shared-doc.sh`:
+a branchless model — each task's deliverable lives in one shared `deliverables/<id>`
+folder that every stage-worker contributes to, the `publish` stage consolidates it
+in place of a merge, and nothing is ever locked (`integration_locks` prints nothing).
+The marketing pack (`topologies/marketing.json`) uses it. `swarm-start` fails fast
+if a topology names an integration with no matching adapter; a `none` adapter (fully
+independent work, no consolidation step) is still future work.

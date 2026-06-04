@@ -12,9 +12,10 @@ TARGET_DIR=""
 LANG="typescript"
 TEST_CMD=""
 TOPOLOGY="software-dev"
+WORKFORCE_NAME="default"
 
 usage() {
-  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--kanban-server|-cbs]" >&2
+  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--workforce|-wf <name>] [--kanban-server|-cbs]" >&2
   exit 1
 }
 
@@ -26,6 +27,7 @@ while [[ $# -gt 0 ]]; do
     --lang|-l)            LANG="$2"; shift 2 ;;
     --test-cmd|-tc)       TEST_CMD="$2"; shift 2 ;;
     --topology|-tp)       TOPOLOGY="$2"; shift 2 ;;
+    --workforce|-wf)      WORKFORCE_NAME="$2"; shift 2 ;;
     --help|-h)            usage ;;
     -*)                   echo "Unknown flag: $1" >&2; usage ;;
     *)
@@ -50,6 +52,12 @@ TOPOLOGY_FILE="$("$SCRIPTS_DIR/topology-load.sh" resolve "$TOPOLOGY")" || {
 source "$SCRIPTS_DIR/integration-resolve.sh"
 integration_file "$TOPOLOGY_FILE" >/dev/null || exit 1
 
+# Resolve the workforce (role → agent adapter) — fail fast if missing. A topology
+# declares the roles; the workforce says who runs them, so a non-default pack
+# (e.g. marketing) selects its own with --workforce.
+WORKFORCE="${ROOT_DIR}/workforces/${WORKFORCE_NAME}.json"
+[[ -f "$WORKFORCE" ]] || { echo "Unknown workforce: $WORKFORCE_NAME (looked in $ROOT_DIR/workforces)" >&2; exit 1; }
+
 # Resolve target dir — create it if it doesn't exist
 if [[ -n "$TARGET_DIR" ]]; then
   mkdir -p "$TARGET_DIR"
@@ -68,7 +76,7 @@ fi
 cd "$TARGET_DIR"
 
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
-WORKFORCE="${ROOT_DIR}/workforces/default.json"
+# WORKFORCE was resolved and existence-checked above (from --workforce).
 
 echo "Target : $TARGET_DIR"
 echo "Tool   : $ROOT_DIR"
@@ -114,11 +122,13 @@ while IFS= read -r stage; do
   [[ -n "$stage" ]] && mkdir -p "$CONDUCTOR_DIR/kanban/$stage"
 done < <("$SCRIPTS_DIR/topology-load.sh" stages "$TOPOLOGY_FILE")
 
-# Copy skills, prompts, and the active topology into the project so agents
-# never read outside it
+# Copy skills, prompts, and the active topology + workforce into the project so
+# agents never read outside it. worker-spawn reads the workforce from here (the
+# conductor invokes it without inheriting this shell's env).
 cp -r "$ROOT_DIR/skills"  "$CONDUCTOR_DIR/skills"
 cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
 cp "$TOPOLOGY_FILE" "$CONDUCTOR_DIR/topology.json"
+cp "$WORKFORCE"     "$CONDUCTOR_DIR/workforce.json"
 
 # Write project-level permissions: read/write the project, read/execute the scripts
 mkdir -p ".claude"
@@ -164,6 +174,7 @@ fi
   printf -- '---\n'
 } > "$CONDUCTOR_DIR/config.md"
 echo "Topology : $TOPOLOGY"
+echo "Workforce: $WORKFORCE_NAME"
 [[ -n "$LANG" ]]     && echo "Language : $LANG"
 if [[ -n "$TEST_CMD" ]]; then
   echo "Test cmd : $TEST_CMD"
