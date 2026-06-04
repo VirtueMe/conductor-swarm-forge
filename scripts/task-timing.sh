@@ -8,6 +8,7 @@
 
 set -euo pipefail
 
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 FORMAT="${1:-}"
 
@@ -16,15 +17,21 @@ TASKS_DIR="$CONDUCTOR_DIR/tasks"
 
 [[ -d "$WORK_DIR" ]] || { echo "No work dir found at $WORK_DIR" >&2; exit 1; }
 
-python3 - "$WORK_DIR" "$TASKS_DIR" "$FORMAT" << 'EOF'
+# Phase ordering comes from the active topology's stages, not a hardcoded list.
+# shellcheck source=scripts/stages-resolve.sh
+source "$SCRIPTS_DIR/stages-resolve.sh"
+STAGES="$(topology_stages "$CONDUCTOR_DIR" | tr '\n' ',')"
+
+python3 - "$WORK_DIR" "$TASKS_DIR" "$FORMAT" "$STAGES" << 'EOF'
 import sys, os, re, json
 from datetime import datetime
 
 work_dir   = sys.argv[1]
 tasks_dir  = sys.argv[2]
 fmt        = sys.argv[3] if len(sys.argv) > 3 else ""
+stages_arg = sys.argv[4] if len(sys.argv) > 4 else ""
 
-COLUMNS = ['backlog','ready','in-progress','validation','review','merge-pending','merging','done']
+COLUMNS = [s for s in stages_arg.split(',') if s]
 
 def parse_ts(ts):
     try:
@@ -169,26 +176,29 @@ YELLOW = '\033[0;33m'
 RED    = '\033[0;31m'
 MUTED  = '\033[2m'
 
+# Per-stage colors for the known software-dev stages. Stages from another
+# topology fall back to no color (.get(col, '')) — they still render, uncolored.
+STAGE_COLORS = {
+    'backlog':       '\033[38;5;246m',
+    'ready':         '\033[38;5;39m',
+    'in-progress':   '\033[38;5;214m',
+    'validation':    '\033[38;5;211m',
+    'review':        '\033[38;5;141m',
+    'merge-pending': '\033[38;5;226m',
+    'merging':       '\033[38;5;78m',
+    'done':          '\033[38;5;82m',
+}
+
 def col_bar(phases, total_secs, width=30):
     if not total_secs or total_secs == 0:
         return ''
-    COLORS = {
-        'backlog':       '\033[38;5;246m',
-        'ready':         '\033[38;5;39m',
-        'in-progress':   '\033[38;5;214m',
-        'validation':    '\033[38;5;211m',
-        'review':        '\033[38;5;141m',
-        'merge-pending': '\033[38;5;226m',
-        'merging':       '\033[38;5;78m',
-        'done':          '\033[38;5;82m',
-    }
     bar = ''
     for col in COLUMNS:
         secs = phases.get(col, 0)
         if secs <= 0:
             continue
         chars = max(1, round(secs / total_secs * width))
-        c = COLORS.get(col, '')
+        c = STAGE_COLORS.get(col, '')
         bar += f"{c}{'█' * chars}{RESET}"
     return bar
 
@@ -221,15 +231,11 @@ for r in results:
 
     print(f"  {CYAN}{r['id']}{RESET} {title_str:<34} {BOLD}{dur_str:>8}{RESET}  {bar}  {flags}")
 
-# Phase legend
+# Phase legend — iterate the active topology's stages so a non-default pack's
+# stages appear too (uncolored when not in STAGE_COLORS).
 print(f"\n{MUTED}  Legend: {RESET}", end='')
-LEGEND_COLORS = {
-    'backlog': '\033[38;5;246m', 'ready': '\033[38;5;39m',
-    'in-progress': '\033[38;5;214m', 'validation': '\033[38;5;211m',
-    'review': '\033[38;5;141m', 'merge-pending': '\033[38;5;226m',
-    'merging': '\033[38;5;78m', 'done': '\033[38;5;82m',
-}
-for col, color in LEGEND_COLORS.items():
+for col in COLUMNS:
+    color = STAGE_COLORS.get(col, '')
     print(f"{color}█{RESET}{MUTED}{col} {RESET}", end='')
 print()
 

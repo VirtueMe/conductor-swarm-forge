@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 KANBAN_DIR="$CONDUCTOR_DIR/kanban"
 
-COLUMNS="backlog ready in-progress validation review merge-pending merging done"
+# Display columns (and their order) are the active topology's stages.
+# shellcheck source=scripts/stages-resolve.sh
+source "$SCRIPTS_DIR/stages-resolve.sh"
+COLUMNS="$(topology_stages "$CONDUCTOR_DIR" | tr '\n' ' ')"
 
 yaml_field() {
   local file="$1" field="$2"
