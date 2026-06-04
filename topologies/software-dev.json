@@ -1,0 +1,73 @@
+{
+  "name": "software-dev",
+  "description": "Default topology — reproduces the original hardcoded dev workflow exactly.",
+  "integration": "git",
+
+  "stages": [
+    "backlog",
+    "ready",
+    "in-progress",
+    "validation",
+    "review",
+    "merge-pending",
+    "merging",
+    "done"
+  ],
+
+  "working_stages": {
+    "in-progress": {
+      "mode": "auto",
+      "role": "coder",
+      "skill": {
+        "default": "coder/fresh-start",
+        "rules": [
+          { "when": { "last_artifact": "merge:conflict" },  "skill": "coder/on-conflict" },
+          { "when": { "last_artifact": "review:rejected" }, "skill": "coder/on-rejection" }
+        ]
+      }
+    },
+    "validation": { "mode": "auto", "role": "validator", "skill": "validator/validate" },
+    "review":     { "mode": "auto", "role": "reviewer",  "skill": "reviewer/review" },
+    "merging":    { "mode": "auto", "role": "merger",    "skill": "merger/merge" }
+  },
+
+  "transitions": {
+    "new-task": [
+      { "when": { "deps": "all-done" }, "to": "ready" },
+      { "to": "backlog" }
+    ],
+    "signal-complete": [
+      { "_order": "first-match: order is the logic. design short-circuits before the test-cmd check; test-cmd inserts validation before any type routing.",
+        "when": { "type": ["design"] },        "to": "done" },
+      { "when": { "config": "test-cmd" },       "to": "validation" },
+      { "when": { "type": ["chore", "spike"] }, "to": "@merge" },
+      { "to": "review" }
+    ],
+    "validation-passed": [
+      { "when": { "type": ["chore", "spike"] }, "to": "@merge" },
+      { "to": "review" }
+    ],
+    "validation-failed": [ { "to": "in-progress" } ],
+    "review-approved":   [ { "to": "@merge" } ],
+    "review-rejected":   [ { "to": "in-progress" } ],
+    "merge-success":     [ { "_integration": "release-merge-pending is git-specific (lock-based); to be partitioned behind the integration boundary in #5.",
+                             "to": "done", "then": ["unblock-dependents", "release-merge-pending", "check-project-done"] } ],
+    "merge-conflict":    [ { "_integration": "git-specific: depends on the merge/lock model. See #5.",
+                             "to": "in-progress", "then": ["release-merge-pending"] } ],
+    "signal-blocked":    [ { "when": { "assess": "hard-dependency" }, "to": "backlog" },
+                           { "to": "@escalate" } ],
+    "signal-drift":      [ { "when": { "assess": "invalidation" }, "to": "done" },
+                           { "when": { "assess": "scope" }, "to": "@escalate" },
+                           { "to": "@stay" } ]
+  },
+
+  "integration_macros": {
+    "@merge": {
+      "_comment": "git-specific: split on file-lock state. Other integration models replace this macro.",
+      "rules": [
+        { "when": { "locks": "free" }, "to": "merging" },
+        { "to": "merge-pending" }
+      ]
+    }
+  }
+}
