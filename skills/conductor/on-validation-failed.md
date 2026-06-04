@@ -9,14 +9,15 @@ Triggered when a `validation-*.md` artifact with `outcome: failed` appears in `w
 
 ## Steps
 
-1. Close the validator's tmux window:
+1. Close the finishing worker's tmux window (named `<role>-<id>` — find it by task id):
    ```bash
-   tmux kill-window -t "swarm:validator-$TASK_ID" 2>/dev/null || true
+   WIN=$(tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null | grep -E -- "-$TASK_ID\$" | head -1)
+   [[ -n "$WIN" ]] && tmux kill-window -t "swarm:$WIN" 2>/dev/null || true
    ```
 
 2. Read the validation artifact body — it contains the test failure output.
 
-3. Write a conductor note summarising the failures so the coder has immediate context:
+3. Write a conductor note summarising the failures so the next worker has immediate context:
    ```bash
    task-signal.sh --task $TASK_ID --type progress \
      --notes "conductor: validation failed — <paste key failure lines here>"
@@ -30,11 +31,12 @@ Triggered when a `validation-*.md` artifact with `outcome: failed` appears in `w
    task-move.sh $TASK_ID "$DEST"
    ```
 
-5. **Spawn the worker bound to the destination stage.** The destination is the
-   coding loopback, so spawn a coder; its briefing will include the full work
-   history including the validation artifact:
+5. **Spawn the worker bound to the destination stage.** `$DEST` is the rework
+   loopback; derive its role from the topology and spawn it. The worker's briefing
+   will include the full work history (including the validation artifact):
    ```bash
-   worker-spawn.sh $TASK_ID coder
+   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
+   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
    ```
 
 6. Run `task-list.sh` to confirm.

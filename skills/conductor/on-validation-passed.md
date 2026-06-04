@@ -8,9 +8,10 @@ Triggered when a `validation-*.md` artifact with `outcome: passed` appears in `w
 
 ## Steps
 
-1. Close the validator's tmux window:
+1. Close the finishing worker's tmux window (named `<role>-<id>` — find it by task id):
    ```bash
-   tmux kill-window -t "swarm:validator-$TASK_ID" 2>/dev/null || true
+   WIN=$(tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null | grep -E -- "-$TASK_ID\$" | head -1)
+   [[ -n "$WIN" ]] && tmux kill-window -t "swarm:$WIN" 2>/dev/null || true
    ```
 
 2. **Gather the routing guards** for this event:
@@ -30,10 +31,11 @@ Triggered when a `validation-*.md` artifact with `outcome: passed` appears in `w
    The topology decides: `chore`/`spike` go straight to merge (`merging` or
    `merge-pending` depending on `locks`); everything else goes to `review`.
 
-4. **Spawn the worker bound to the destination stage** (no worker for the
-   `merge-pending` holding column):
-   - `review` → `worker-spawn.sh $TASK_ID reviewer`
-   - `merging` → `worker-spawn.sh $TASK_ID merger`
-   - `merge-pending` → no worker
+4. **Spawn the worker bound to the destination stage** — derive the role from
+   `$DEST` (a holding column such as `merge-pending` has no role, so no worker):
+   ```bash
+   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
+   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
+   ```
 
 5. Run `task-list.sh` to confirm.

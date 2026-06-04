@@ -8,9 +8,10 @@ Triggered when a `review-*.md` artifact with `outcome: approved` appears in `wor
 
 ## Steps
 
-1. Close the reviewer's tmux window:
+1. Close the finishing worker's tmux window (named `<role>-<id>` — find it by task id):
    ```bash
-   tmux kill-window -t "swarm:reviewer-$TASK_ID" 2>/dev/null || true
+   WIN=$(tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null | grep -E -- "-$TASK_ID\$" | head -1)
+   [[ -n "$WIN" ]] && tmux kill-window -t "swarm:$WIN" 2>/dev/null || true
    ```
 
 2. **Compute the `locks` guard.** Get the set of files currently locked by active
@@ -18,8 +19,8 @@ Triggered when a `review-*.md` artifact with `outcome: approved` appears in `wor
    ```bash
    task-locks.sh
    ```
-   Read the `files-changed` list from `kanban/review/$TASK_ID.md`. If any file in
-   `files-changed` appears in the locked set → `locks=held`; otherwise →
+   Read the `files-changed` list from the task's current card (`kanban/*/$TASK_ID.md`).
+   If any file in `files-changed` appears in the locked set → `locks=held`; otherwise →
    `locks=free`.
 
 3. **Ask the topology where this task goes.** Do not hardcode the merge / merge-
@@ -33,9 +34,11 @@ Triggered when a `review-*.md` artifact with `outcome: approved` appears in `wor
    `merge-pending` (another merge is touching the same files — it will be re-
    evaluated by `on-merge-success.md` when the blocking merge resolves).
 
-4. **Spawn the worker bound to the destination stage** (no worker for the
-   `merge-pending` holding column):
-   - `merging` → `worker-spawn.sh $TASK_ID merger`
-   - `merge-pending` → no worker
+4. **Spawn the worker bound to the destination stage** — derive the role from
+   `$DEST` (a holding column such as `merge-pending` has no role, so no worker):
+   ```bash
+   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
+   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
+   ```
 
 5. Run `task-list.sh` to confirm.

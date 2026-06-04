@@ -8,9 +8,11 @@ Triggered when a `signal-*.md` artifact with `outcome: complete` appears in `wor
 
 ## Steps
 
-1. Close the coder's tmux window — it has finished its work:
+1. Close the finishing worker's tmux window. The window is named `<role>-<id>`, so
+   find it by task id rather than assuming which role just finished:
    ```bash
-   tmux kill-window -t "swarm:coder-$TASK_ID" 2>/dev/null || true
+   WIN=$(tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null | grep -E -- "-$TASK_ID\$" | head -1)
+   [[ -n "$WIN" ]] && tmux kill-window -t "swarm:$WIN" 2>/dev/null || true
    ```
 
 2. **Gather the routing guards** the topology may consult for this event:
@@ -36,11 +38,12 @@ Triggered when a `signal-*.md` artifact with `outcome: complete` appears in `wor
    merge (`merging` or `merge-pending` depending on `locks`); everything else
    goes to `review`.
 
-4. **Spawn the worker bound to the destination stage** (no worker for the
-   holding columns `done` / `merge-pending`):
-   - `validation` → `worker-spawn.sh $TASK_ID validator`
-   - `review` → `worker-spawn.sh $TASK_ID reviewer`
-   - `merging` → `worker-spawn.sh $TASK_ID merger`
-   - `done` / `merge-pending` → no worker
+4. **Spawn the worker bound to the destination stage.** The role is declared by the
+   topology, not by this skill — derive it from `$DEST`. A holding column (e.g.
+   `done`, `merge-pending`) has no role, so no worker is spawned:
+   ```bash
+   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
+   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
+   ```
 
 5. Run `task-list.sh` to confirm.

@@ -24,12 +24,14 @@ Triggered when a new file appears in `tasks/`.
    task-move.sh $TASK_ID "$DEST"
    ```
 
-4. **Spawn the worker bound to the destination stage.** A task landing on `ready`
-   gets a coder; a task parked on `backlog` is a holding column with no worker —
-   it will be unblocked by `on-merge-success.md` when its dependencies complete:
+4. **Spawn the worker bound to the destination stage.** If `$DEST` is the
+   deps-satisfied entry column (`ready`), spawn the entry worker — the role of the
+   first working stage. A task parked on `backlog` is a holding column with no
+   worker; it is unblocked by `on-merge-success.md` when its dependencies complete:
    ```bash
    # if $DEST is ready:
-   worker-spawn.sh $TASK_ID coder
+   ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
+   worker-spawn.sh $TASK_ID "$ROLE"
    ```
 
 5. Run `task-list.sh` to confirm placement.

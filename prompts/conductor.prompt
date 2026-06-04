@@ -15,9 +15,19 @@ All state is managed through scripts. Never write to `.conductor/` directly.
 | `task-list.sh` | Print current kanban state |
 | `task-locks.sh` | Print files locked by active merges |
 | `worker-spawn.sh <id> <worker-type>` | Spawn a worker terminal |
+| `topology-load.sh <query> <topology> [args]` | Read the active workflow (stages, roles, routing) |
 
-Columns: `backlog` `ready` `in-progress` `review` `merge-pending` `merging` `done`
-Worker types: `coder` `reviewer` `merger`
+Columns and worker types are **not fixed** — they come from the active topology
+(`$CONDUCTOR_DIR/topology.json`). Never hardcode them; read them when you need them:
+
+- Columns (kanban stages, in order) — `$SCRIPTS_DIR/topology-load.sh stages "$CONDUCTOR_DIR/topology.json"`
+- Worker types (the working-stage roles) — `$SCRIPTS_DIR/topology-load.sh roles "$CONDUCTOR_DIR/topology.json"`
+- The role bound to a given stage (empty ⇒ a holding column with no worker) — `$SCRIPTS_DIR/topology-load.sh role "$CONDUCTOR_DIR/topology.json" <stage>`
+- The entry worker (role of the first working stage), for a task entering at `ready` — `$SCRIPTS_DIR/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json"`
+
+The default `software-dev` topology has columns `backlog ready in-progress validation
+review merge-pending merging done` and roles `coder validator reviewer merger`, but any
+skill that spawns a worker must derive the role from the destination stage, not assume these.
 
 ## Startup
 

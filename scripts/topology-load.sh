@@ -9,9 +9,11 @@
 #   topology-load.sh resolve  <name|path>   # print absolute path to the topology JSON
 #   topology-load.sh validate <name|path>   # validate structure; exit 0 on success, 1 on error
 #
-# Read-only query accessors (consumed by the de-hardcoding work in #2/#3/#4):
+# Read-only query accessors (consumed by the de-hardcoding work in #2/#3/#4/#20):
 #   topology-load.sh stages <name|path>                          # ordered stage list, one per line
 #   topology-load.sh roles  <name|path>                          # working-stage roles, one per line
+#   topology-load.sh entry-role <name|path>                      # role of the first working stage (the pipeline entry)
+#   topology-load.sh role   <name|path> <stage>                  # the role bound to one stage (empty for holding columns)
 #   topology-load.sh skill  <name|path> <stage> [last_artifact]  # resolve the skill for a working stage
 #   topology-load.sh route  <name|path> <event> [guard=value...] # resolve a transition to its destination stage
 #   topology-load.sh integration <name|path>                     # print the integration model (git|shared-doc|none)
@@ -29,7 +31,7 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 TOPOLOGIES_DIR="$ROOT_DIR/topologies"
 
 usage() {
-  echo "Usage: topology-load.sh {resolve|validate|stages|roles|skill|route|integration} <name|path> [args...]" >&2
+  echo "Usage: topology-load.sh {resolve|validate|stages|roles|entry-role|role|skill|route|integration} <name|path> [args...]" >&2
   exit 2
 }
 
@@ -184,12 +186,13 @@ print(f"Topology OK: {t['name']} ({len(stages)} stages, integration={t['integrat
 PY
     ;;
 
-  stages|roles|skill|route|integration)
+  stages|roles|entry-role|role|skill|route|integration)
     # Read-only queries over the topology. All four share ONE rule evaluator
     # (when_matches/first_match) — skill-selection rules and transition rules are
     # the same construct (guarded, first-match), so they must not drift.
     #   stages                          → #2   roles                       → #3
-    #   skill <stage> [last_artifact]   → #3   route <event> [guard=val..] → #4
+    #   role <stage>                    → #20  skill <stage> [last_artifact] → #3
+    #   route <event> [guard=val..]     → #4
     # Guards: type=<t> config.<key>=<v> locks=free|held deps=all-done
     #         assess=<label> last_artifact=<kind:outcome> count.<signal>=<n>
     python3 - "$PATH_JSON" "$CMD" "$@" << 'PY'
@@ -262,6 +265,30 @@ elif cmd == "roles":
         spec = ws.get(stage)
         if spec and "role" in spec:
             print(spec["role"])
+
+elif cmd == "entry-role":
+    # The role that begins the pipeline = the role of the FIRST working stage in
+    # stage order. The conductor spawns this for a task entering at `ready`. Named
+    # so call sites don't reinvent "the entry" as `roles | head -1` (which only
+    # works because `roles` emits in stage order — a contract that would otherwise
+    # live invisibly at the call site).
+    ws = t["working_stages"]
+    for stage in t["stages"]:
+        spec = ws.get(stage)
+        if spec and "role" in spec:
+            print(spec["role"]); break
+
+elif cmd == "role":
+    # The role bound to one stage (stage→role; the dual of `roles`). The conductor
+    # uses this to spawn "the worker bound to the destination stage" without naming
+    # the role — spawn is derived from working_stages, not declared in the skill.
+    # A holding column (no working_stages entry) prints NOTHING and exits 0, so the
+    # caller's `[[ -n "$ROLE" ]]` guard means "no worker for this column".
+    if not rest:
+        die("role: missing <stage>")
+    spec = t["working_stages"].get(rest[0])
+    if spec and "role" in spec:
+        print(spec["role"])
 
 elif cmd == "skill":
     # Map a working stage (+ optional most-recent-artifact token) to a skill.
