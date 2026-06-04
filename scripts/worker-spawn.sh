@@ -123,11 +123,9 @@ fi
 
 # Load the integration adapter (how work is isolated/consolidated) from the
 # topology's `integration` field — git, shared-doc, none.
-INTEGRATION=$("$SCRIPTS_DIR/topology-load.sh" integration "$TOPOLOGY_JSON")
-INTEGRATION_FILE="$ROOT_DIR/integrations/${INTEGRATION}.sh"
-[[ -f "$INTEGRATION_FILE" ]] || { echo "Integration adapter not found: $INTEGRATION_FILE" >&2; exit 1; }
-# shellcheck source=/dev/null
-source "$INTEGRATION_FILE"
+# shellcheck source=scripts/integration-resolve.sh
+source "$SCRIPTS_DIR/integration-resolve.sh"
+source_integration "$TOPOLOGY_JSON" || exit 1
 
 # Load adapter
 ADAPTER_NAME=$(get_adapter "$WORKER_TYPE")
