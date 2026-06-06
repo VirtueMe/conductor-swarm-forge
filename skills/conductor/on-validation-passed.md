@@ -31,11 +31,16 @@ Triggered when a `validation-*.md` artifact with `outcome: passed` appears in `w
    The topology decides: `chore`/`spike` go straight to merge (`merging` or
    `merge-pending` depending on `locks`); everything else goes to `review`.
 
-4. **Spawn the worker bound to the destination stage** — derive the role from
-   `$DEST` (a holding column such as `merge-pending` has no role, so no worker):
+4. **Spawn the worker bound to the destination stage, or notify if manual** —
+   derive role and mode from `$DEST` (a holding column has neither):
    ```bash
    ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
-   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
+   MODE=$(scripts/topology-load.sh mode "$CONDUCTOR_DIR/topology.json" "$DEST")
+   if [[ -n "$ROLE" ]]; then
+     worker-spawn.sh $TASK_ID "$ROLE"
+   elif [[ "$MODE" == "manual" ]]; then
+     task-notify.sh --task $TASK_ID --stage "$DEST"
+   fi
    ```
 
 5. Run `task-list.sh` to confirm.

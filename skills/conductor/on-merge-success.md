@@ -30,12 +30,17 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
    `kanban/backlog/` whose `depends-on` includes `$TASK_ID`:
    - For each candidate, read its `depends-on` list
    - Check whether every listed ID now has a card in `kanban/done/`
-   - If all dependencies are satisfied, move it to `ready` and spawn the entry
-     worker (the role of the first working stage):
+   - If all dependencies are satisfied, move it to `ready` and start the entry
+     stage — spawn an agent if auto, notify the human if manual:
      ```bash
      task-move.sh <dependent-id> ready
-     ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
-     worker-spawn.sh <dependent-id> "$ROLE"
+     ENTRY_ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
+     if [[ -n "$ENTRY_ROLE" ]]; then
+       worker-spawn.sh <dependent-id> "$ENTRY_ROLE"
+     else
+       ENTRY_STAGE=$(scripts/topology-load.sh entry-stage "$CONDUCTOR_DIR/topology.json")
+       task-notify.sh --task <dependent-id> --stage "$ENTRY_STAGE"
+     fi
      ```
 
 4. **Release merge-pending tasks** (`then: release-merge-pending`) — for each card

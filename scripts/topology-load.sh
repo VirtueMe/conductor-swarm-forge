@@ -13,10 +13,12 @@
 #   topology-load.sh stages <name|path>                          # ordered stage list, one per line
 #   topology-load.sh roles  <name|path>                          # working-stage roles, one per line
 #   topology-load.sh entry-role <name|path>                      # role of the first working stage (the pipeline entry)
-#   topology-load.sh role   <name|path> <stage>                  # the role bound to one stage (empty for holding columns)
-#   topology-load.sh skill  <name|path> <stage> [last_artifact]  # resolve the skill for a working stage
-#   topology-load.sh route  <name|path> <event> [guard=value...] # resolve a transition to its destination stage
-#   topology-load.sh integration <name|path>                     # print the integration model (git|shared-doc|none)
+#   topology-load.sh role        <name|path> <stage>                  # the role bound to one stage (empty for holding columns)
+#   topology-load.sh mode        <name|path> <stage>                  # mode of a working stage: auto|manual (empty for holding columns)
+#   topology-load.sh entry-stage <name|path>                          # name of the first working stage
+#   topology-load.sh skill       <name|path> <stage> [last_artifact]  # resolve the skill for a working stage
+#   topology-load.sh route       <name|path> <event> [guard=value...] # resolve a transition to its destination stage
+#   topology-load.sh integration <name|path>                          # print the integration model (git|shared-doc|none)
 #
 # A bare <name> resolves to topologies/<name>.json under the tool root; a value
 # containing a slash or ending in .json is treated as a path.
@@ -186,7 +188,7 @@ print(f"Topology OK: {t['name']} ({len(stages)} stages, integration={t['integrat
 PY
     ;;
 
-  stages|roles|entry-role|role|skill|route|integration)
+  stages|roles|entry-role|entry-stage|role|mode|skill|route|integration)
     # Read-only queries over the topology. All four share ONE rule evaluator
     # (when_matches/first_match) — skill-selection rules and transition rules are
     # the same construct (guarded, first-match), so they must not drift.
@@ -278,6 +280,15 @@ elif cmd == "entry-role":
         if spec and "role" in spec:
             print(spec["role"]); break
 
+elif cmd == "entry-stage":
+    # Name of the first working stage in stage order — the pipeline entry point.
+    # Used when the entry stage may be manual (no role), so `entry-role | head -1`
+    # would return nothing and the caller could not derive the stage name.
+    ws = t["working_stages"]
+    for stage in t["stages"]:
+        if stage in ws:
+            print(stage); break
+
 elif cmd == "role":
     # The role bound to one stage (stage→role; the dual of `roles`). The conductor
     # uses this to spawn "the worker bound to the destination stage" without naming
@@ -289,6 +300,16 @@ elif cmd == "role":
     spec = t["working_stages"].get(rest[0])
     if spec and "role" in spec:
         print(spec["role"])
+
+elif cmd == "mode":
+    # Mode of a working stage: "auto" (default) or "manual". Prints nothing and
+    # exits 0 for holding columns (not a working stage) — callers guard with
+    # `[[ "$MODE" == "manual" ]]` so an empty result is treated as "not manual".
+    if not rest:
+        die("mode: missing <stage>")
+    spec = t["working_stages"].get(rest[0])
+    if spec:
+        print(spec.get("mode", "auto"))
 
 elif cmd == "skill":
     # Map a working stage (+ optional most-recent-artifact token) to a skill.

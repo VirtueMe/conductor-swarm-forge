@@ -16,25 +16,38 @@ Run this sequence once when the conductor starts or restarts.
    task-move.sh <id> ready
    ```
 
-4. **Resume interrupted work** — a card sitting in a *working stage* (a stage with a
-   role bound to it; the holding columns have none) should have an active worker. The
-   working stages are those `topology-load.sh role <stage>` returns a role for. For
-   each card in such a stage, check whether its tmux window exists:
-   ```bash
-   tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null
-   ```
-   The window is named `<role>-<id>`. If it is missing, re-spawn the worker for that
-   stage — the role comes from the topology, not a fixed list:
+4. **Resume interrupted work** — a card sitting in a *working stage* should have
+   an active worker (for `auto` stages) or an outstanding human inbox file (for
+   `manual` stages). For each card not in a holding column:
    ```bash
    ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" <stage>)
-   worker-spawn.sh <id> "$ROLE"
+   MODE=$(scripts/topology-load.sh mode "$CONDUCTOR_DIR/topology.json" <stage>)
    ```
+   - If `$ROLE` is set (`auto`): check whether the tmux window `<role>-<id>` exists.
+     If it is missing, re-spawn:
+     ```bash
+     tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null
+     worker-spawn.sh <id> "$ROLE"
+     ```
+   - If `$MODE` is `manual`: check whether a human-inbox file exists for this task.
+     If not (e.g. previous notification was lost), re-notify. Use `compgen -G`
+     rather than `ls` to test glob existence — `ls` exits non-zero for both
+     "no match" and permission errors, which would re-notify even when the file exists:
+     ```bash
+     compgen -G "$CONDUCTOR_DIR/human-inbox/<id>-*.md" > /dev/null 2>&1 \
+       || task-notify.sh --task <id> --stage <stage>
+     ```
 
-5. **Spawn workers for ready tasks** — for each card in `kanban/ready/` with no active
-   worker window, spawn the entry worker (the role of the first working stage):
+5. **Start the entry stage for ready tasks** — for each card in `kanban/ready/`
+   with no active worker window, check the entry stage mode:
    ```bash
-   ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
-   worker-spawn.sh <id> "$ROLE"
+   ENTRY_ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
+   if [[ -n "$ENTRY_ROLE" ]]; then
+     worker-spawn.sh <id> "$ENTRY_ROLE"
+   else
+     ENTRY_STAGE=$(scripts/topology-load.sh entry-stage "$CONDUCTOR_DIR/topology.json")
+     task-notify.sh --task <id> --stage "$ENTRY_STAGE"
+   fi
    ```
 
 6. Run `task-list.sh` once more and confirm the state looks correct before starting the watch loop.
