@@ -38,12 +38,17 @@ Triggered when a `signal-*.md` artifact with `outcome: complete` appears in `wor
    merge (`merging` or `merge-pending` depending on `locks`); everything else
    goes to `review`.
 
-4. **Spawn the worker bound to the destination stage.** The role is declared by the
-   topology, not by this skill — derive it from `$DEST`. A holding column (e.g.
-   `done`, `merge-pending`) has no role, so no worker is spawned:
+4. **Spawn the worker bound to the destination stage, or notify if manual.** The
+   role and mode come from the topology — derive both from `$DEST`. A holding
+   column has no role and is not manual, so neither branch fires:
    ```bash
    ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
-   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
+   MODE=$(scripts/topology-load.sh mode "$CONDUCTOR_DIR/topology.json" "$DEST")
+   if [[ -n "$ROLE" ]]; then
+     worker-spawn.sh $TASK_ID "$ROLE"
+   elif [[ "$MODE" == "manual" ]]; then
+     task-notify.sh --task $TASK_ID --stage "$DEST"
+   fi
    ```
 
 5. Run `task-list.sh` to confirm.

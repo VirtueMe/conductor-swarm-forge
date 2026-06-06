@@ -15,7 +15,9 @@ All state is managed through scripts. Never write to `.conductor/` directly.
 | `task-list.sh` | Print current kanban state |
 | `task-locks.sh` | Print files locked by active merges |
 | `worker-spawn.sh <id> <worker-type>` | Spawn a worker terminal |
-| `topology-load.sh <query> <topology> [args]` | Read the active workflow (stages, roles, routing) |
+| `task-notify.sh --task <id> --stage <stage>` | Notify human a task is awaiting their decision at a manual stage |
+| `task-respond.sh --task <id> --decision <d> [--notes]` | (Human-facing) Submit a decision for a manual-stage task |
+| `topology-load.sh <query> <topology> [args]` | Read the active workflow (stages, roles, routing, modes) |
 
 Columns and worker types are **not fixed** — they come from the active topology
 (`$CONDUCTOR_DIR/topology.json`). Never hardcode them; read them when you need them:
@@ -62,6 +64,7 @@ To identify the event from a path:
 | New `review-*.md` with `outcome: rejected` | `skills/conductor/on-review-rejected.md` |
 | New `merge-*.md` with `outcome: success` | `skills/conductor/on-merge-success.md` |
 | New `merge-*.md` with `outcome: conflict` | `skills/conductor/on-merge-conflict.md` |
+| New `human-*.md` (any outcome) | `skills/conductor/on-human-decision.md` |
 
 To read the type and outcome from an artifact file:
 ```bash
