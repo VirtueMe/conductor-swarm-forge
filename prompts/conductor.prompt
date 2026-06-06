@@ -48,29 +48,29 @@ After startup:
 
 2. Use the **Monitor tool** on each background process to receive notifications as new files appear. Each notification will contain a file path.
 
-3. For each file path received, identify the event and load the matching skill.
+3. For each file path received, dispatch to the appropriate skill.
 
-To identify the event from a path:
+**New file in `tasks/`** → always load `skills/conductor/on-new-task.md`.
 
-| Event | Skill to load |
-|-------|--------------|
-| New file in `tasks/` | `skills/conductor/on-new-task.md` |
-| New `signal-*.md` with `outcome: complete` | `skills/conductor/on-signal-complete.md` |
-| New `signal-*.md` with `outcome: blocked` | `skills/conductor/on-signal-blocked.md` |
-| New `signal-*.md` with `outcome: drift` | `skills/conductor/on-signal-drift.md` |
-| New `validation-*.md` with `outcome: passed` | `skills/conductor/on-validation-passed.md` |
-| New `validation-*.md` with `outcome: failed` | `skills/conductor/on-validation-failed.md` |
-| New `review-*.md` with `outcome: approved` | `skills/conductor/on-review-approved.md` |
-| New `review-*.md` with `outcome: rejected` | `skills/conductor/on-review-rejected.md` |
-| New `merge-*.md` with `outcome: success` | `skills/conductor/on-merge-success.md` |
-| New `merge-*.md` with `outcome: conflict` | `skills/conductor/on-merge-conflict.md` |
-| New `human-*.md` (any outcome) | `skills/conductor/on-human-decision.md` |
-
-To read the type and outcome from an artifact file:
+**New file in `work/`** (an artifact) → read type and outcome, then ask the
+topology which conductor skill handles it:
 ```bash
-awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^type: /{sub(/^type: /,""); print; exit}' <artifact-file>
-awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^outcome: /{sub(/^outcome: /,""); print; exit}' <artifact-file>
+TYPE=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^type: /{sub(/^type: /,""); print; exit}' "$FILE")
+OUTCOME=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^outcome: /{sub(/^outcome: /,""); print; exit}' "$FILE")
+SKILL=$($SCRIPTS_DIR/topology-load.sh conductor-skill "$CONDUCTOR_DIR/topology.json" "$TYPE" "$OUTCOME" 2>/dev/null) || true
+if [[ -n "$SKILL" ]]; then
+  # load and follow skills/${SKILL}.md
+else
+  # Ignored or unknown event type — log and continue to the next file
+  echo "conductor: skipping unhandled artifact type='$TYPE' outcome='$OUTCOME' in $FILE" >&2
+fi
 ```
+
+`conductor-skill` returns the skill path from the topology's `conductor_skills` map
+(for non-standard events like `human`) or from the naming convention
+`conductor/on-{type}-{outcome}` (for standard events: signal, validation, review,
+merge). It returns empty for ignored types (`assigned`, `progress`) or undeclared
+non-standard types — the else branch logs and skips so the watch loop continues.
 
 ## Rules
 

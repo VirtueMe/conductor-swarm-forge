@@ -13,12 +13,13 @@
 #   topology-load.sh stages <name|path>                          # ordered stage list, one per line
 #   topology-load.sh roles  <name|path>                          # working-stage roles, one per line
 #   topology-load.sh entry-role <name|path>                      # role of the first working stage (the pipeline entry)
-#   topology-load.sh role        <name|path> <stage>                  # the role bound to one stage (empty for holding columns)
-#   topology-load.sh mode        <name|path> <stage>                  # mode of a working stage: auto|manual (empty for holding columns)
-#   topology-load.sh entry-stage <name|path>                          # name of the first working stage
-#   topology-load.sh skill       <name|path> <stage> [last_artifact]  # resolve the skill for a working stage
-#   topology-load.sh route       <name|path> <event> [guard=value...] # resolve a transition to its destination stage
-#   topology-load.sh integration <name|path>                          # print the integration model (git|shared-doc|none)
+#   topology-load.sh role            <name|path> <stage>                  # the role bound to one stage (empty for holding columns)
+#   topology-load.sh mode            <name|path> <stage>                  # mode of a working stage: auto|manual (empty for holding columns)
+#   topology-load.sh entry-stage     <name|path>                          # name of the first working stage
+#   topology-load.sh skill           <name|path> <stage> [last_artifact]  # resolve the skill for a working stage
+#   topology-load.sh route           <name|path> <event> [guard=value...] # resolve a transition to its destination stage
+#   topology-load.sh conductor-skill <name|path> <type> [<outcome>]       # resolve the conductor skill for an artifact event (empty = ignore)
+#   topology-load.sh integration     <name|path>                          # print the integration model (git|shared-doc|none)
 #
 # A bare <name> resolves to topologies/<name>.json under the tool root; a value
 # containing a slash or ending in .json is treated as a path.
@@ -95,6 +96,13 @@ stages = t["stages"]
 working = t["working_stages"]
 transitions = t["transitions"]
 macros = t.get("integration_macros", {})
+conductor_skills = t.get("conductor_skills", {})
+
+# --- conductor_skills (optional) — must be a string→string map ---------------
+if not isinstance(conductor_skills, dict):
+    err("conductor_skills must be an object (string → skill-path)")
+elif any(not isinstance(v, str) for v in conductor_skills.values()):
+    err("conductor_skills values must be strings (skill paths)")
 
 SPECIAL_DESTS = {"@escalate", "@stay"}
 INTEGRATIONS = {"git", "shared-doc", "none"}
@@ -122,6 +130,18 @@ for stage, spec in working.items():
         err(f"working_stage '{stage}' (auto) must declare a 'role'")
     if mode == "manual" and "await" not in spec:
         err(f"working_stage '{stage}' (manual) must declare 'await'")
+
+# --- behavioral completeness check: manual stages need a 'human' handler -----
+# This is a behavioral dependency, not a structural one — see #36 for splitting
+# this into a dedicated `check` command separate from structural `validate`.
+# Without it, task-respond.sh writes human-*.md artifacts that conductor-skill
+# returns empty for, so the conductor silently skips them and tasks strand.
+if any(spec.get("mode") == "manual" for spec in working.values()):
+    has_human_handler = any(k == "human" or k.startswith("human:") for k in conductor_skills)
+    if not has_human_handler:
+        err("topology has mode:manual stage(s) but conductor_skills declares no 'human' "
+            "handler — human artifacts will be silently dropped; "
+            "add: \"conductor_skills\": {\"human\": \"conductor/on-human-decision\"}")
 
 # --- destination resolver ---------------------------------------------------
 def check_dest(to, where):
@@ -188,7 +208,7 @@ print(f"Topology OK: {t['name']} ({len(stages)} stages, integration={t['integrat
 PY
     ;;
 
-  stages|roles|entry-role|entry-stage|role|mode|skill|route|integration)
+  stages|roles|entry-role|entry-stage|role|mode|skill|route|conductor-skill|integration)
     # Read-only queries over the topology. All four share ONE rule evaluator
     # (when_matches/first_match) — skill-selection rules and transition rules are
     # the same construct (guarded, first-match), so they must not drift.
@@ -330,6 +350,49 @@ elif cmd == "skill":
         guards = {"last_artifact": last_artifact} if last_artifact is not None else {}
         rule = first_match(spec.get("rules", []), guards)
         print(rule["skill"] if rule else spec["default"])
+
+elif cmd == "conductor-skill":
+    # Resolve the conductor skill to load for an incoming artifact event.
+    # Lookup order:
+    #   1. conductor_skills["{type}:{outcome}"] — fully qualified override
+    #   2. conductor_skills["{type}"]           — type-level catch-all
+    #   3. Naming convention: conductor/on-{type}-{outcome} (engine constant — standard types)
+    #   4. Empty output (exit 0)                — unknown/ignored types
+    #
+    # STANDARD and IGNORED are engine constants, not topology-configurable.
+    # They represent the built-in event vocabulary the engine natively understands.
+    # Non-standard types (e.g. "human") must be declared in conductor_skills or
+    # the event is silently ignored.
+    if not rest:
+        die("conductor-skill: missing <type>")
+    atype = rest[0]
+    outcome = rest[1] if len(rest) > 1 else ""
+
+    # Engine constants — not overridable by topology
+    IGNORED = {"assigned", "progress"}   # artifacts the conductor never acts on
+    STANDARD = {"signal", "validation", "review", "merge"}  # use naming convention
+
+    cs = t.get("conductor_skills", {})
+
+    if atype in IGNORED:
+        sys.exit(0)
+
+    # 1. Fully qualified override — only when outcome is present (type:outcome key)
+    if outcome and f"{atype}:{outcome}" in cs:
+        print(cs[f"{atype}:{outcome}"]); sys.exit(0)
+
+    # 2. Type-level catch-all — matches any outcome for this type
+    if atype in cs:
+        print(cs[atype]); sys.exit(0)
+
+    # 3. Naming convention for engine-standard types
+    if atype in STANDARD:
+        if not outcome:
+            die(f"conductor-skill: outcome required for standard type '{atype}'")
+        print(f"conductor/on-{atype}-{outcome}"); sys.exit(0)
+
+    # 4. Unknown / not declared — silently ignore
+    sys.exit(0)
 
 elif cmd == "route":
     # Resolve a transition event to its destination stage (first-match, @macros
