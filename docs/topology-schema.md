@@ -101,8 +101,10 @@ conductor silently ignores those artifacts and tasks strand.
 Key format: `"{type}"` matches any outcome for that type. `"{type}:{outcome}"`
 matches one specific outcome and takes priority over the type-level entry.
 
-**Validation:** If any working stage has `mode: manual`, the validator requires at
-least one `human` or `human:<decision>` entry in `conductor_skills`.
+**Behavioral check:** If any working stage has `mode: manual`, `topology-load.sh check`
+requires at least one `human` or `human:<decision>` entry in `conductor_skills`.
+`topology-load.sh validate` does not enforce this — it is a structural gate only.
+See [validate vs check](#validate-vs-check) below.
 
 ## Transitions
 
@@ -217,3 +219,22 @@ in place of a merge, and nothing is ever locked (`integration_locks` prints noth
 The marketing pack (`topologies/marketing.json`) uses it. `swarm-start` fails fast
 if a topology names an integration with no matching adapter; a `none` adapter (fully
 independent work, no consolidation step) is still future work.
+
+## Validate vs check
+
+`topology-load.sh` exposes two validation levels:
+
+| Command | What it checks | When to use |
+| --- | --- | --- |
+| `validate <name\|path>` | **Structural** — required fields present, correct types, stages reachable, macros valid. Answers: *is this topology well-formed?* | CI, pre-flight linting |
+| `check <name\|path>` | **Structural + behavioral** — runs `validate` first, then checks that runtime behavior will be correct. Answers: *is this topology complete enough to run?* | `swarm-start.sh` before launching |
+
+`check` runs `validate` as its first step, so a structural failure stops it before behavioral checks run.
+
+**Current behavioral checks (enforced by `check` only):**
+
+- If any working stage has `mode: manual`, `conductor_skills` must declare a `human` or
+  `human:<decision>` handler. Without it, `task-respond.sh` writes `human-*.md` artifacts
+  that `conductor-skill` returns empty for, so the conductor silently skips them and tasks strand.
+
+Future behavioral checks (e.g. every stage reachable from entry, no transition loops) also belong in `check`, not `validate`.

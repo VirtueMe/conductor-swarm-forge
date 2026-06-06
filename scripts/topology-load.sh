@@ -7,7 +7,8 @@
 #
 # Usage:
 #   topology-load.sh resolve  <name|path>   # print absolute path to the topology JSON
-#   topology-load.sh validate <name|path>   # validate structure; exit 0 on success, 1 on error
+#   topology-load.sh validate <name|path>   # structural checks only (CI gate); exit 0 on success, 1 on error
+#   topology-load.sh check    <name|path>   # structural + behavioral completeness (pre-launch gate)
 #
 # Read-only query accessors (consumed by the de-hardcoding work in #2/#3/#4/#20):
 #   topology-load.sh stages <name|path>                          # ordered stage list, one per line
@@ -34,7 +35,7 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 TOPOLOGIES_DIR="$ROOT_DIR/topologies"
 
 usage() {
-  echo "Usage: topology-load.sh {resolve|validate|stages|roles|entry-role|role|skill|route|integration} <name|path> [args...]" >&2
+  echo "Usage: topology-load.sh {resolve|validate|check|stages|roles|entry-role|role|skill|route|integration} <name|path> [args...]" >&2
   exit 2
 }
 
@@ -131,18 +132,6 @@ for stage, spec in working.items():
     if mode == "manual" and "await" not in spec:
         err(f"working_stage '{stage}' (manual) must declare 'await'")
 
-# --- behavioral completeness check: manual stages need a 'human' handler -----
-# This is a behavioral dependency, not a structural one — see #36 for splitting
-# this into a dedicated `check` command separate from structural `validate`.
-# Without it, task-respond.sh writes human-*.md artifacts that conductor-skill
-# returns empty for, so the conductor silently skips them and tasks strand.
-if any(spec.get("mode") == "manual" for spec in working.values()):
-    has_human_handler = any(k == "human" or k.startswith("human:") for k in conductor_skills)
-    if not has_human_handler:
-        err("topology has mode:manual stage(s) but conductor_skills declares no 'human' "
-            "handler — human artifacts will be silently dropped; "
-            "add: \"conductor_skills\": {\"human\": \"conductor/on-human-decision\"}")
-
 # --- destination resolver ---------------------------------------------------
 def check_dest(to, where):
     if to in stage_set or to in SPECIAL_DESTS:
@@ -205,6 +194,44 @@ if errors:
     sys.exit(1)
 
 print(f"Topology OK: {t['name']} ({len(stages)} stages, integration={t['integration']})")
+PY
+    ;;
+
+  check)
+    [[ -f "$PATH_JSON" ]] || { echo "Topology not found: $PATH_JSON" >&2; exit 1; }
+    # Structural gate first — fail fast before running behavioral checks
+    "$SCRIPTS_DIR/topology-load.sh" validate "$REF"
+    # Behavioral completeness checks
+    python3 - "$PATH_JSON" << 'PY'
+import json, sys
+
+path = sys.argv[1]
+errors = []
+
+with open(path) as f:
+    t = json.load(f)
+
+def err(msg): errors.append(msg)
+
+working = t.get("working_stages", {})
+conductor_skills = t.get("conductor_skills", {})
+
+# --- mode:manual stages need a 'human' handler in conductor_skills -----
+# Without it, task-respond.sh writes human-*.md artifacts that conductor-skill
+# returns empty for, so the conductor silently skips them and tasks strand.
+if any(spec.get("mode") == "manual" for spec in working.values()):
+    has_human_handler = any(k == "human" or k.startswith("human:") for k in conductor_skills)
+    if not has_human_handler:
+        err("topology has mode:manual stage(s) but conductor_skills declares no 'human' "
+            "handler — human artifacts will be silently dropped; "
+            "add: \"conductor_skills\": {\"human\": \"conductor/on-human-decision\"}")
+
+if errors:
+    for e in errors: print(f"  - {e}", file=sys.stderr)
+    print(f"Topology behaviorally incomplete: {path}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"Topology check passed: {t['name']}")
 PY
     ;;
 

@@ -42,10 +42,11 @@ done
   ${TEST_CMD:+--test-cmd "$TEST_CMD"} \
   ${KANBAN_SERVER:+--kanban-server} || exit 1
 
-# Resolve and validate the topology before doing any work — fail fast.
+# Resolve and check the topology before doing any work — fail fast.
+# `check` runs structural validate then behavioral completeness (e.g. manual stages need a human handler).
 TOPOLOGY_FILE="$("$SCRIPTS_DIR/topology-load.sh" resolve "$TOPOLOGY")" || {
   echo "Unknown topology: $TOPOLOGY (looked in $ROOT_DIR/topologies)" >&2; exit 1; }
-"$SCRIPTS_DIR/topology-load.sh" validate "$TOPOLOGY_FILE" || exit 1
+"$SCRIPTS_DIR/topology-load.sh" check "$TOPOLOGY_FILE" || exit 1
 
 # The topology's integration model must have a matching adapter — fail fast.
 # shellcheck source=scripts/integration-resolve.sh
