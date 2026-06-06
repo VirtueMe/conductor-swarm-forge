@@ -20,6 +20,7 @@ consistent with `workforces/*.json`). The active topology is selected with
 | `stages` | string[] | Ordered list of kanban columns (the nodes) |
 | `working_stages` | object | Stages where work happens — maps stage → executor |
 | `transitions` | object | Event → ordered list of guarded rules (the edges) |
+| `conductor_skills` | object | *(optional)* Maps artifact event types to conductor skills |
 | `integration_macros` | object | Reusable rule groups specific to the integration model |
 
 Stages listed in `stages` but absent from `working_stages` (e.g. `backlog`,
@@ -72,6 +73,36 @@ genuinely halts until the human responds (or the timeout fires).
 
 > The default `software-dev` topology uses only `auto` stages. `manual` is part of
 > the schema seam so human gates can be added later (#7) without re-cutting it.
+
+## Conductor skills
+
+`conductor_skills` is an **optional** map that controls how the conductor dispatches
+incoming work artifacts to its own skills. The conductor's watch loop calls
+`topology-load.sh conductor-skill <type> <outcome>` for each artifact it receives.
+
+**Lookup order:**
+1. `conductor_skills["{type}:{outcome}"]` — fully qualified override
+2. `conductor_skills["{type}"]` — type-level catch-all (any outcome for this type)
+3. Naming convention `conductor/on-{type}-{outcome}` — automatic fallback for
+   standard event types: `signal`, `validation`, `review`, `merge`
+4. Empty (log + skip) — for unknown or ignored types (`assigned`, `progress`)
+
+Standard topologies omit `conductor_skills` entirely — the naming convention covers
+all built-in events. A topology that introduces **non-standard event types** (e.g.
+`human` for `mode: manual` stages) must declare the handler here; otherwise the
+conductor silently ignores those artifacts and tasks strand.
+
+```json
+"conductor_skills": {
+  "human": "conductor/on-human-decision"
+}
+```
+
+Key format: `"{type}"` matches any outcome for that type. `"{type}:{outcome}"`
+matches one specific outcome and takes priority over the type-level entry.
+
+**Validation:** If any working stage has `mode: manual`, the validator requires at
+least one `human` or `human:<decision>` entry in `conductor_skills`.
 
 ## Transitions
 
