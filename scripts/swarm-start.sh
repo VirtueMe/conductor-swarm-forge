@@ -77,6 +77,8 @@ fi
 cd "$TARGET_DIR"
 
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
+# CONDUCTOR_POLL_INTERVAL — seconds the conductor sleeps between polls when the
+# artifact queue is empty (default 3). Written to config.md so the conductor can read it.
 # WORKFORCE was resolved and existence-checked above (from --workforce).
 
 echo "Target : $TARGET_DIR"
@@ -117,6 +119,10 @@ mkdir -p \
   "$CONDUCTOR_DIR/tasks" \
   "$CONDUCTOR_DIR/work" \
   "$CONDUCTOR_DIR/architect-inbox"
+
+# Cursor file for the conductor's batch-drain loop — initialised to now so the
+# startup scan owns pre-existing artifacts and the poll loop owns what comes after.
+touch "$CONDUCTOR_DIR/last-poll"
 
 # Kanban columns come from the topology's stage list (one stage per line)
 while IFS= read -r stage; do
@@ -169,9 +175,10 @@ fi
 
 {
   printf -- '---\n'
-  printf 'lang: %s\n'     "${LANG:-}"
-  printf 'test-cmd: %s\n' "${TEST_CMD:-}"
-  printf 'topology: %s\n' "$TOPOLOGY"
+  printf 'lang: %s\n'          "${LANG:-}"
+  printf 'test-cmd: %s\n'      "${TEST_CMD:-}"
+  printf 'topology: %s\n'      "$TOPOLOGY"
+  printf 'poll-interval: %s\n' "${CONDUCTOR_POLL_INTERVAL:-3}"
   printf -- '---\n'
 } > "$CONDUCTOR_DIR/config.md"
 echo "Topology : $TOPOLOGY"
