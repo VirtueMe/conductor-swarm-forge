@@ -207,6 +207,17 @@ ADAPTER_FILE="$ADAPTERS_DIR/${ADAPTER_NAME}.sh"
 # shellcheck source=/dev/null
 source "$ADAPTER_FILE"
 
+# Conductor launch-time params (tuning bag) — handed to the adapter verbatim.
+CONDUCTOR_PARAMS=$(python3 - "$WORKFORCE" "conductor" << 'EOF'
+import json, sys
+wf = json.load(open(sys.argv[1]))
+for m in wf["members"]:
+    if m["role"] == sys.argv[2]:
+        print(json.dumps(m.get("params", {}))); sys.exit(0)
+print("{}")
+EOF
+)
+
 SKILL_CONTENT=$(cat "$PROMPTS_DIR/conductor.prompt")
 TASK_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG: %s' \
   "$TARGET_DIR/$CONDUCTOR_DIR/skills" "$TARGET_DIR" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" "${LANG:-unknown}")"
@@ -233,6 +244,16 @@ EOF
   [[ -f "$ARCH_ADAPTER_FILE" ]] || { echo "Architect adapter not found: $ARCH_ADAPTER_FILE" >&2; exit 1; }
   # shellcheck source=/dev/null
   source "$ARCH_ADAPTER_FILE"
+
+  ARCH_PARAMS=$(python3 - "$WORKFORCE" "architect" << 'EOF'
+import json, sys
+wf = json.load(open(sys.argv[1]))
+for m in wf["members"]:
+    if m["role"] == sys.argv[2]:
+        print(json.dumps(m.get("params", {}))); sys.exit(0)
+print("{}")
+EOF
+)
 
   ARCH_SKILL=$(cat "$PROMPTS_DIR/architect.prompt")
   BRIEF_CONTENT=$(cat "$BRIEF_FILE")
@@ -281,8 +302,8 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "Attaching to existing tmux session '$SESSION'"
 else
   echo "Starting tmux session '$SESSION'"
-  adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR"
-  [[ -n "$BRIEF_FILE" ]] && adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR"
+  adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR" "$CONDUCTOR_PARAMS"
+  [[ -n "$BRIEF_FILE" ]] && adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR" "${ARCH_PARAMS:-}"
 
   # Kill kanban server automatically when the tmux session closes
   if [[ "$KANBAN_SERVER" == true ]]; then

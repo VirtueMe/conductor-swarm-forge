@@ -62,6 +62,21 @@ sys.stderr.write(f"No adapter found for role: {sys.argv[2]}\n"); sys.exit(1)
 EOF
 }
 
+# Read a role's launch-time params (the tuning bag) from the workforce JSON as a
+# compact JSON string. Empty object when the member has no `params`. The adapter
+# owns translation to CLI flags, so we hand it the JSON verbatim. Requires python3.
+get_params() {
+  local role="$1"
+  python3 - "$WORKFORCE" "$role" << 'EOF'
+import json, sys
+wf = json.load(open(sys.argv[1]))
+for m in wf["members"]:
+    if m["role"] == sys.argv[2]:
+        print(json.dumps(m.get("params", {}))); sys.exit(0)
+print("{}")
+EOF
+}
+
 # Map a worker-type (role) to its working stage from the topology. worker-spawn
 # is invoked with a ROLE, but the topology's skill accessor is keyed by STAGE, so
 # we find the working stage whose role equals the worker-type. Kept local (rather
@@ -176,6 +191,7 @@ adapter_write_briefing \
   "$WORKTREE_PATH" "$TASK_ID" "$SKILL_CONTENT" "$TASK_BODY" \
   "$SCRIPTS_DIR" "$PROJECT_DIR" "$BRANCH" "${LANG:-}" "${TEST_CMD:-}"
 
-adapter_launch "$SESSION" "${WORKER_TYPE}-${TASK_ID}" "$WORKTREE_PATH" "$PROJECT_DIR"
+WORKER_PARAMS=$(get_params "$WORKER_TYPE")
+adapter_launch "$SESSION" "${WORKER_TYPE}-${TASK_ID}" "$WORKTREE_PATH" "$PROJECT_DIR" "$WORKER_PARAMS"
 
 echo "Spawned $WORKER_TYPE ($ADAPTER_NAME) for task $TASK_ID — skill: $SKILL_PATH"

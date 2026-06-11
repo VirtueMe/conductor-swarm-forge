@@ -70,6 +70,34 @@ ${test_cmd_line}
 EOF
 }
 
+# Translate a member's params (JSON) into claude CLI flags. Only the keys this
+# adapter understands are emitted; everything else is ignored, so a workforce can
+# carry tuning other adapters use without breaking this one.
+#   model  → --model <model>   (open set — left for the CLI to validate)
+#   effort → --effort <level>  (closed set — validated here, fail fast)
+# Prints a single shell-quoted flag string on stdout; exits non-zero with a
+# message on an unsupported effort, aborting the spawn before launch. Requires python3.
+adapter_params_to_flags() {
+  local params_json="${1:-}"
+  python3 - "$params_json" << 'EOF'
+import json, sys, shlex
+EFFORT = ("low", "medium", "high", "xhigh", "max")
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+p = json.loads(raw) if raw.strip() else {}
+out = []
+if p.get("model"):
+    out += ["--model", str(p["model"])]
+if p.get("effort"):
+    eff = str(p["effort"])
+    if eff not in EFFORT:
+        sys.stderr.write(
+            f"claude-code: unsupported effort '{eff}' (allowed: {', '.join(EFFORT)})\n")
+        sys.exit(2)
+    out += ["--effort", eff]
+print(" ".join(shlex.quote(x) for x in out))
+EOF
+}
+
 # Launch a claude session — creates the tmux session if it doesn't exist yet,
 # otherwise adds a new window to the existing session.
 # Arguments:
@@ -77,14 +105,19 @@ EOF
 #   $2  window name
 #   $3  worktree path (relative to root dir)
 #   $4  root dir
+#   $5  member params as JSON (optional) — translated to CLI flags
 adapter_launch() {
   local session="$1"
   local window_name="$2"
   local worktree="$3"
   local root_dir="$4"
+  local params_json="${5:-}"
   local briefing="$root_dir/$worktree/CLAUDE.md"
+  local param_flags
+  param_flags=$(adapter_params_to_flags "$params_json")
   local cmd="cd '$root_dir/$worktree' && claude \
     --permission-mode acceptEdits \
+    ${param_flags} \
     --append-system-prompt-file '$briefing' \
     -n '$window_name' \
     \"\$(cat '$briefing')\""

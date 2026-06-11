@@ -1,11 +1,11 @@
 {
   "name": "marketing",
   "members": [
-    { "role": "conductor",    "agent": "claude", "adapter": "claude-code" },
-    { "role": "architect",    "agent": "claude", "adapter": "claude-code" },
-    { "role": "drafter",      "agent": "claude", "adapter": "claude-code" },
-    { "role": "fact-checker", "agent": "claude", "adapter": "claude-code" },
-    { "role": "editor",       "agent": "claude", "adapter": "claude-code" },
-    { "role": "publisher",    "agent": "claude", "adapter": "claude-code" }
+    { "role": "conductor",    "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "architect",    "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "drafter",      "adapter": "claude-code", "params": { "model": "claude-sonnet-4-6" } },
+    { "role": "fact-checker", "adapter": "claude-code", "params": { "model": "claude-haiku-4-5-20251001" } },
+    { "role": "editor",       "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "publisher",    "adapter": "claude-code", "params": { "model": "claude-sonnet-4-6" } }
   ]
 }
