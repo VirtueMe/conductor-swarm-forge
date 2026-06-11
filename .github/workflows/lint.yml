@@ -33,3 +33,43 @@ jobs:
         run: |
           find adapters integrations scripts -name '*.sh' -print0 \
             | xargs -0 -r shellcheck -x
+
+  workforce-schema:
+    name: workforce schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: install validator
+        run: pip install jsonschema
+
+      - name: validate workforces against schema
+        run: |
+          python3 - << 'EOF'
+          import glob, json, sys
+          from jsonschema import Draft7Validator
+
+          schema = json.load(open("workforces/workforce.schema.json"))
+          Draft7Validator.check_schema(schema)
+          validator = Draft7Validator(schema)
+
+          fail = False
+          for path in sorted(glob.glob("workforces/*.json")):
+              # the schema itself lives in workforces/ too — don't validate it against itself
+              if path.endswith("workforce.schema.json"):
+                  continue
+              data = json.load(open(path))
+              errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
+              if errors:
+                  fail = True
+                  for e in errors:
+                      loc = "/".join(map(str, e.path)) or "(root)"
+                      print(f"::error file={path}::{loc}: {e.message}")
+              else:
+                  print(f"{path}: ok")
+          sys.exit(1 if fail else 0)
+          EOF

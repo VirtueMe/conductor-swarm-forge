@@ -1,11 +1,11 @@
 {
   "name": "default",
   "members": [
-    { "role": "conductor",  "agent": "claude", "adapter": "claude-code" },
-    { "role": "architect",  "agent": "claude", "adapter": "claude-code" },
-    { "role": "coder",      "agent": "claude", "adapter": "claude-code" },
-    { "role": "validator",  "agent": "claude", "adapter": "claude-code" },
-    { "role": "reviewer",   "agent": "claude", "adapter": "claude-code" },
-    { "role": "merger",     "agent": "claude", "adapter": "claude-code" }
+    { "role": "conductor", "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "architect", "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "coder",     "adapter": "claude-code", "params": { "model": "claude-sonnet-4-6" } },
+    { "role": "validator", "adapter": "claude-code", "params": { "model": "claude-haiku-4-5-20251001" } },
+    { "role": "reviewer",  "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "merger",    "adapter": "claude-code", "params": { "model": "claude-sonnet-4-6" } }
   ]
 }

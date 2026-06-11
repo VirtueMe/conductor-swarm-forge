@@ -51,14 +51,45 @@ ${test_cmd_line}
 EOF
 }
 
+# Translate a member's params (JSON) into codex CLI flags. Only the keys this
+# adapter understands are emitted; everything else is ignored.
+#   model  → --model <model>                       (open set — left for the CLI to validate)
+#   effort → -c model_reasoning_effort=<effort>    (closed set — validated here, fail fast)
+# Prints a single shell-quoted flag string on stdout; exits non-zero with a
+# message on an unsupported effort, aborting the spawn before launch. Requires python3.
+adapter_params_to_flags() {
+  local params_json="${1:-}"
+  python3 - "$params_json" << 'EOF'
+import json, sys, shlex
+EFFORT = ("minimal", "low", "medium", "high")
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+p = json.loads(raw) if raw.strip() else {}
+out = []
+if p.get("model"):
+    out += ["--model", str(p["model"])]
+if p.get("effort"):
+    eff = str(p["effort"])
+    if eff not in EFFORT:
+        sys.stderr.write(
+            f"codex: unsupported effort '{eff}' (allowed: {', '.join(EFFORT)})\n")
+        sys.exit(2)
+    out += ["-c", f"model_reasoning_effort={eff}"]
+print(" ".join(shlex.quote(x) for x in out))
+EOF
+}
+
 # Launch a codex session — creates the tmux session if it doesn't exist yet,
 # otherwise adds a new window to the existing session.
+#   $5  member params as JSON (optional) — translated to CLI flags
 adapter_launch() {
   local session="$1"
   local window_name="$2"
   local worktree="$3"
   local root_dir="$4"
-  local cmd="cd '$root_dir/$worktree' && codex"
+  local params_json="${5:-}"
+  local param_flags
+  param_flags=$(adapter_params_to_flags "$params_json")
+  local cmd="cd '$root_dir/$worktree' && codex ${param_flags}"
 
   if tmux has-session -t "$session" 2>/dev/null; then
     tmux new-window -t "$session" -n "$window_name" "$cmd"

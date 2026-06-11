@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/VirtueMe/conductor-swarm-forge/workforces/workforce.schema.json",
+  "title": "Workforce",
+  "description": "A roster binding each topology role to an agent adapter and its launch-time tuning. See docs/workforce-schema.md for the prose contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "members"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Workforce identifier; matches the file name (workforces/<name>.json) and the --workforce flag."
+    },
+    "members": {
+      "type": "array",
+      "description": "One entry per role the active topology spawns.",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/member" }
+    }
+  },
+  "definitions": {
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "adapter"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "Topology role this member runs (must match a working-stage role in the active topology)."
+        },
+        "adapter": {
+          "type": "string",
+          "description": "Agent backend; resolves to adapters/<adapter>.sh.",
+          "enum": ["claude-code", "codex"]
+        },
+        "params": {
+          "$ref": "#/definitions/params"
+        }
+      }
+    },
+    "params": {
+      "type": "object",
+      "description": "Launch-time tuning bag. The adapter translates the keys it understands into CLI flags and ignores the rest, so extra keys are permitted (and forwarded-or-dropped per adapter).",
+      "additionalProperties": true,
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model id passed to the adapter's CLI (e.g. claude-opus-4-8). claude-code → --model; codex → --model. Validated by the CLI at launch, not here."
+        },
+        "effort": {
+          "type": "string",
+          "description": "Reasoning effort. claude-code → --effort (low|medium|high|xhigh|max); codex → -c model_reasoning_effort=<effort> (minimal|low|medium|high). The accepted set is adapter-specific, so this is a free string validated by the CLI at launch, not by the schema."
+        }
+      }
+    }
+  }
+}

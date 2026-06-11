@@ -257,7 +257,7 @@ conductor-swarm-forge/
 │   ├── coder/ reviewer/ merger/ validator/      software-dev roles
 │   ├── drafter/ fact-checker/ editor/ publisher/ marketing roles
 ├── adapters/        Agent backends: claude-code.sh, codex.sh
-├── workforces/      Role → agent → adapter mapping (default.json, marketing.json)
+├── workforces/      Role → adapter + tuning params (default.json, marketing.json)
 ├── examples/        Sample briefs (hunt-the-wumpus)
 └── kanban-board.js  Real-time SSE kanban dashboard
 ```
@@ -274,29 +274,36 @@ and local copies of `skills/` and `prompts/`.
 | --- | --- | --- |
 | `CONDUCTOR_DIR` | `.conductor` | Location of runtime state |
 | `PORT` | `3000` | Starting port for the kanban server |
-| `WORKFORCE` | `workforces/default.json` | Role/adapter assignments |
+| `WORKFORCE` | `workforces/default.json` | Role → adapter + tuning params |
 
 Per-project settings (`lang`, `test-cmd`) are written to `.conductor/config.md`
 at startup.
 
 ### Workforce
 
-`workforces/default.json` maps each role to an agent and an adapter. Point a role
-at a different adapter to run it on a different backend:
+`workforces/default.json` maps each role to an **adapter** (which backend runs it)
+and optional **params** (how that backend is tuned at launch — model, reasoning
+effort, …). Point a role at a different adapter to run it on a different backend,
+or change its `params` to retune it — neither touches the topology:
 
 ```json
 {
   "name": "default",
   "members": [
-    { "role": "conductor", "agent": "claude", "adapter": "claude-code" },
-    { "role": "architect", "agent": "claude", "adapter": "claude-code" },
-    { "role": "coder",     "agent": "claude", "adapter": "claude-code" },
-    { "role": "validator", "agent": "claude", "adapter": "claude-code" },
-    { "role": "reviewer",  "agent": "claude", "adapter": "claude-code" },
-    { "role": "merger",    "agent": "claude", "adapter": "claude-code" }
+    { "role": "conductor", "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "architect", "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "coder",     "adapter": "claude-code", "params": { "model": "claude-sonnet-4-6" } },
+    { "role": "validator", "adapter": "claude-code", "params": { "model": "claude-haiku-4-5-20251001" } },
+    { "role": "reviewer",  "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "merger",    "adapter": "claude-code", "params": { "model": "claude-sonnet-4-6" } }
   ]
 }
 ```
+
+The adapter translates `params` into its own CLI flags (`claude --model …`, `codex
+-c model_reasoning_effort=…`) and ignores keys it doesn't support. See
+[`docs/workforce-schema.md`](docs/workforce-schema.md) for the full contract;
+it's enforced by `workforces/workforce.schema.json` in CI.
 
 ---
 
