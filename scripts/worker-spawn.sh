@@ -140,9 +140,11 @@ TASK_FILE="$CONDUCTOR_DIR/tasks/${TASK_ID}.md"
 CONFIG_FILE="$CONDUCTOR_DIR/config.md"
 LANG=""
 TEST_CMD=""
+BASE_BRANCH=""
 if [[ -f "$CONFIG_FILE" ]]; then
   LANG=$(yaml_field "lang" "$CONFIG_FILE")
   TEST_CMD=$(yaml_field "test-cmd" "$CONFIG_FILE")
+  BASE_BRANCH=$(yaml_field "base-branch" "$CONFIG_FILE")
 fi
 
 # Load the integration adapter (how work is isolated/consolidated) from the
@@ -170,7 +172,7 @@ TASK_BODY=$(yaml_body "$TASK_FILE")
 # Prepare the workspace via the integration adapter. It prints "<workspace>\t<branch>"
 # (branch empty for branchless integration models).
 TITLE=$(yaml_field "title" "$TASK_FILE")
-IFS=$'\t' read -r WORKTREE_PATH BRANCH < <(integration_prepare_workspace "$TASK_ID" "$WORKER_TYPE" "$TITLE")
+IFS=$'\t' read -r WORKTREE_PATH BRANCH < <(integration_prepare_workspace "$TASK_ID" "$WORKER_TYPE" "$TITLE" "${BASE_BRANCH:-}")
 
 # Write assigned artifact, then move the card to the role's working stage.
 # stage_for_role maps the role back to the stage that spawns it: for the coder

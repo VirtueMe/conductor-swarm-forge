@@ -5,7 +5,10 @@ A reviewer rejected this task. You are here to address their findings.
 ## Steps
 
 1. Read the `review-*.md` artifact in `$CONDUCTOR_DIR/work/$TASK_ID/` — it contains specific findings you must address.
-2. Read the current state of the code (use `git diff main`).
+2. Read the current state of the code (use `git diff "$BASE"`, with the base branch read from config):
+   ```bash
+   BASE=$(grep '^base-branch:' "$CONDUCTOR_DIR/config.md" | awk '{print $2}'); BASE=${BASE:-main}
+   ```
 3. Signal that you understand the findings and have a fix plan:
    ```bash
    $SCRIPTS_DIR/task-signal.sh --task $TASK_ID --type progress --notes "addressing review: ..."

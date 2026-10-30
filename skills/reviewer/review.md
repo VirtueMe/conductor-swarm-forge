@@ -5,9 +5,12 @@ You are verifying that the coder's work is correct, complete, and simple.
 ## Steps
 
 1. Read the task description and acceptance criteria in this briefing.
-2. Run `git diff main` to see what changed. If the diff is empty, read only the files
-   specified in the task description to verify the implementation exists and is correct.
-   Do not read the entire codebase.
+2. Read the base branch, then run `git diff "$BASE"` to see what changed:
+   ```bash
+   BASE=$(grep '^base-branch:' "$CONDUCTOR_DIR/config.md" | awk '{print $2}'); BASE=${BASE:-main}
+   ```
+   If the diff is empty, read only the files specified in the task description to verify
+   the implementation exists and is correct. Do not read the entire codebase.
 3. Run the test suite.
 4. Evaluate through Rich Hickey's simplicity lens:
    - **Complection** — has the coder tangled concerns that should be separate?

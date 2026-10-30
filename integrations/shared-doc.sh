@@ -12,7 +12,7 @@
 # integration-resolve.sh, mirroring integrations/git.sh. Both contract functions
 # return through stdout:
 #
-#   integration_prepare_workspace <task_id> <worker_type> <title>
+#   integration_prepare_workspace <task_id> <worker_type> <title> [<base_branch>]
 #       Ensure the task's workspace exists. Prints a single tab-separated line:
 #         <workspace>\t<branch>
 #       The branch field is EMPTY — shared-doc is branchless. The workspace is
@@ -25,8 +25,9 @@
 #       any @merge guard `free`; the marketing topology has no @merge at all).
 
 integration_prepare_workspace() {
-  # Contract args: <task_id> <worker_type> <title>. shared-doc keys the workspace
-  # by task only and has no branches, so worker_type/title are unused here.
+  # Contract args: <task_id> <worker_type> <title> [<base_branch>]. shared-doc keys
+  # the workspace by task only and has no branches, so worker_type/title/base are
+  # unused here.
   local task_id="$1"
   local workspace="deliverables/${task_id}"
 

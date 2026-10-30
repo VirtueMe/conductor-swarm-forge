@@ -13,9 +13,10 @@ LANG="typescript"
 TEST_CMD=""
 TOPOLOGY="software-dev"
 WORKFORCE_NAME="default"
+BASE_BRANCH=""
 
 usage() {
-  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--workforce|-wf <name>] [--kanban-server|-cbs]" >&2
+  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--workforce|-wf <name>] [--base-branch|-bb <name>] [--kanban-server|-cbs]" >&2
   exit 1
 }
 
@@ -28,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     --test-cmd|-tc)       TEST_CMD="$2"; shift 2 ;;
     --topology|-tp)       TOPOLOGY="$2"; shift 2 ;;
     --workforce|-wf)      WORKFORCE_NAME="$2"; shift 2 ;;
+    --base-branch|-bb)    BASE_BRANCH="$2"; shift 2 ;;
     --help|-h)            usage ;;
     -*)                   echo "Unknown flag: $1" >&2; usage ;;
     *)
@@ -113,6 +115,20 @@ EOF
   git commit -q -m "chore: add swarm-forge .gitignore"
 fi
 
+# ── Base branch ───────────────────────────────────────────────────────────────
+
+# Task branches fork from the base branch and merges land on it. Without
+# --base-branch the repo's default branch is used as-is (nothing created or
+# switched). A named base is reused if it exists, else created from the default.
+if [[ -z "$BASE_BRANCH" ]]; then
+  BASE_BRANCH=$("$SCRIPTS_DIR/base-branch-resolve.sh" --default 2>/dev/null) \
+    || BASE_BRANCH=$(git symbolic-ref --short HEAD)
+  echo "Base     : $BASE_BRANCH (default)"
+else
+  read -r BASE_CASE _ < <("$SCRIPTS_DIR/base-branch-resolve.sh" "$BASE_BRANCH") || exit 1
+  echo "Base     : $BASE_BRANCH ($BASE_CASE)"
+fi
+
 # ── Conductor dirs ────────────────────────────────────────────────────────────
 
 mkdir -p \
@@ -178,6 +194,7 @@ fi
   printf 'lang: %s\n'          "${LANG:-}"
   printf 'test-cmd: %s\n'      "${TEST_CMD:-}"
   printf 'topology: %s\n'      "$TOPOLOGY"
+  printf 'base-branch: %s\n'   "$BASE_BRANCH"
   printf 'poll-interval: %s\n' "${CONDUCTOR_POLL_INTERVAL:-3}"
   printf -- '---\n'
 } > "$CONDUCTOR_DIR/config.md"
@@ -224,7 +241,7 @@ TASK_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG
 
 adapter_write_briefing \
   "." "conductor" "$SKILL_CONTENT" "$TASK_BODY" \
-  "$SCRIPTS_DIR" "$TARGET_DIR" "main" "${LANG:-}"
+  "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"
 
 echo "Conductor initialized (adapter: $ADAPTER_NAME)"
 
@@ -264,7 +281,7 @@ EOF
   mkdir -p ".worktrees/architect"
   adapter_write_briefing \
     ".worktrees/architect" "architect" "$ARCH_SKILL" "$ARCH_BODY" \
-    "$SCRIPTS_DIR" "$TARGET_DIR" "main" "${LANG:-}"
+    "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"
 
   echo "Architect briefed from: $(basename "$BRIEF_FILE") (adapter: $ARCH_ADAPTER_NAME)"
 fi
