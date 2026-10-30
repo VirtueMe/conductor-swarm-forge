@@ -166,6 +166,7 @@ from there. Watch the board fill up at `http://localhost:3000`.
 | `--test-cmd <cmd>` | `-tc` | none | Test command. If set, all code routes through validation; if not, it skips straight to review |
 | `--topology <name>` | `-tp` | `software-dev` | Workflow topology (`topologies/<name>.json`): stages, roles, transitions, integration |
 | `--workforce <name>` | `-wf` | `default` | Workforce (`workforces/<name>.json`): which agent/adapter runs each role |
+| `--base-branch <name>` | `-bb` | repo default (`main`) | Branch the swarm works from: task branches fork from it and merges land on it. Reused if it exists locally or as `origin/<name>`; otherwise created from the default branch. `main` is left untouched. Recorded as `base-branch` in `.conductor/config.md` |
 | `--kanban-server` | `-cbs` | off | Start the Node.js kanban dashboard |
 
 Supported `--lang` values include `typescript`/`javascript`, `python`, `rust`,

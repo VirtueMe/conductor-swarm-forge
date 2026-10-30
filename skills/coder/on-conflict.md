@@ -5,16 +5,17 @@ A merger aborted the rebase because of conflicts. You are here to resolve them.
 ## Steps
 
 1. Read the `merge-*.md` artifact in `$CONDUCTOR_DIR/work/$TASK_ID/` — it lists exactly which files conflicted and describes what conflicted with what.
-2. Fetch latest main and attempt the rebase manually to see the conflict markers:
+2. Fetch the latest base branch (`main` unless the project configured another) and attempt the rebase manually to see the conflict markers:
    ```bash
-   git fetch origin main
-   git rebase origin/main
+   BASE=$(grep '^base-branch:' "$CONDUCTOR_DIR/config.md" | awk '{print $2}'); BASE=${BASE:-main}
+   git fetch origin "$BASE"
+   git rebase "origin/$BASE"
    ```
 3. Signal that you are working on the conflict:
    ```bash
    $SCRIPTS_DIR/task-signal.sh --task $TASK_ID --type progress --notes "resolving conflict in: ..."
    ```
-4. Resolve the conflicts. Keep the intent of both this branch and main — do not simply pick one side.
+4. Resolve the conflicts. Keep the intent of both this branch and the base branch — do not simply pick one side.
 5. Continue the rebase:
    ```bash
    git add <resolved-files>

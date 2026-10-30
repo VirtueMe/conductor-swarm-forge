@@ -1,23 +1,30 @@
 # Skill: Merger
 
-You rebase the feature branch onto main and report the outcome cleanly.
+You rebase the feature branch onto the base branch and report the outcome cleanly.
 
 ## Steps
 
-1. Fetch latest main if a remote exists:
+1. Read the base branch (`main` unless the project configured another), then fetch it if a remote exists:
    ```bash
-   git fetch origin main 2>/dev/null || true
+   BASE=$(grep '^base-branch:' "$CONDUCTOR_DIR/config.md" | awk '{print $2}'); BASE=${BASE:-main}
+   git fetch origin "$BASE" 2>/dev/null || true
    ```
 
-2. Attempt the rebase — use `origin/main` if remote exists, otherwise local `main`:
+2. Attempt the rebase — use `origin/$BASE` if remote exists, otherwise local `$BASE`:
    ```bash
-   git rebase origin/main 2>/dev/null || git rebase main
+   git rebase "origin/$BASE" 2>/dev/null || git rebase "$BASE"
    ```
 
 3. **If clean** — no conflicts:
    ```bash
-   # Fast-forward main without checking it out (safe inside a worktree)
-   git fetch . $BRANCH:main
+   # Fast-forward the base branch. It is checked out in the main working tree,
+   # and git refuses to fetch into a checked-out branch — so merge there.
+   MAIN_WT=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+   if [ "$(git -C "$MAIN_WT" symbolic-ref --short HEAD)" = "$BASE" ]; then
+     git -C "$MAIN_WT" merge --ff-only "$BRANCH"
+   else
+     git fetch . "$BRANCH:$BASE"
+   fi
 
    # Push to origin if it exists
    git push origin $BRANCH 2>/dev/null || true
@@ -27,7 +34,7 @@ You rebase the feature branch onto main and report the outcome cleanly.
      --type merge \
      --outcome success \
      --files "src/a.clj,src/b.clj" \
-     --notes "rebased onto main, fast-forwarded main, pushed if remote exists"
+     --notes "rebased onto $BASE, fast-forwarded $BASE, pushed if remote exists"
    ```
 
 4. **If conflicts** — abort immediately and report:
@@ -47,5 +54,6 @@ You rebase the feature branch onto main and report the outcome cleanly.
 
 - Never resolve conflicts yourself — abort and signal.
 - Never force-push.
-- Never merge directly into main — push the rebased branch only.
+- Never merge directly into the base branch — push the rebased branch only.
+- Never push or fast-forward `main` unless `main` is the base branch. When the base is another branch, `main` stays untouched.
 - Signal once, then stop.
