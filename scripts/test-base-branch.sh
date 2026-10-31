@@ -138,6 +138,50 @@ R8="$WORK/nobase"; new_repo "$R8"
 assert_eq "workspace created from HEAD" \
   "$(git -C "$R8" rev-parse feature/t8-add-t8)" "$(git -C "$R8" rev-parse main)"
 
+echo "── concurrent merges on disjoint files race on the base"
+# Mirrors the merger skill's steps 1-3: fetch/rebase, fast-forward, and on a
+# failed fast-forward (base moved) retry from the rebase, at most 3 attempts.
+# Prints the attempt count on success; returns 1 if every attempt lost the race.
+land_with_retry() {
+  local repo="$1" base="$2" wt="$3" branch="$4" attempt
+  for attempt in 1 2 3; do
+    git -C "$wt" rebase -q "$base"
+    if git -C "$repo" merge -q --ff-only "$branch" 2>/dev/null; then
+      echo "$attempt"; return 0
+    fi
+  done
+  return 1
+}
+
+R9="$WORK/race"; new_repo "$R9"
+(
+  cd "$R9"
+  # shellcheck source=integrations/git.sh
+  source "$ROOT_DIR/integrations/git.sh"
+  IFS=$'\t' read -r WT_A BR_A < <(integration_prepare_workspace t9a coder "Add t9a" main)
+  IFS=$'\t' read -r WT_B BR_B < <(integration_prepare_workspace t9b coder "Add t9b" main)
+  echo a > "$WT_A/a.txt"; git -C "$WT_A" add a.txt; git -C "$WT_A" commit -q -m "feat: t9a"
+  echo b > "$WT_B/b.txt"; git -C "$WT_B" add b.txt; git -C "$WT_B" commit -q -m "feat: t9b"
+  # both mergers rebase onto the same base tip, then race
+  git -C "$WT_A" rebase -q main
+  git -C "$WT_B" rebase -q main
+  printf '%s\n%s\n%s\n%s\n' "$R9/$WT_A" "$BR_A" "$R9/$WT_B" "$BR_B" > "$WORK/race.env"
+)
+{ read -r WT_A; read -r BR_A; read -r WT_B; read -r BR_B; } < "$WORK/race.env"
+
+git -C "$R9" merge -q --ff-only "$BR_A"
+if git -C "$R9" merge -q --ff-only "$BR_B" 2>/dev/null; then
+  fail "second fast-forward is rejected once the base moved"
+else
+  ok "second fast-forward is rejected once the base moved"
+fi
+ATTEMPTS=$(land_with_retry "$R9" main "$WT_B" "$BR_B")
+assert_eq "retry lands the second merge on attempt 1 (re-rebase)" "$ATTEMPTS" "1"
+assert_file "base has first merge"  "$R9/a.txt"
+assert_file "base has second merge" "$R9/b.txt"
+assert_eq "history stays linear (no merge commits)" \
+  "$(git -C "$R9" rev-list --merges main | wc -l | tr -d ' ')" "0"
+
 echo ""
 if (( FAILS > 0 )); then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "All checks passed"
