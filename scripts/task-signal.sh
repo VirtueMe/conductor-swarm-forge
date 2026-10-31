@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
+# shellcheck source=scripts/artifact-name.sh
+source "$SCRIPTS_DIR/artifact-name.sh"
 
 TASK_ID=""
 TYPE=""
@@ -37,31 +40,32 @@ done
 WORK_DIR="$CONDUCTOR_DIR/work/$TASK_ID"
 mkdir -p "$WORK_DIR"
 
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-ARTIFACT="$WORK_DIR/${TYPE}-${TIMESTAMP}.md"
-
-# Build artifact frontmatter
-FM="---"$'\n'
-FM+="type: $TYPE"$'\n'
-FM+="task-id: $TASK_ID"$'\n'
-FM+="timestamp: $TIMESTAMP"$'\n'
-[[ -n "$OUTCOME" ]]     && FM+="outcome: $OUTCOME"$'\n'
-[[ -n "$WORKER_TYPE" ]] && FM+="worker-type: $WORKER_TYPE"$'\n'
-[[ -n "$BRANCH" ]]      && FM+="branch: $BRANCH"$'\n'
-[[ -n "$WORKTREE" ]]    && FM+="worktree: $WORKTREE"$'\n'
+# Build everything except the timestamp line first. The name is claimed (an empty
+# file appears) only once the content is ready, so the conductor never finds an
+# artifact that is empty for longer than one write.
+FM_HEAD="---"$'\n'
+FM_HEAD+="type: $TYPE"$'\n'
+FM_HEAD+="task-id: $TASK_ID"$'\n'
+FM_TAIL=""
+[[ -n "$OUTCOME" ]]     && FM_TAIL+="outcome: $OUTCOME"$'\n'
+[[ -n "$WORKER_TYPE" ]] && FM_TAIL+="worker-type: $WORKER_TYPE"$'\n'
+[[ -n "$BRANCH" ]]      && FM_TAIL+="branch: $BRANCH"$'\n'
+[[ -n "$WORKTREE" ]]    && FM_TAIL+="worktree: $WORKTREE"$'\n'
 if [[ -n "$FILES" ]]; then
-  FM+="files-changed:"$'\n'
+  FM_TAIL+="files-changed:"$'\n'
   IFS=',' read -ra FILE_LIST <<< "$FILES"
   for f in "${FILE_LIST[@]}"; do
-    FM+="  - $(echo "$f" | xargs)"$'\n'
+    FM_TAIL+="  - $(echo "$f" | xargs)"$'\n'
   done
 fi
-FM+="---"$'\n'
-[[ -n "$NOTES" ]] && FM+="$NOTES"$'\n'
+FM_TAIL+="---"$'\n'
+[[ -n "$NOTES" ]] && FM_TAIL+="$NOTES"$'\n'
 
-printf '%s' "$FM" > "$ARTIFACT"
+# Sets ARTIFACT and TIMESTAMP; never reuses the name of an earlier artifact.
+artifact_claim "$WORK_DIR" "$TYPE"
+printf '%s' "${FM_HEAD}timestamp: $TIMESTAMP"$'\n'"${FM_TAIL}" > "$ARTIFACT"
 
 # Regenerate kanban card
-"$(dirname "$0")/task-replay.sh" "$TASK_ID"
+"$SCRIPTS_DIR/task-replay.sh" "$TASK_ID"
 
 echo "$ARTIFACT"

@@ -13,12 +13,15 @@ WORK_DIR="$CONDUCTOR_DIR/work/$ID"
 # Valid columns are the active topology's stages, not a hardcoded list.
 # shellcheck source=scripts/stages-resolve.sh
 source "$SCRIPTS_DIR/stages-resolve.sh"
+# shellcheck source=scripts/artifact-name.sh
+source "$SCRIPTS_DIR/artifact-name.sh"
 VALID_COLUMNS="$(topology_stages "$CONDUCTOR_DIR" | tr '\n' ' ')"
 [[ " $VALID_COLUMNS " == *" $COLUMN "* ]] || { echo "Invalid column: $COLUMN. Valid: $VALID_COLUMNS" >&2; exit 1; }
 
 mkdir -p "$KANBAN_DIR/$COLUMN" "$WORK_DIR"
 
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+# Sets ARTIFACT and TIMESTAMP; never reuses the name of an earlier artifact.
+artifact_claim "$WORK_DIR" moved
 
 # Write moved artifact
 {
@@ -28,7 +31,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
   printf 'timestamp: %s\n' "$TIMESTAMP"
   printf 'to: %s\n' "$COLUMN"
   printf -- '---\n'
-} > "$WORK_DIR/moved-${TIMESTAMP}.md"
+} > "$ARTIFACT"
 
 # Move card from current column to new column, or create it
 for col in $VALID_COLUMNS; do
