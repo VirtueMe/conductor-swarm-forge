@@ -98,3 +98,6 @@ jobs:
 
       - name: test-wf-read
         run: bash scripts/test-wf-read.sh
+
+      - name: test-adapter-briefing
+        run: bash scripts/test-adapter-briefing.sh

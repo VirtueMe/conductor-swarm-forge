@@ -15,12 +15,21 @@ adapter_write_briefing() {
   local lang="${8:-}"
   local test_cmd="${9:-}"
 
+  # Resolve the conductor dir once: CONDUCTOR_DIR may be absolute or relative to
+  # the project root, and prefixing root_dir onto an absolute path doubles it.
+  local full_conductor
+  if [[ "$CONDUCTOR_DIR" == /* ]]; then
+    full_conductor="$CONDUCTOR_DIR"
+  else
+    full_conductor="$root_dir/$CONDUCTOR_DIR"
+  fi
+
   local expanded
   expanded=$(printf '%s' "$skill_content" \
     | sed "s|\$TASK_ID|$task_id|g" \
     | sed "s|\$SCRIPTS_DIR|$scripts_dir|g" \
     | sed "s|\$BRANCH|$branch|g" \
-    | sed "s|\$CONDUCTOR_DIR|$root_dir/$CONDUCTOR_DIR|g")
+    | sed "s|\$CONDUCTOR_DIR|$full_conductor|g")
 
   local lang_line=""
   local test_cmd_line=""
@@ -45,7 +54,7 @@ $task_body
 - Task ID: $task_id
 - Branch: $branch
 - Scripts: $scripts_dir
-- Conductor dir: $root_dir/$CONDUCTOR_DIR
+- Conductor dir: $full_conductor
 ${lang_line}
 ${test_cmd_line}
 EOF
