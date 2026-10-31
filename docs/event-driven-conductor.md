@@ -217,7 +217,27 @@ not claim a rate.
 - **Mid-event crash.** The same rule covers it: the cursor did not move, the
   event replays on restart, and the Phase 0 guard makes the replay safe.
 - **Clock resolution.** The 1 s mtime edge that `test-drain.sh` documents applies
-  unchanged. A processed-artifact ledger is the known fix if it ever matters.
+  to the cursor. The processed-artifact ledger (`scripts/artifact-ledger.sh`)
+  lets a loop read the stream without it: `unprocessed` lists artifacts by what
+  is recorded, not by mtime, and orders them by the timestamp in the file name.
+  It does not fix the write side: `task-signal.sh` names an artifact
+  `<type>-<YYYYMMDD-HHMMSS>.md`, so two artifacts of one type for one task in the
+  same second share a name and the second overwrites the first.
+
+### Ledger and cursor (decision)
+
+The ledger at `$CONDUCTOR_DIR/processed.log` sits **next to** `last-poll`; it does
+not replace it.
+
+- The ledger decides what is processed. A handler that finishes is followed by
+  `artifact-ledger.sh mark <artifact>`.
+- `last-poll` stays as a cheap pre-filter. `unprocessed` scans the whole work tree,
+  which grows with every artifact ever written; a loop that cares about scan cost
+  can narrow the scan with the cursor, as long as it keeps the cursor behind real
+  progress so a same-second file cannot hide.
+- The ledger does not replace the spawn guard. A crash between "handler finished"
+  and `mark` still replays the event, so handlers must stay safe to replay.
+- The script is not wired into `startup.md` yet. That belongs with the Phase 1 loop.
 
 ### Backward compatibility and fallback
 
