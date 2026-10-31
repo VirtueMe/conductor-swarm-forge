@@ -36,7 +36,7 @@ Each member binds one role to an adapter and, optionally, a tuning bag:
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `role` | string | yes | Topology role this member runs. Must match a working-stage `role` in the active topology (`conductor` and `architect` are always present). |
-| `adapter` | enum | yes | Agent backend: `claude-code` · `codex`. Resolves to `adapters/<adapter>.sh`; `swarm-start` fails fast if the file is missing. |
+| `adapter` | enum | yes | Agent backend: `claude-code` · `codex` · `pi`. Resolves to `adapters/<adapter>.sh`; `swarm-start` fails fast if the file is missing. |
 | `params` | object | no | Launch-time tuning bag (below). Omit it to run the adapter on its defaults. |
 
 No other member keys are allowed — in particular there is **no `agent` field**
@@ -50,11 +50,11 @@ model_reasoning_effort=…`), so translation lives in `adapter_launch`, not in t
 caller. Keys the adapter doesn't recognise are ignored, so extra tuning options
 can be added per pack without a schema change.
 
-| Key | Type | claude-code | codex |
-| --- | --- | --- | --- |
-| `model` | string | `--model <model>` | `--model <model>` |
-| `effort` | string | `--effort <level>` (`low`·`medium`·`high`·`xhigh`·`max`) | `-c model_reasoning_effort=<level>` (`minimal`·`low`·`medium`·`high`) |
-| *(other)* | any | ignored | ignored |
+| Key | Type | claude-code | codex | pi |
+| --- | --- | --- | --- | --- |
+| `model` | string | `--model <model>` | `--model <model>` | `--model <model>` (qualify as `provider/id`, e.g. `anthropic/claude-sonnet-4-6`, so an ambiguous id cannot make pi prompt for `--provider`) |
+| `effort` | string | `--effort <level>` (`low`·`medium`·`high`·`xhigh`·`max`) | `-c model_reasoning_effort=<level>` (`minimal`·`low`·`medium`·`high`) | `--thinking <level>` (`off`·`minimal`·`low`·`medium`·`high`·`xhigh`·`max`) |
+| *(other)* | any | ignored | ignored | ignored |
 
 The params object is passed to `adapter_launch` as a JSON string and parsed with
 `python3` inside the adapter (consistent with how `worker-spawn` reads `adapter`),
@@ -63,9 +63,10 @@ adapter-specific flags.
 
 ### Adapter-specific value sets
 
-`effort` is a free string in the schema, not an enum, because the two adapters
+`effort` is a free string in the schema, not an enum, because the adapters
 accept **different** vocabularies — `claude-code` takes `low`·`medium`·`high`·
-`xhigh`·`max`, `codex` takes `minimal`·`low`·`medium`·`high`. A global enum can't
+`xhigh`·`max`, `codex` takes `minimal`·`low`·`medium`·`high`, `pi` takes
+`off`·`minimal`·`low`·`medium`·`high`·`xhigh`·`max`. A global enum can't
 express that split, so the schema only checks that `effort` is a string and each
 **adapter** validates the value against its own closed set: an unsupported effort
 fails fast at spawn (non-zero exit, clear message) rather than launching a process
