@@ -73,3 +73,25 @@ jobs:
                   print(f"{path}: ok")
           sys.exit(1 if fail else 0)
           EOF
+
+  tests:
+    name: test scripts
+    runs-on: ubuntu-latest
+    env:
+      STEP_DELAY: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: configure git identity
+        run: |
+          git config --global user.name  "ci"
+          git config --global user.email "ci@example.invalid"
+
+      - name: test-flow
+        run: bash scripts/test-flow.sh
+
+      - name: test-drain
+        run: bash scripts/test-drain.sh
+
+      - name: test-base-branch
+        run: bash scripts/test-base-branch.sh

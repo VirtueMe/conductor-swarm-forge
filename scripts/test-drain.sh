@@ -138,8 +138,8 @@ ARTIFACT_C="$WORK/task-003/merge-001.md"
 
 step "Advance cursor to file-A mtime (not to 'now')"
 touch -r "$ARTIFACT_A" "$CURSOR"
-CURSOR_TS=$(stat -f '%m' "$CURSOR" 2>/dev/null || stat -c '%Y' "$CURSOR" 2>/dev/null)
-FILE_C_TS=$(stat -f '%m' "$ARTIFACT_C" 2>/dev/null || stat -c '%Y' "$ARTIFACT_C" 2>/dev/null)
+CURSOR_TS=$(stat -c '%Y' "$CURSOR" 2>/dev/null || stat -f '%m' "$CURSOR" 2>/dev/null)
+FILE_C_TS=$(stat -c '%Y' "$ARTIFACT_C" 2>/dev/null || stat -f '%m' "$ARTIFACT_C" 2>/dev/null)
 note "cursor mtime = $CURSOR_TS  |  file-C mtime = $FILE_C_TS"
 if [[ "$CURSOR_TS" -eq "$FILE_C_TS" ]]; then
   note "⚠  same 1-second bucket — filesystem mtime resolution is 1s here; sub-second sleep was not enough."
