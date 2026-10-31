@@ -49,33 +49,13 @@ yaml_body() {
   awk '/^---$/{f++; next} f>=2{print}' "$1"
 }
 
-# Read the adapter name for a role from the workforce JSON (requires python3)
-get_adapter() {
-  local role="$1"
-  python3 - "$WORKFORCE" "$role" << 'EOF'
-import json, sys
-wf = json.load(open(sys.argv[1]))
-for m in wf["members"]:
-    if m["role"] == sys.argv[2]:
-        print(m["adapter"]); sys.exit(0)
-sys.stderr.write(f"No adapter found for role: {sys.argv[2]}\n"); sys.exit(1)
-EOF
-}
-
-# Read a role's launch-time params (the tuning bag) from the workforce JSON as a
-# compact JSON string. Empty object when the member has no `params`. The adapter
-# owns translation to CLI flags, so we hand it the JSON verbatim. Requires python3.
-get_params() {
-  local role="$1"
-  python3 - "$WORKFORCE" "$role" << 'EOF'
-import json, sys
-wf = json.load(open(sys.argv[1]))
-for m in wf["members"]:
-    if m["role"] == sys.argv[2]:
-        print(json.dumps(m.get("params", {}))); sys.exit(0)
-print("{}")
-EOF
-}
+# Per-role workforce fields come from the shared reader (wf_field). params is a
+# compact JSON string — the adapter owns translation to CLI flags, so we hand it
+# over verbatim; `{}` when the member has none.
+# shellcheck source=scripts/wf-read.sh
+source "$SCRIPTS_DIR/wf-read.sh"
+get_adapter() { wf_field "$WORKFORCE" "$1" adapter; }
+get_params()  { wf_field "$WORKFORCE" "$1" params; }
 
 # Map a worker-type (role) to its working stage from the topology. worker-spawn
 # is invoked with a ROLE, but the topology's skill accessor is keyed by STAGE, so
