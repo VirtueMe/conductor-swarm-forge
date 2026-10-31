@@ -123,3 +123,6 @@ jobs:
 
       - name: test-worker-spawn
         run: bash scripts/test-worker-spawn.sh
+
+      - name: test-stage-start
+        run: bash scripts/test-stage-start.sh

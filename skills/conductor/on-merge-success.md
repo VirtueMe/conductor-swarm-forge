@@ -31,16 +31,11 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
    - For each candidate, read its `depends-on` list
    - Check whether every listed ID now has a card in `kanban/done/`
    - If all dependencies are satisfied, move it to `ready` and start the entry
-     stage — spawn an agent if auto, notify the human if manual:
+     stage — `stage-start.sh` spawns an agent if the entry stage is auto, and
+     notifies the human if it is manual:
      ```bash
      task-move.sh <dependent-id> ready
-     ENTRY_ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
-     if [[ -n "$ENTRY_ROLE" ]]; then
-       worker-spawn.sh <dependent-id> "$ENTRY_ROLE"
-     else
-       ENTRY_STAGE=$(scripts/topology-load.sh entry-stage "$CONDUCTOR_DIR/topology.json")
-       task-notify.sh --task <dependent-id> --stage "$ENTRY_STAGE"
-     fi
+     stage-start.sh <dependent-id> ready
      ```
 
 4. **Release merge-pending tasks** (`then: release-merge-pending`) — for each card
@@ -50,7 +45,7 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
    - If no overlap with the lock set:
      ```bash
      task-move.sh <pending-id> merging
-     worker-spawn.sh <pending-id> merger
+     stage-start.sh <pending-id> merging
      ```
 
 5. Run `task-list.sh` to confirm.

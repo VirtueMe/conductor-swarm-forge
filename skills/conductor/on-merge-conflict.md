@@ -33,12 +33,11 @@ Triggered when a `merge-*.md` artifact with `outcome: conflict` appears in `work
      --notes "conductor: merge conflict — <paste conflicting files and description here>"
    ```
 
-5. **Spawn the worker bound to the destination stage.** `$DEST` is the rework
-   loopback; derive its role from the topology and spawn it. The worker's briefing
+5. **Start the destination stage.** `$DEST` is the rework loopback;
+   `stage-start.sh` spawns its worker from the topology. The worker's briefing
    will include the full work history (including the conflict artifact):
    ```bash
-   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
-   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
+   stage-start.sh $TASK_ID "$DEST"
    ```
 
 6. **Release other merge-pending tasks** (`then: release-merge-pending`) — the
@@ -48,7 +47,7 @@ Triggered when a `merge-*.md` artifact with `outcome: conflict` appears in `work
    - If no overlap:
      ```bash
      task-move.sh <pending-id> merging
-     worker-spawn.sh <pending-id> merger
+     stage-start.sh <pending-id> merging
      ```
 
 7. Run `task-list.sh` to confirm.

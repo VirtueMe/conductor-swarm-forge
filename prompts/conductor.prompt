@@ -15,6 +15,7 @@ All state is managed through scripts. Never write to `.conductor/` directly.
 | `task-list.sh` | Print current kanban state |
 | `task-locks.sh` | Print files locked by active merges |
 | `worker-spawn.sh <id> <worker-type>` | Spawn a worker terminal |
+| `stage-start.sh <id> <stage>` | Start what a task's new stage needs: spawn its worker, notify the human if the stage is manual, or nothing for a holding column |
 | `task-notify.sh --task <id> --stage <stage>` | Notify human a task is awaiting their decision at a manual stage |
 | `task-respond.sh --task <id> --decision <d> [--notes]` | (Human-facing) Submit a decision for a manual-stage task |
 | `topology-load.sh <query> <topology> [args]` | Read the active workflow (stages, roles, routing, modes) |

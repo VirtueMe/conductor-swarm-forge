@@ -34,16 +34,11 @@ Triggered when a `review-*.md` artifact with `outcome: approved` appears in `wor
    `merge-pending` (another merge is touching the same files — it will be re-
    evaluated by `on-merge-success.md` when the blocking merge resolves).
 
-4. **Spawn the worker bound to the destination stage, or notify if manual** —
-   derive role and mode from `$DEST` (a holding column has neither):
+4. **Start the destination stage** — `stage-start.sh` spawns the stage's worker,
+   notifies the human if the stage is manual, and does nothing for a holding column
+   (such as `merge-pending`):
    ```bash
-   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
-   MODE=$(scripts/topology-load.sh mode "$CONDUCTOR_DIR/topology.json" "$DEST")
-   if [[ -n "$ROLE" ]]; then
-     worker-spawn.sh $TASK_ID "$ROLE"
-   elif [[ "$MODE" == "manual" ]]; then
-     task-notify.sh --task $TASK_ID --stage "$DEST"
-   fi
+   stage-start.sh $TASK_ID "$DEST"
    ```
 
 5. Run `task-list.sh` to confirm.

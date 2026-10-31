@@ -31,12 +31,11 @@ Triggered when a `validation-*.md` artifact with `outcome: failed` appears in `w
    task-move.sh $TASK_ID "$DEST"
    ```
 
-5. **Spawn the worker bound to the destination stage.** `$DEST` is the rework
-   loopback; derive its role from the topology and spawn it. The worker's briefing
+5. **Start the destination stage.** `$DEST` is the rework loopback;
+   `stage-start.sh` spawns its worker from the topology. The worker's briefing
    will include the full work history (including the validation artifact):
    ```bash
-   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
-   [[ -n "$ROLE" ]] && worker-spawn.sh $TASK_ID "$ROLE"
+   stage-start.sh $TASK_ID "$DEST"
    ```
 
 6. Run `task-list.sh` to confirm.
