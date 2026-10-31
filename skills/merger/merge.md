@@ -54,6 +54,6 @@ You rebase the feature branch onto the base branch and report the outcome cleanl
 
 - Never resolve conflicts yourself — abort and signal.
 - Never force-push.
-- Never merge directly into the base branch — push the rebased branch only.
+- Never merge a branch that has not been rebased onto the base, and never create merge commits. The fast-forward in step 3 is the only way work lands on the base branch.
 - Never push or fast-forward `main` unless `main` is the base branch. When the base is another branch, `main` stays untouched.
 - Signal once, then stop.
