@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Adapter: claude-code
-# Briefing file: CLAUDE.md
+# Briefing file: AGENTS.md
 # Launch command: claude
 
-# Write the task briefing into the worktree as CLAUDE.md.
+# Write the task briefing into the worktree as AGENTS.md.
 # Arguments:
 #   $1  worktree path
 #   $2  task id
@@ -46,7 +46,7 @@ adapter_write_briefing() {
   [[ -n "$lang" ]]     && lang_line="- Language: **${lang}** — implement everything in ${lang}"
   [[ -n "$test_cmd" ]] && test_cmd_line="- Test command: \`${test_cmd}\` — run this to verify your work"
 
-  cat > "$worktree/CLAUDE.md" << EOF
+  cat > "$worktree/AGENTS.md" << EOF
 # Worker Briefing — task $task_id
 
 $expanded
@@ -112,7 +112,7 @@ adapter_launch() {
   local worktree="$3"
   local root_dir="$4"
   local params_json="${5:-}"
-  local briefing="$root_dir/$worktree/CLAUDE.md"
+  local briefing="$root_dir/$worktree/AGENTS.md"
   local param_flags
   param_flags=$(adapter_params_to_flags "$params_json")
   local cmd="cd '$root_dir/$worktree' && claude \

@@ -39,12 +39,8 @@ write_briefing() {
   )
 }
 
-briefing_file() {
-  local d="$1" f
-  for f in CLAUDE.md AGENTS.md; do
-    [[ -f "$d/$f" ]] && { echo "$d/$f"; return; }
-  done
-}
+# Every adapter writes the same briefing file (#56).
+briefing_file() { echo "$1/AGENTS.md"; }
 
 for adapter_file in "$ROOT_DIR"/adapters/*.sh; do
   adapter="$(basename "$adapter_file" .sh)"

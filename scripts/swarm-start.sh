@@ -94,7 +94,6 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
 .conductor/
 .worktrees/
 .export/
-CLAUDE.md
 AGENTS.md
 *.pid
 *.log
@@ -108,7 +107,6 @@ elif [[ ! -f .gitignore ]]; then
 .conductor/
 .worktrees/
 .export/
-CLAUDE.md
 AGENTS.md
 *.pid
 *.log
