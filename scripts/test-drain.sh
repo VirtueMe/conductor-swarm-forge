@@ -38,7 +38,7 @@ assert_eq() {
 
 FAILURES=0
 WORK_DIR=""
-# shellcheck disable=SC2317,SC2329  # invoked via trap, not a direct call
+# shellcheck disable=SC2329  # invoked via trap, not a direct call
 cleanup() {
   [[ -n "$WORK_DIR" ]] && rm -rf "$WORK_DIR"
   return 0
