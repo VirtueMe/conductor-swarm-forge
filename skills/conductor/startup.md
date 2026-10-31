@@ -20,8 +20,8 @@ Run this sequence once when the conductor starts or restarts.
    an active worker (for `auto` stages) or an outstanding human inbox file (for
    `manual` stages). For each card not in a holding column:
    ```bash
-   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" <stage>)
-   MODE=$(scripts/topology-load.sh mode "$CONDUCTOR_DIR/topology.json" <stage>)
+   ROLE=$(topology-load.sh role "$CONDUCTOR_DIR/topology.json" <stage>)
+   MODE=$(topology-load.sh mode "$CONDUCTOR_DIR/topology.json" <stage>)
    ```
    - If `$ROLE` is set (`auto`): check whether the tmux window `<role>-<id>` exists.
      If it is missing, re-spawn:

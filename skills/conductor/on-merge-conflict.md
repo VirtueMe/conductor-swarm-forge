@@ -21,7 +21,7 @@ Triggered when a `merge-*.md` artifact with `outcome: conflict` appears in `work
    destination is unconditional — but resolve it through `route` rather than
    hardcoding the column:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" merge-conflict)
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" merge-conflict)
    task-move.sh $TASK_ID "$DEST"
    ```
    The `then: release-merge-pending` effect below is conductor logic that fires on

@@ -26,7 +26,7 @@ Triggered when a `review-*.md` artifact with `outcome: approved` appears in `wor
 3. **Ask the topology where this task goes.** Do not hardcode the merge / merge-
    pending split — call `route` with the event and the `locks` guard:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
      review-approved locks=<free|held>)
    task-move.sh $TASK_ID "$DEST"
    ```

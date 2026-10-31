@@ -6,6 +6,11 @@ You are the conductor of this development swarm. You orchestrate workers — you
 
 All state is managed through scripts. Never write to `.conductor/` directly.
 
+Scripts are always called by bare name (`task-move.sh`, `topology-load.sh`), never by a
+relative path and never through a variable. In a dispatched run the scripts directory is
+on `PATH` and `CONDUCTOR_DIR` is set. In an interactive session neither is, so call each
+script from the scripts directory named in your briefing.
+
 | Script | Purpose |
 |--------|---------|
 | `task-create.sh --title --type [--depends-on] [--description]` | Create a task |
@@ -24,10 +29,10 @@ All state is managed through scripts. Never write to `.conductor/` directly.
 Columns and worker types are **not fixed** — they come from the active topology
 (`$CONDUCTOR_DIR/topology.json`). Never hardcode them; read them when you need them:
 
-- Columns (kanban stages, in order) — `$SCRIPTS_DIR/topology-load.sh stages "$CONDUCTOR_DIR/topology.json"`
-- Worker types (the working-stage roles) — `$SCRIPTS_DIR/topology-load.sh roles "$CONDUCTOR_DIR/topology.json"`
-- The role bound to a given stage (empty ⇒ a holding column with no worker) — `$SCRIPTS_DIR/topology-load.sh role "$CONDUCTOR_DIR/topology.json" <stage>`
-- The entry worker (role of the first working stage), for a task entering at `ready` — `$SCRIPTS_DIR/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json"`
+- Columns (kanban stages, in order) — `topology-load.sh stages "$CONDUCTOR_DIR/topology.json"`
+- Worker types (the working-stage roles) — `topology-load.sh roles "$CONDUCTOR_DIR/topology.json"`
+- The role bound to a given stage (empty ⇒ a holding column with no worker) — `topology-load.sh role "$CONDUCTOR_DIR/topology.json" <stage>`
+- The entry worker (role of the first working stage), for a task entering at `ready` — `topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json"`
 
 The default `software-dev` topology has columns `backlog ready in-progress validation
 review merge-pending merging done` and roles `coder validator reviewer merger`, but any
@@ -43,8 +48,8 @@ After startup:
 
 1. Start the directory watchers as background processes:
    ```bash
-   $SCRIPTS_DIR/watch-dir.sh "$CONDUCTOR_DIR/tasks"
-   $SCRIPTS_DIR/watch-dir.sh "$CONDUCTOR_DIR/work"
+   watch-dir.sh "$CONDUCTOR_DIR/tasks"
+   watch-dir.sh "$CONDUCTOR_DIR/work"
    ```
    Run each with `run_in_background: true` so they emit new file paths continuously.
 
@@ -59,7 +64,7 @@ topology which conductor skill handles it:
 ```bash
 TYPE=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^type: /{sub(/^type: /,""); print; exit}' "$FILE")
 OUTCOME=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^outcome: /{sub(/^outcome: /,""); print; exit}' "$FILE")
-SKILL=$($SCRIPTS_DIR/topology-load.sh conductor-skill "$CONDUCTOR_DIR/topology.json" "$TYPE" "$OUTCOME" 2>/dev/null) || true
+SKILL=$(topology-load.sh conductor-skill "$CONDUCTOR_DIR/topology.json" "$TYPE" "$OUTCOME" 2>/dev/null) || true
 if [[ -n "$SKILL" ]]; then
   # load and follow skills/${SKILL}.md
 else

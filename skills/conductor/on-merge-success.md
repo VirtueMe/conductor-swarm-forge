@@ -18,7 +18,7 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
    guards — the destination is unconditional — but resolve it through `route`
    rather than hardcoding the column:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" merge-success)
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" merge-success)
    task-move.sh $TASK_ID "$DEST"
    ```
    The destination is a holding column (`done`), so no worker is spawned. The

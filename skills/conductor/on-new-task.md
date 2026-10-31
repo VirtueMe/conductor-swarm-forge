@@ -20,7 +20,7 @@ Triggered when a new file appears in `tasks/`.
 3. **Ask the topology where this task goes.** Do not hardcode the column — call
    `route` with the event and the `deps` guard:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" new-task deps=<all-done|pending>)
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" new-task deps=<all-done|pending>)
    task-move.sh $TASK_ID "$DEST"
    ```
 

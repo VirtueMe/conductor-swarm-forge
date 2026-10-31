@@ -22,7 +22,7 @@ This is the response to a manual stage — the human has made a decision.
 
 3. **Ask the topology where this task goes.** Route using the `human:<decision>` event:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" "human:$DECISION")
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" "human:$DECISION")
    task-move.sh $TASK_ID "$DEST"
    ```
 
