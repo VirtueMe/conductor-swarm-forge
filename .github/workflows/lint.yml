@@ -126,3 +126,6 @@ jobs:
 
       - name: test-stage-start
         run: bash scripts/test-stage-start.sh
+
+      - name: test-artifact-ledger
+        run: bash scripts/test-artifact-ledger.sh
