@@ -172,6 +172,35 @@ from there. Watch the board fill up at `http://localhost:3000`.
 Supported `--lang` values include `typescript`/`javascript`, `python`, `rust`,
 `go`, `ruby`, `clojure`, `elixir`, `java`, and `kotlin`.
 
+### Publishing a swarm's history to GitHub
+
+The swarm keeps its tasks and log as files under `.conductor/`. To show how a
+build went, publish that history to GitHub issues after the fact:
+
+```bash
+scripts/import-github.sh --repo owner/name --dry-run   # plan only, posts nothing
+scripts/import-github.sh --repo owner/name
+```
+
+Each task becomes an issue, each work artifact a comment in time order, the
+current stage a `stage: <name>` label (created in the target repo), and the
+issue closes when the task is done. `depends-on` becomes plain "Blocked by #n"
+text. `.conductor/` is only read.
+
+- **Re-runs are safe.** `.export/github-map.tsv` (override with `--map-file`)
+  records what was imported, so a re-run posts only new comments and stage
+  changes. The map is tied to one repo; importing into a different repo needs a
+  different map file. If the map is lost mid-run, issues already on GitHub are
+  found again by their `conductor-import` marker instead of duplicated. Add `.export/` to the project's `.gitignore` (new projects
+  get it from `swarm-start.sh`).
+- **Secrets are scrubbed** before anything is posted: GitHub, AWS, Slack and
+  `sk-` tokens, private keys, `Authorization` headers, `key=value` secrets, URL
+  credentials, email addresses, and home-directory paths. These are known
+  patterns, not a guarantee. `--dry-run` reports how many redactions it would
+  make but does not show the text, so try a private repo first if the history
+  may hold anything sensitive.
+- Needs `gh` (authenticated) and `python3`.
+
 ### Domain packs
 
 The swarm is a **swarm engine**, not just a dev swarm: the workflow lives in a
