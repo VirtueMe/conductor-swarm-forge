@@ -6,3 +6,8 @@ AGENTS.md
 *.pid
 *.log
 .export/
+
+# local secrets (API keys); keep a committed template as .env.example
+.env
+.env.*
+!.env.example
