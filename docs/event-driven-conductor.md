@@ -38,9 +38,11 @@ Findings that shape the recommendation:
 - **Phase 2:** convert the mechanical handlers to code one at a time, so the
   model runs only for `assess` and, optionally, summaries.
 
-Before committing to phases 1 and 2, run a short spike. Everything measured here
-used trivial prompts, and none of the three harnesses was exercised on a real
-multi-turn handler run (see [What is not verified](#what-is-not-verified)).
+Before committing to phases 1 and 2, a short spike was run (see
+[Spike results](#spike-results)); it found all three harnesses can run a real
+handler. It covered one handler on its easy path, so some cases are still open
+(see [What is not verified](#what-is-not-verified)). The appendix measurements
+used trivial prompts.
 
 ## Today: a model-driven loop
 
@@ -296,17 +298,89 @@ implementations of `adapter_dispatch`.
 3. **Phase 2, convert.** Replace mechanical handlers one at a time with scripts,
    each independently shippable and testable. Start with `on-review-approved` and
    `on-validation-passed`, the simplest.
-4. **Spike first.** Before Phase 1, run one real handler end to end under each of
-   the three harnesses (see below).
+4. **Spike first.** Done (#73): one real handler ran end to end under each of the
+   three harnesses. See [Spike results](#spike-results) for the findings and what
+   they leave open.
+
+## Spike results
+
+The spike (#73) ran one real handler, `on-review-approved`, under each harness
+against a scratch swarm, one run each (two for Claude Code, see below).
+
+**Setup.** A scratch git project with the `software-dev` topology and one task in
+`review` with an approved review artifact written by the real `task-signal.sh`.
+The scripts were the repository's own, copied next to `integrations/`,
+`adapters/` and `topologies/`, except that `worker-spawn.sh` was a stub that logs
+its arguments. The harness received `conductor.prompt`, the skill text with
+`$TASK_ID` and `$CONDUCTOR_DIR` filled in, and the artifact path, and was asked to
+run the skill. The expected result is the card in `merging` and one
+`worker-spawn <id> merger` call (`locks=free`).
+
+| | Claude Code `claude -p` | Codex `codex exec` | Pi `pi --mode rpc` |
+| --- | --- | --- | --- |
+| Card ended in `merging` | yes | yes | yes |
+| Spawn calls | 1 | 1 | **2** |
+| Wall time | 10 to 13 s | 16.7 s | 21.6 s |
+| Model turns or tool calls | 3 turns | 4 commands, the first failed | 5 tool calls |
+| Usage reported | tokens and cost | tokens, **no cost** | tokens and cost |
+| Reported figures | 679 output, 64k cache read, 17k cache write; $0.081 | 91,236 input (83,712 cached), 427 output, 12 reasoning | 11 input, 1,441 output, 31,676 cache read, 7,511 cache write; $0.099 |
+| How it was bounded | outer `timeout`, `--max-budget-usd 1` | outer `timeout`, `-s workspace-write` | 240 s deadline in the client, `abort` on expiry |
+| Where usage comes from | `--output-format json`: `total_cost_usd`, `usage` | `--json`: `turn.completed.usage` | `get_session_stats` after `agent_settled` |
+
+The models differ, so the figures are not comparable across columns. Claude Code
+and Codex ran on their configured defaults; Pi ran on `claude-opus-4-8`.
+
+**Findings**
+
+1. **A bounded multi-turn run works in all three.** Each read the artifact, ran
+   several commands, routed the card and started the stage, then stopped on its
+   own. The deadline never fired.
+2. **Codex reports tokens but not cost.** `codex exec --json` emits
+   `turn.completed` with `input_tokens`, `cached_input_tokens`,
+   `cache_write_input_tokens`, `output_tokens` and `reasoning_output_tokens`. A
+   search of the whole event stream found no cost, price or USD field. The usage
+   log can record Codex tokens; a dollar figure would need a price table.
+3. **A model repeats steps on its own, so the spawn guard is load-bearing.** Pi
+   ran the whole handler in one command and then ran `stage-start.sh` again to
+   check it, which produced two spawn calls. With the guard from #68 the second is
+   a no-op. Replays are not only a crash risk.
+4. **A failed check can fail open.** In a first Claude Code run the scratch swarm
+   was missing `integrations/`, so `task-locks.sh` errored. The model reported the
+   error and carried on with `locks=free`, because the card had no `files-changed`.
+   A merge went ahead on a guard that had not run. In Phase 2 the lock check
+   should be code that fails closed. While a handler stays a skill, a failing
+   `task-locks.sh` should stop the handler.
+5. **Fixed context dominates the cost of a small handler.** Claude Code's
+   17k cache-write tokens look like default system prompt and tool definitions,
+   not the handler. Trimming that (for example `--system-prompt` or `--bare`) was
+   not tried.
+6. **Pi RPC needs a client.** It is the only harness that cannot be driven with
+   one command line. The driver was about 40 lines of Python: send `get_state` and
+   `prompt`, read JSONL until `agent_settled`, send `get_session_stats`.
+
+**Go or no-go for `adapter_dispatch`**
+
+- **Claude Code: go.** One command, a deadline from `timeout`, and usage and cost
+  from the JSON output.
+- **Codex: go, with tokens only.** The usage log records tokens and leaves cost
+  empty, or applies a price table. Codex was the most exploratory of the three: it
+  searched for files and read scripts before acting.
+- **Pi: go.** It has the best control surface (`abort`, `get_session_stats`) and
+  needs a small RPC client in the adapter.
+
+These runs cover the easy path only. See the next section for what they leave
+open.
 
 ## What is not verified
 
-- **No multi-turn run was measured.** Every number below comes from a trivial
-  one-line prompt with no tool use. The statement that all three harnesses
-  support a bounded multi-turn run rests on their documentation and flags, not on
-  an experiment here. The spike should run a real handler (for example
-  `on-review-approved` against a scratch swarm) under `claude -p`, `codex exec`
-  and `pi --mode rpc`.
+- **The spike covered one handler on its easy path.** `on-review-approved` with
+  `locks=free`, no replay, one run per harness. Not run: the `locks=held` path, a
+  replayed event, a handler that should leave the card alone, a handler that fails
+  partway, and a run that hits the deadline. The trivial-prompt numbers in the
+  appendix are still from a one-line prompt with no tool use.
+- **The Claude Code run may have loaded user-level settings.** It was not run with
+  `--bare` or a custom system prompt, so the user's own instruction files may have
+  been part of the context. This was not checked.
 - **No cost figure for the default conductor model.** `workforces/default.json`
   sets the conductor to `claude-opus-4-8`. The measurements used Haiku 4.5, whose
   price differs, so the idle estimate above is an order of magnitude only.
