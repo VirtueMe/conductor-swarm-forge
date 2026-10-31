@@ -31,7 +31,7 @@
         "adapter": {
           "type": "string",
           "description": "Agent backend; resolves to adapters/<adapter>.sh.",
-          "enum": ["claude-code", "codex"]
+          "enum": ["claude-code", "codex", "pi"]
         },
         "params": {
           "$ref": "#/definitions/params"
@@ -45,11 +45,11 @@
       "properties": {
         "model": {
           "type": "string",
-          "description": "Model id passed to the adapter's CLI (e.g. claude-opus-4-8). claude-code → --model; codex → --model. Validated by the CLI at launch, not here."
+          "description": "Model id passed to the adapter's CLI (e.g. claude-opus-4-8). claude-code → --model; codex → --model; pi → --model (qualify as provider/id, e.g. anthropic/claude-sonnet-4-6, so an ambiguous id cannot make pi prompt for --provider). Validated by the CLI at launch, not here."
         },
         "effort": {
           "type": "string",
-          "description": "Reasoning effort. claude-code → --effort (low|medium|high|xhigh|max); codex → -c model_reasoning_effort=<effort> (minimal|low|medium|high). The accepted set is adapter-specific, so this is a free string validated by the CLI at launch, not by the schema."
+          "description": "Reasoning effort. claude-code → --effort (low|medium|high|xhigh|max); codex → -c model_reasoning_effort=<effort> (minimal|low|medium|high); pi → --thinking (off|minimal|low|medium|high|xhigh|max). The accepted set is adapter-specific, so this is a free string validated by the CLI at launch, not by the schema."
         }
       }
     }

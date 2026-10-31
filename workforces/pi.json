@@ -1,0 +1,11 @@
+{
+  "name": "pi",
+  "members": [
+    { "role": "conductor", "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "architect", "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "coder",     "adapter": "pi",          "params": { "model": "anthropic/claude-sonnet-4-6", "effort": "medium" } },
+    { "role": "validator", "adapter": "claude-code", "params": { "model": "claude-haiku-4-5-20251001" } },
+    { "role": "reviewer",  "adapter": "claude-code", "params": { "model": "claude-opus-4-8" } },
+    { "role": "merger",    "adapter": "claude-code", "params": { "model": "claude-sonnet-4-6" } }
+  ]
+}
