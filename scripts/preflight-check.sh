@@ -3,18 +3,21 @@
 # Fails fast with a clear message listing everything that's missing.
 #
 # Usage: preflight-check.sh [--lang <language>] [--test-cmd <cmd>] [--kanban-server]
+#        preflight-check.sh --github-import     (tools for import-github.sh only)
 
 set -euo pipefail
 
 LANG_HINT=""
 TEST_CMD=""
 KANBAN_SERVER=false
+GITHUB_IMPORT=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --lang|-l)        LANG_HINT="$2"; shift 2 ;;
     --test-cmd|-tc)   TEST_CMD="$2";  shift 2 ;;
     --kanban-server|-cbs) KANBAN_SERVER=true; shift ;;
+    --github-import)  GITHUB_IMPORT=true; shift ;;
     *) shift ;;
   esac
 done
@@ -29,10 +32,16 @@ check() {
 }
 
 # ── Always required ──────────────────────────────────────────────────────────
-check "tmux"    "session management for agent windows"
-check "git"     "worktree creation and branch management"
-check "python3" "workforce adapter selection"
-check "claude"  "AI agent CLI"
+if [[ "$GITHUB_IMPORT" == true ]]; then
+  # The importer publishes history; it never launches a swarm.
+  check "gh"      "GitHub CLI (publishing .conductor history to issues)"
+  check "python3" "secret scrubbing"
+else
+  check "tmux"    "session management for agent windows"
+  check "git"     "worktree creation and branch management"
+  check "python3" "workforce adapter selection"
+  check "claude"  "AI agent CLI"
+fi
 
 # ── Kanban board ─────────────────────────────────────────────────────────────
 if [[ "$KANBAN_SERVER" == true ]]; then

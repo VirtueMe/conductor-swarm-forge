@@ -93,6 +93,7 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
   cat > .gitignore << 'EOF'
 .conductor/
 .worktrees/
+.export/
 CLAUDE.md
 AGENTS.md
 *.pid
@@ -106,6 +107,7 @@ elif [[ ! -f .gitignore ]]; then
   cat > .gitignore << 'EOF'
 .conductor/
 .worktrees/
+.export/
 CLAUDE.md
 AGENTS.md
 *.pid
