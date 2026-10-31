@@ -38,16 +38,12 @@ Run this sequence once when the conductor starts or restarts.
        || task-notify.sh --task <id> --stage <stage>
      ```
 
-5. **Start the entry stage for ready tasks** — for each card in `kanban/ready/`
-   with no active worker window, check the entry stage mode:
+5. **Start the entry stage for ready tasks** — for each card in `kanban/ready/`,
+   `stage-start.sh` spawns the entry stage's worker, or notifies the human if the
+   entry stage is manual. It skips a task that already has a live worker, so there
+   is no need to check for a window first:
    ```bash
-   ENTRY_ROLE=$(scripts/topology-load.sh entry-role "$CONDUCTOR_DIR/topology.json")
-   if [[ -n "$ENTRY_ROLE" ]]; then
-     worker-spawn.sh <id> "$ENTRY_ROLE"
-   else
-     ENTRY_STAGE=$(scripts/topology-load.sh entry-stage "$CONDUCTOR_DIR/topology.json")
-     task-notify.sh --task <id> --stage "$ENTRY_STAGE"
-   fi
+   stage-start.sh <id> ready
    ```
 
 6. Run `task-list.sh` once more and confirm the state looks correct.

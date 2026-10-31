@@ -26,16 +26,11 @@ This is the response to a manual stage — the human has made a decision.
    task-move.sh $TASK_ID "$DEST"
    ```
 
-4. **Spawn the worker or notify again** based on the destination stage's mode:
+4. **Start the destination stage** — `stage-start.sh` spawns its worker or notifies
+   the human again if it is manual. A holding column (e.g. `done`, `backlog`)
+   needs nothing, and the helper does nothing for it:
    ```bash
-   ROLE=$(scripts/topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$DEST")
-   MODE=$(scripts/topology-load.sh mode "$CONDUCTOR_DIR/topology.json" "$DEST")
-   if [[ -n "$ROLE" ]]; then
-     worker-spawn.sh $TASK_ID "$ROLE"
-   elif [[ "$MODE" == "manual" ]]; then
-     task-notify.sh --task $TASK_ID --stage "$DEST"
-   fi
+   stage-start.sh $TASK_ID "$DEST"
    ```
-   A holding column (e.g. `done`, `backlog`) has no role and is not manual — no action needed.
 
 5. Run `task-list.sh` to confirm.
