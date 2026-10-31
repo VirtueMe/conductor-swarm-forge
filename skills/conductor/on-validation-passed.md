@@ -24,7 +24,7 @@ Triggered when a `validation-*.md` artifact with `outcome: passed` appears in `w
 3. **Ask the topology where this task goes.** Do not hardcode the type branching
    — call `route` with the event and guards:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
      validation-passed type=<type> locks=<free|held>)
    task-move.sh $TASK_ID "$DEST"
    ```

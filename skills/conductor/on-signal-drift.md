@@ -23,7 +23,7 @@ Triggered when a `drift-*.md` artifact appears in `work/<id>/`.
 3. **Ask the topology where this task goes.** Do not hardcode the invalidation /
    scope / minor branching — call `route` with the event and the `assess` guard:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
      signal-drift assess=<invalidation|scope|minor|...>)
    ```
 

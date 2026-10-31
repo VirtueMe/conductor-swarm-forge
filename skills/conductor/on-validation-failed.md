@@ -27,7 +27,7 @@ Triggered when a `validation-*.md` artifact with `outcome: failed` appears in `w
    destination is unconditional — but resolve it through `route` rather than
    hardcoding the column:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" validation-failed)
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" validation-failed)
    task-move.sh $TASK_ID "$DEST"
    ```
 

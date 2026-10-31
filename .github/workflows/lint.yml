@@ -132,3 +132,6 @@ jobs:
 
       - name: test-artifact-name
         run: bash scripts/test-artifact-name.sh
+
+      - name: test-conductor-script-refs
+        run: bash scripts/test-conductor-script-refs.sh

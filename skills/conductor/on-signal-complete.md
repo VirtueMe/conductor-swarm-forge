@@ -29,7 +29,7 @@ Triggered when a `signal-*.md` artifact with `outcome: complete` appears in `wor
 3. **Ask the topology where this task goes.** Do not hardcode the design /
    test-cmd / type branching — call `route` with the event and guards:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
      signal-complete type=<type> config.test-cmd=<value-or-empty> locks=<free|held>)
    task-move.sh $TASK_ID "$DEST"
    ```

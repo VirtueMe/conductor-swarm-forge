@@ -27,7 +27,7 @@ Triggered when a `signal-*.md` artifact with `outcome: blocked` appears in `work
 4. **Ask the topology where this task goes.** Do not hardcode the backlog /
    escalate split — call `route` with the event and the `assess` guard:
    ```bash
-   DEST=$(scripts/topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" \
      signal-blocked assess=<hard-dependency|clarification|...>)
    ```
 
