@@ -120,3 +120,6 @@ jobs:
 
       - name: test-adapter-briefing
         run: bash scripts/test-adapter-briefing.sh
+
+      - name: test-worker-spawn
+        run: bash scripts/test-worker-spawn.sh
