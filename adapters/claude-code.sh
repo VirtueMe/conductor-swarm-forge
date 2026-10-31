@@ -64,7 +64,7 @@ $task_body
 - Task ID: $task_id
 - Branch: $branch
 - Scripts: $scripts_dir
-- Conductor dir: $root_dir/$CONDUCTOR_DIR
+- Conductor dir: $full_conductor
 ${lang_line}
 ${test_cmd_line}
 EOF
