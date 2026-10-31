@@ -211,15 +211,10 @@ fi
 
 # ── Conductor briefing ────────────────────────────────────────────────────────
 
-ADAPTER_NAME=$(python3 - "$WORKFORCE" "conductor" << 'EOF'
-import json, sys
-wf = json.load(open(sys.argv[1]))
-for m in wf["members"]:
-    if m["role"] == sys.argv[2]:
-        print(m["adapter"]); sys.exit(0)
-sys.stderr.write("No conductor adapter in workforce\n"); sys.exit(1)
-EOF
-)
+# shellcheck source=scripts/wf-read.sh
+source "$SCRIPTS_DIR/wf-read.sh"
+
+ADAPTER_NAME=$(wf_field "$WORKFORCE" "conductor" adapter)
 
 ADAPTER_FILE="$ADAPTERS_DIR/${ADAPTER_NAME}.sh"
 [[ -f "$ADAPTER_FILE" ]] || { echo "Adapter not found: $ADAPTER_FILE" >&2; exit 1; }
@@ -227,15 +222,7 @@ ADAPTER_FILE="$ADAPTERS_DIR/${ADAPTER_NAME}.sh"
 source "$ADAPTER_FILE"
 
 # Conductor launch-time params (tuning bag) — handed to the adapter verbatim.
-CONDUCTOR_PARAMS=$(python3 - "$WORKFORCE" "conductor" << 'EOF'
-import json, sys
-wf = json.load(open(sys.argv[1]))
-for m in wf["members"]:
-    if m["role"] == sys.argv[2]:
-        print(json.dumps(m.get("params", {}))); sys.exit(0)
-print("{}")
-EOF
-)
+CONDUCTOR_PARAMS=$(wf_field "$WORKFORCE" "conductor" params)
 
 SKILL_CONTENT=$(cat "$PROMPTS_DIR/conductor.prompt")
 TASK_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG: %s' \
@@ -250,29 +237,13 @@ echo "Conductor initialized (adapter: $ADAPTER_NAME)"
 # ── Architect briefing ────────────────────────────────────────────────────────
 
 if [[ -n "$BRIEF_FILE" ]]; then
-  ARCH_ADAPTER_NAME=$(python3 - "$WORKFORCE" "architect" << 'EOF'
-import json, sys
-wf = json.load(open(sys.argv[1]))
-for m in wf["members"]:
-    if m["role"] == sys.argv[2]:
-        print(m["adapter"]); sys.exit(0)
-sys.stderr.write("No architect adapter in workforce\n"); sys.exit(1)
-EOF
-)
+  ARCH_ADAPTER_NAME=$(wf_field "$WORKFORCE" "architect" adapter)
   ARCH_ADAPTER_FILE="$ADAPTERS_DIR/${ARCH_ADAPTER_NAME}.sh"
   [[ -f "$ARCH_ADAPTER_FILE" ]] || { echo "Architect adapter not found: $ARCH_ADAPTER_FILE" >&2; exit 1; }
   # shellcheck source=/dev/null
   source "$ARCH_ADAPTER_FILE"
 
-  ARCH_PARAMS=$(python3 - "$WORKFORCE" "architect" << 'EOF'
-import json, sys
-wf = json.load(open(sys.argv[1]))
-for m in wf["members"]:
-    if m["role"] == sys.argv[2]:
-        print(json.dumps(m.get("params", {}))); sys.exit(0)
-print("{}")
-EOF
-)
+  ARCH_PARAMS=$(wf_field "$WORKFORCE" "architect" params)
 
   ARCH_SKILL=$(cat "$PROMPTS_DIR/architect.prompt")
   BRIEF_CONTENT=$(cat "$BRIEF_FILE")
