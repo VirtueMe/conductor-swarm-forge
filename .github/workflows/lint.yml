@@ -129,3 +129,6 @@ jobs:
 
       - name: test-artifact-ledger
         run: bash scripts/test-artifact-ledger.sh
+
+      - name: test-artifact-name
+        run: bash scripts/test-artifact-name.sh
