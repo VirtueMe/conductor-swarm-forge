@@ -39,6 +39,20 @@ VALID_TYPES="$("$SCRIPTS_DIR/topology-load.sh" roles "$TOPOLOGY_JSON" | tr '\n' 
   echo "Invalid worker type: $WORKER_TYPE. Valid: $VALID_TYPES" >&2; exit 1
 }
 
+# A task has at most one live worker. If the conductor replays an event (for
+# example after a crash between running a handler and advancing its cursor),
+# spawning again would write a second `assigned` artifact, rewrite the briefing
+# the running worker already loaded, and open a second window. Worker windows are
+# named <role>-<id>, so any window ending in -<id> means the task already has one
+# (the handlers close finished workers with the same match). This is a no-op, not
+# an error, and must come before every side effect below.
+while IFS= read -r existing_window; do
+  if [[ "$existing_window" == *"-$TASK_ID" ]]; then
+    echo "Worker '$existing_window' already running for task $TASK_ID in session '$SESSION' — not spawning"
+    exit 0
+  fi
+done < <(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null || true)
+
 # --- Helpers -----------------------------------------------------------------
 
 yaml_field() {
