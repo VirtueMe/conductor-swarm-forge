@@ -252,6 +252,23 @@ start --tool "$FAKE" -- --workforce mixed --brief "$TMP/brief.md"
 case "$(window conductor)" in *"&& claude "*) ok "claude-code conductor with a pi architect: the conductor window starts claude" ;; *) fail "conductor window: $(window conductor | cut -c1-200)" ;; esac
 case "$(window architect)" in *"&& pi "*) ok "and the architect window starts pi" ;; *) fail "architect window: $(window architect | cut -c1-200)" ;; esac
 
+section "12 · node is needed for the kanban board only"
+# A PATH like section 7's, without node or npm. A language that needs neither (bash), so the only
+# thing that could ask for node is the kanban server.
+if [[ -d "$MIN" ]]; then
+  MIN2="$TMP/min-nonode"; rm -rf "$MIN2"; cp -a "$MIN" "$MIN2"; rm -f "$MIN2/node" "$MIN2/npm"
+  START_PATH="$MIN2" start -- --lang bash
+  assert_eq "a default start needs no node" "$RC" "0"
+  if grep -qE 'missing tools|node —' "$TMP/err" "$TMP/out"; then fail "preflight complained: $(grep -hE 'missing tools|—' "$TMP/err" "$TMP/out" | head -3 | tr '\n' '|')"; else ok "and preflight reports nothing missing"; fi
+  START_PATH="$MIN2" start -- --lang bash --kanban-server
+  assert_eq "--kanban-server without node fails" "$RC" "1"
+  has "node" "$TMP/err" "and names node"
+  has "kanban board server" "$TMP/err" "as the kanban board's requirement"
+  assert_eq "nothing was started" "$([[ -s "$TMUX_LOG" ]] && echo started || echo nothing)" "nothing"
+else
+  echo "   (skipped: section 7 could not build a minimal PATH here)"
+fi
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1
