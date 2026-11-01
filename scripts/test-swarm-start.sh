@@ -207,6 +207,51 @@ RC=0
 ( cd "$TMP" && SHELL=/bin/true PATH="$STUB:$PATH" bash -c "$(cat "$TMUX_CMD")" ) > "$TMP/win.out" 2>&1 || RC=$?
 assert_eq "with no log yet, the window starts with the loop" "$(sed -n 1p "$TMP/win.out")" "THE LOOP RAN"
 
+section "11 · Each role is launched by its own adapter"
+# The conductor and the architect use different adapters. Each window must start with the command of
+# its own role's adapter, and each briefing must be written by it (pi and claude-code prefix the
+# scripts dir with CONDUCTOR_DIR=..., codex does not).
+printf 'a brief\n' > "$TMP/brief.md"
+mixed() { # <conductor adapter> <architect adapter>
+  printf '{"members":[{"role":"conductor","adapter":"%s"},{"role":"architect","adapter":"%s"},{"role":"coder","adapter":"claude-code"},{"role":"validator","adapter":"claude-code"},{"role":"reviewer","adapter":"claude-code"},{"role":"merger","adapter":"claude-code"}]}' "$1" "$2" > "$FAKE/workforces/mixed.json"
+}
+window() { grep "\[$1\]" "$TMUX_LOG" | head -1; }
+
+# The briefing check below reads how the scripts dir is written in the architect's prompt. If that
+# prompt stops referring to it, the check would pass without proving anything, so say so.
+# shellcheck disable=SC2016  # a literal $SCRIPTS_DIR is what the prompt contains
+if grep -q '\$SCRIPTS_DIR/watch-dir.sh' "$ROOT_DIR/prompts/architect.prompt"; then
+  ok "the architect prompt still has a \$SCRIPTS_DIR reference for the briefing check to read"
+else
+  fail "prompts/architect.prompt no longer uses \$SCRIPTS_DIR/watch-dir.sh: the briefing check in this section proves nothing"
+fi
+
+mixed pi codex
+start --tool "$FAKE" -- --workforce mixed --brief "$TMP/brief.md"
+assert_eq "exit 0" "$RC" "0"
+case "$(window conductor)" in *"&& pi "*) ok "pi conductor: the conductor window starts pi" ;; *) fail "conductor window: $(window conductor | cut -c1-200)" ;; esac
+case "$(window architect)" in *"&& codex"*) ok "codex architect: the architect window starts codex" ;; *) fail "architect window: $(window architect | cut -c1-200)" ;; esac
+if grep -q 'CONDUCTOR_DIR=[^ ]* [^ ]*watch-dir.sh' "$TARGET/.worktrees/architect/AGENTS.md"; then
+  fail "the architect's briefing was written by pi's adapter, not codex's"
+else
+  ok "the architect's briefing was written by the codex adapter"
+fi
+
+mixed codex pi
+start --tool "$FAKE" -- --workforce mixed --brief "$TMP/brief.md"
+case "$(window conductor)" in *"&& codex"*) ok "swapped: the conductor window starts codex" ;; *) fail "conductor window: $(window conductor | cut -c1-200)" ;; esac
+case "$(window architect)" in *"&& pi "*) ok "swapped: the architect window starts pi" ;; *) fail "architect window: $(window architect | cut -c1-200)" ;; esac
+if grep -q 'CONDUCTOR_DIR=[^ ]* [^ ]*watch-dir.sh' "$TARGET/.worktrees/architect/AGENTS.md"; then
+  ok "swapped: the architect's briefing was written by pi's adapter"
+else
+  fail "swapped: the architect's briefing was not written by pi's adapter"
+fi
+
+mixed claude-code pi
+start --tool "$FAKE" -- --workforce mixed --brief "$TMP/brief.md"
+case "$(window conductor)" in *"&& claude "*) ok "claude-code conductor with a pi architect: the conductor window starts claude" ;; *) fail "conductor window: $(window conductor | cut -c1-200)" ;; esac
+case "$(window architect)" in *"&& pi "*) ok "and the architect window starts pi" ;; *) fail "architect window: $(window architect | cut -c1-200)" ;; esac
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

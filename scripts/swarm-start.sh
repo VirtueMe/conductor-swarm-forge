@@ -221,23 +221,29 @@ fi
 # shellcheck source=scripts/wf-read.sh
 source "$SCRIPTS_DIR/wf-read.sh"
 
+# Run one function of an adapter in a shell of its own. Sourcing two adapters into this shell lets
+# the later one replace the functions of the earlier (every adapter defines adapter_launch,
+# adapter_write_briefing and adapter_params_to_flags), so when the conductor and the architect use
+# different adapters the conductor's window was started by the architect's adapter. Each role's
+# adapter is only ever loaded alone. The functions read CONDUCTOR_DIR and their arguments, nothing
+# else of this shell's.
+adapter_call() { # <adapter file> <function> [args...]
+  CONDUCTOR_DIR="$CONDUCTOR_DIR" bash -c 'source "$1"; fn="$2"; shift 2; "$fn" "$@"' _ "$@"
+}
+
 ADAPTER_NAME=$(wf_field "$WORKFORCE" "conductor" adapter)
 
 ADAPTER_FILE="$ADAPTERS_DIR/${ADAPTER_NAME}.sh"
 [[ -f "$ADAPTER_FILE" ]] || { echo "Adapter not found: $ADAPTER_FILE" >&2; exit 1; }
-# shellcheck source=/dev/null
-source "$ADAPTER_FILE"
 
 # Conductor launch-time params (tuning bag) — handed to the adapter verbatim.
 CONDUCTOR_PARAMS=$(wf_field "$WORKFORCE" "conductor" params)
 
 # Headless conductor (opt-in): an adapter that defines adapter_dispatch can run the loop
-# instead of an interactive session. This is decided here, straight after the conductor's
-# adapter is sourced and before the architect's is: sourcing a second adapter could add or
-# replace functions. Without the flag nothing below changes.
+# instead of an interactive session. Without the flag nothing below changes.
 RUN_LOOP=false
 if [[ "$HEADLESS" == true ]]; then
-  if declare -F adapter_dispatch > /dev/null; then
+  if adapter_call "$ADAPTER_FILE" declare -F adapter_dispatch > /dev/null; then
     RUN_LOOP=true
   else
     echo "Warning: --headless-conductor needs an adapter with adapter_dispatch; '$ADAPTER_NAME' has none." >&2
@@ -254,7 +260,7 @@ else
   TASK_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG: %s' \
     "$TARGET_DIR/$CONDUCTOR_DIR/skills" "$TARGET_DIR" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" "${LANG:-unknown}")"
 
-  adapter_write_briefing \
+  adapter_call "$ADAPTER_FILE" adapter_write_briefing \
     "." "conductor" "$SKILL_CONTENT" "$TASK_BODY" \
     "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"
 
@@ -267,8 +273,6 @@ if [[ -n "$BRIEF_FILE" ]]; then
   ARCH_ADAPTER_NAME=$(wf_field "$WORKFORCE" "architect" adapter)
   ARCH_ADAPTER_FILE="$ADAPTERS_DIR/${ARCH_ADAPTER_NAME}.sh"
   [[ -f "$ARCH_ADAPTER_FILE" ]] || { echo "Architect adapter not found: $ARCH_ADAPTER_FILE" >&2; exit 1; }
-  # shellcheck source=/dev/null
-  source "$ARCH_ADAPTER_FILE"
 
   ARCH_PARAMS=$(wf_field "$WORKFORCE" "architect" params)
 
@@ -279,7 +283,7 @@ if [[ -n "$BRIEF_FILE" ]]; then
 
   cp "$BRIEF_FILE" "$CONDUCTOR_DIR/brief.md"
   mkdir -p ".worktrees/architect"
-  adapter_write_briefing \
+  adapter_call "$ARCH_ADAPTER_FILE" adapter_write_briefing \
     ".worktrees/architect" "architect" "$ARCH_SKILL" "$ARCH_BODY" \
     "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"
 
@@ -352,9 +356,9 @@ else
   if [[ "$RUN_LOOP" == true ]]; then
     launch_conductor_loop
   else
-    adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR" "$CONDUCTOR_PARAMS"
+    adapter_call "$ADAPTER_FILE" adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR" "$CONDUCTOR_PARAMS"
   fi
-  [[ -n "$BRIEF_FILE" ]] && adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR" "${ARCH_PARAMS:-}"
+  [[ -n "$BRIEF_FILE" ]] && adapter_call "$ARCH_ADAPTER_FILE" adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR" "${ARCH_PARAMS:-}"
 
   # Kill kanban server automatically when the tmux session closes
   if [[ "$KANBAN_SERVER" == true ]]; then
