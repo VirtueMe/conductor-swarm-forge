@@ -141,3 +141,6 @@ jobs:
 
       - name: test-conductor-loop
         run: bash scripts/test-conductor-loop.sh
+
+      - name: test-claude-dispatch
+        run: bash scripts/test-claude-dispatch.sh

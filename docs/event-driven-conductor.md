@@ -317,7 +317,7 @@ and records the event as processed only after the handler succeeds.
 | Exit 0 | the handler finished |
 | Exit 2 | the event cannot be handled; the loop does not retry |
 | Any other exit | the handler failed; the loop retries |
-| Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`; cost is optional because Codex reports none |
+| Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`: `harness`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` (null when the harness reports none, as Codex does) and `turns`. Write it even when the run fails, because the spend happened |
 
 `scripts/dispatch-prompt.sh` builds the prompt for all three adapters: the static
 briefing first so caching can hit it, then the rules for a dispatched run, the skill,
@@ -353,6 +353,43 @@ A halt writes `$CONDUCTOR_DIR/conductor-loop.halted` and exits 1. Telling a huma
   dispatch the reconcile as its first event (#89).
 - `unprocessed` scans the whole work tree for every event.
 - The loop needs GNU `timeout` (`gtimeout` on macOS, from `brew install coreutils`). It exits 3 with a message if neither exists; `preflight-check.sh --conductor-loop` checks for it.
+
+## Claude Code dispatch
+
+`adapter_dispatch` in `adapters/claude-code.sh` runs `claude -p --output-format json
+--no-session-persistence` with the conductor's model and effort from the workforce, a
+budget cap (`CONDUCTOR_MAX_BUDGET_USD`, default 1), and the loop's outer `timeout` as its
+only deadline: `claude -p` has no turn limit or timer. It needs `jq` (it exits 2 with a
+message if `jq` is missing, and `preflight-check.sh --conductor-loop` checks for it), and
+keeps the last result in `$CONDUCTOR_DIR/dispatch-result.json` and `.err`, overwritten
+by each dispatch. It reads the result object like this, because the obvious fields are
+not reliable:
+
+- `subtype` alone is wrong. A rejected model reports `subtype: "success"` with
+  `is_error: true`. The adapter checks `is_error` and `terminal_reason: "completed"`.
+- On an error result the `usage` block is all zeros. The real figures are in
+  `modelUsage`, so the usage record is built from that.
+- Exit 2 (not retried): the request was rejected (HTTP 400, 401, 403 or 404), the budget
+  was reached, or `claude` is not installed. Exit 1 (retried): everything else, including
+  an overloaded API, a run that did not complete, a denied tool, and a final
+  `HANDLER-FAILED:` line.
+- A budget stop is not a hard ceiling: with a $0.001 cap one run still cost $0.175,
+  because the first call is charged before the cap is checked.
+
+**Fixed context.** The same handler (`on-review-approved`, `locks=free`, model
+`claude-opus-4-8`), one run each:
+
+| Flags added to `-p` | Time | Turns | Cost | Cache write | Cache read |
+| --- | --- | --- | --- | --- | --- |
+| none | 25 s | 8 | $0.289 | 17.9k | 153k |
+| `--tools Bash,Read --strict-mcp-config --setting-sources project` | 14 s | 6 | $0.143 | 10.1k | 37k |
+| the same plus a one-line `--system-prompt` | 12 s | 4 | $0.102 | 7.4k | 20k |
+
+The adapter uses the last row. These are single runs and the turn counts vary, so read
+them as a direction, not a benchmark. `--bare` was not tried: it reads credentials only
+from `ANTHROPIC_API_KEY` or `apiKeyHelper`, never OAuth or the keychain, so it would fail
+for anyone logged in the usual way. The baseline run also called `stage-start.sh` twice,
+as Pi did in the spike; the spawn guard absorbs it.
 
 ## Spike results
 

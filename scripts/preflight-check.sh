@@ -51,6 +51,7 @@ if [[ "$CONDUCTOR_LOOP" == true ]]; then
   if ! command -v timeout &>/dev/null && ! command -v gtimeout &>/dev/null; then
     MISSING+=("  timeout — per-event deadline in conductor-loop.sh (GNU coreutils; on macOS: brew install coreutils)")
   fi
+  check "jq" "reading dispatch results (the claude-code adapter's headless mode)"
 fi
 
 # ── Kanban board ─────────────────────────────────────────────────────────────
