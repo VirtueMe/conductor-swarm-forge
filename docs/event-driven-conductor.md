@@ -243,15 +243,38 @@ not replace it.
 
 ### Backward compatibility and fallback
 
-`swarm-start.sh` sources the conductor's adapter and then launches the conductor.
-The branch is a capability check:
+`swarm-start.sh` sources the conductor's adapter and then launches the conductor. The loop
+is **opt-in**, with `--headless-conductor` (`-hc`):
 
-- the adapter defines `adapter_dispatch` → launch `scripts/conductor-loop.sh` in
-  the conductor window
-- it does not → today's path, an interactive conductor following `startup.md`
+- without the flag, nothing changes, for any adapter: an interactive conductor following
+  `startup.md`;
+- with the flag and an adapter that defines `adapter_dispatch`: `scripts/conductor-loop.sh`
+  runs in the conductor window;
+- with the flag and an adapter that does not: a warning, and the interactive conductor.
 
-An adapter that only supports interactive sessions simply does not implement the
-function, and nothing else changes for it.
+An adapter that only supports interactive sessions simply does not implement the function.
+
+**Why opt-in, not a plain capability check.** All three adapters now define
+`adapter_dispatch`, and the default workforce uses `claude-code` for the conductor, so a plain
+check would move every existing swarm onto the loop at once. The loop also does not run the
+startup reconcile (`startup.md` steps 1 to 6: register untracked tasks, unblock ready ones,
+respawn workers whose window was lost, re-notify a waiting human). A fresh swarm does not need
+it, since new tasks arrive as events. A restart with work in flight does. Until that is split
+out and run by the loop (#89), `swarm-start.sh -hc` prints a warning when it finds cards in a
+working stage, and the default stays interactive.
+
+**What `-hc` does:**
+
+- passes `--conductor-loop` to the preflight check, so a missing GNU `timeout` or `jq` is
+  reported at start;
+- skips the conductor's briefing, because the loop builds its own prompt and the file would
+  be unused;
+- starts the loop in the `conductor` window with the `CONDUCTOR_*` and `PI_ABORT_GRACE`
+  variables from the environment written on the command line, since tmux gives a new window
+  the server's environment, not the caller's;
+- runs it as `loop; exec $SHELL`, so when the loop exits the window becomes a shell instead of
+  closing. A halt's banner stays on screen, and a restart is running
+  `scripts/conductor-loop.sh` in that window.
 
 ### Why not a separate `drivers/` axis
 
@@ -374,8 +397,8 @@ leaves none.
   interactive Startup and Watch loop sections, which the dispatch rules tell the
   model to ignore. Splitting the prompt would remove that.
 - The banner is lost if the conductor window closes when the loop exits, which tmux does by
-  default for a window whose command ends. The inbox files survive. Whatever launches the loop
-  (#84) has to keep the window open after the loop exits.
+  default for a window whose command ends. The inbox files survive. `swarm-start.sh -hc` keeps
+  the window open by running the loop as `loop; exec $SHELL`.
 - `startup.md` mixes the startup reconcile and the poll loop, so the loop cannot yet
   dispatch the reconcile as its first event (#89).
 - `unprocessed` scans the whole work tree for every event.
