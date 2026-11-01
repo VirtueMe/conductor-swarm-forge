@@ -32,8 +32,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# One line each: the values go into a front matter field and a banner.
-oneline() { printf '%s' "$1" | tr '\n\t\r' '   ' | cut -c1-300; }
+# One line each: the values go into a front matter field and a banner. Control characters are
+# replaced as well as newlines: a value can be a model's own words, and the banner is printed on a
+# terminal, which obeys escape sequences.
+oneline() { printf '%s' "$1" | LC_ALL=C tr '\000-\037\177' ' ' | cut -c1-300; }
 KIND="$(oneline "$KIND")"; ARTIFACT="$(oneline "$ARTIFACT")"; HANDLER="$(oneline "${HANDLER:-none}")"
 DETAIL="$(oneline "$DETAIL")"; LAST_ERROR="$(oneline "$LAST_ERROR")"
 

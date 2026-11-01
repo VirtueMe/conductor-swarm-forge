@@ -60,6 +60,7 @@ adapter_dispatch() {
     tail -n +2 "$STUB_RC" > "$STUB_RC.next"; mv "$STUB_RC.next" "$STUB_RC"
   fi
   [[ -n "${STUB_USAGE:-}" && -n "${DISPATCH_USAGE_FILE:-}" ]] && printf '%s\n' "$STUB_USAGE" > "$DISPATCH_USAGE_FILE"
+  [[ -n "${STUB_ANSWER:-}" && -n "${DISPATCH_ANSWER_FILE:-}" ]] && printf '%s\n' "$STUB_ANSWER" > "$DISPATCH_ANSWER_FILE"
   [[ -n "${STUB_ERRMSG:-}" ]] && echo "$STUB_ERRMSG" >&2
   [[ -f "$STUB_HOOK" ]] && bash "$STUB_HOOK"
   if [[ "$rc" == "sleep" ]]; then sleep "$STUB_SLEEP_ARG"; rc=0; fi
@@ -86,7 +87,7 @@ new_swarm() {
   cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
   printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
   : > "$STUB_LOG"; : > "$STUB_RC"; rm -f "$STUB_HOOK"
-  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG STUB_USAGE
+  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG STUB_USAGE STUB_ANSWER CONDUCTOR_HEARTBEAT
   export CONDUCTOR_RETRY_DELAY=0
 }
 create_task() { "$SCRIPTS_DIR/task-create.sh" --title "T" --type chore --description "x" > /dev/null; }
@@ -277,7 +278,9 @@ CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err"
 LOOP_PID=$!
 sleep 1.5
 signal 0001 signal complete
-for _ in $(seq 1 60); do grep -q '^end ' "$STUB_LOG" && break; sleep 0.1; done
+# Wait for the event to be recorded, not only for the handler to finish: the loop marks it a
+# moment after the dispatch returns, and killing it in between would lose the mark.
+for _ in $(seq 1 100); do [[ -z "$(unprocessed)" ]] && grep -q '^end ' "$STUB_LOG" && break; sleep 0.1; done
 assert_eq "dispatched while running" "$(dispatches)" "1"
 kill -TERM "$LOOP_PID"; wait "$LOOP_PID" 2>/dev/null || true; LOOP_PID=""
 assert_eq "recorded" "$(unprocessed)" ""
@@ -570,6 +573,116 @@ RC=0
 PATH="$TMP/nojq" CONDUCTOR_ADAPTER_FILE="$STUB" "$BASH" "$LOOP" --once > /dev/null 2> "$TMP/loop.err" || RC=$?
 assert_eq "exit 3" "$RC" "3"
 expect_grep 'needs jq' "$TMP/loop.err" "and says so"
+
+# 37 ------------------------------------------------------------------------------
+section "37 · The log has what the window shows, with timestamps"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+run_loop
+TS='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8}  '
+assert_eq "every line of the log is timestamped" "$(grep -vcE "$TS" "$CONDUCTOR_DIR/conductor.log" || true)" "0"
+assert_eq "so is every line of the window" "$(grep -vcE "$TS" "$TMP/loop.err" || true)" "0"
+assert_eq "the log has what the last run printed" "$(grep -cFxf "$TMP/loop.err" "$CONDUCTOR_DIR/conductor.log" | tr -d ' ')" "$(wc -l < "$TMP/loop.err" | tr -d ' ')"
+expect_grep 'started (pid' "$CONDUCTOR_DIR/conductor.log" "it starts with the start"
+expect_grep 'stopped' "$CONDUCTOR_DIR/conductor.log" "and ends with the stop"
+
+# 38 ------------------------------------------------------------------------------
+section "38 · A finished attempt says how long, what it cost, and what the model said"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_ANSWER="Moved 0001 to merging." STUB_USAGE='{"harness":"claude-code","cost_usd":0.1072}' run_loop
+LINE="$(grep ' finished in ' "$CONDUCTOR_DIR/conductor.log" | grep '0001/signal' | tail -1)"
+case "$LINE" in *"0001/signal-"*" finished in "*"s, \$0.107 — Moved 0001 to merging."*) ok "event, duration, cost and the model's line: $LINE" ;; *) fail "line: $LINE" ;; esac
+assert_eq "the handler is on the line before it" "$(grep -c '0001/signal.* -> conductor/on-signal-complete (attempt 1 of' "$CONDUCTOR_DIR/conductor.log")" "1"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"codex","cost_usd":null,"input_tokens":5}' run_loop
+LINE="$(grep ' finished in ' "$CONDUCTOR_DIR/conductor.log" | grep '0001/signal' | tail -1)"
+case "$LINE" in *", no cost reported"*) ok "a harness with no cost says so, it is not free" ;; *) fail "line: $LINE" ;; esac
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+run_loop
+LINE="$(grep ' finished in ' "$CONDUCTOR_DIR/conductor.log" | grep '0001/signal' | tail -1)"
+case "$LINE" in *", no usage record") ok "no record at all says that, with no model line to show" ;; *) fail "line: $LINE" ;; esac
+
+# 39 ------------------------------------------------------------------------------
+section "39 · A failed attempt says why"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue 1 0
+STUB_ERRMSG="stub: the model call failed" CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+LINE="$(grep ' failed with exit ' "$CONDUCTOR_DIR/conductor.log" | head -1)"
+case "$LINE" in *"0001/signal-"*" failed with exit 1 after "*"s, no usage record: stub: the model call failed") ok "exit status, duration, usage and the adapter's own message: $LINE" ;; *) fail "line: $LINE" ;; esac
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue 1 1
+STUB_ERRMSG="stub: still failing" CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+expect_grep 'HALT (failed) at 0001/signal-.*(last error: stub: still failing)' "$CONDUCTOR_DIR/conductor.log" "the halt line carries the last error"
+
+# 40 ------------------------------------------------------------------------------
+section "40 · Events with no handler are shown as skipped"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 progress
+run_loop
+expect_grep '0001/progress-.*: no handler for progress, skipped' "$CONDUCTOR_DIR/conductor.log" "a progress artifact"
+assert_eq "and nothing was dispatched for it" "$(dispatches)" "0"
+
+# 41 ------------------------------------------------------------------------------
+section "41 · An idle loop says it is alive"
+new_swarm
+create_task; run_loop
+CONDUCTOR_HEARTBEAT=1 CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err" &
+LOOP_PID=$!
+sleep 3.5
+kill -TERM "$LOOP_PID"; wait "$LOOP_PID" 2>/dev/null || true; LOOP_PID=""
+expect_grep 'idle: nothing to do (0 events handled since start)' "$CONDUCTOR_DIR/conductor.log" "an idle line with the count"
+new_swarm
+create_task; run_loop
+CONDUCTOR_HEARTBEAT=0 CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err" &
+LOOP_PID=$!
+sleep 3.5
+kill -TERM "$LOOP_PID"; wait "$LOOP_PID" 2>/dev/null || true; LOOP_PID=""
+assert_eq "CONDUCTOR_HEARTBEAT=0 turns it off" "$(grep -c 'idle:' "$CONDUCTOR_DIR/conductor.log" || true)" "0"
+
+# 42 ------------------------------------------------------------------------------
+section "42 · A log that cannot be written changes nothing"
+new_swarm
+create_task; run_loop
+rm -f "$CONDUCTOR_DIR/conductor.log"; mkdir -p "$CONDUCTOR_DIR/conductor.log"   # a directory where the file should be
+sleep 1; signal 0001 signal complete
+run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the event was handled and recorded" "$(unprocessed)" ""
+expect_grep ' finished in ' "$TMP/loop.err" "and the window still shows it"
+
+# 43 ------------------------------------------------------------------------------
+section "43 · Text a model wrote cannot drive the terminal"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+ESC=$'\033'; BEL=$'\007'
+STUB_ANSWER="Moved it ${ESC}[2J${ESC}]0;owned${BEL} done" run_loop
+assert_eq "no escape byte in the window" "$(grep -c "$ESC" "$TMP/loop.err" || true)" "0"
+assert_eq "none in the log" "$(grep -c "$ESC" "$CONDUCTOR_DIR/conductor.log" || true)" "0"
+assert_eq "no bell either" "$(grep -c "$BEL" "$CONDUCTOR_DIR/conductor.log" || true)" "0"
+expect_grep 'Moved it' "$CONDUCTOR_DIR/conductor.log" "the readable text is still there"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue 1 1
+STUB_ERRMSG="stub: ${ESC}[2Jfailed${BEL}" CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "a halt: none in the window" "$(cat "$TMP/loop.out" "$TMP/loop.err" | grep -c "$ESC" || true)" "0"
+assert_eq "none in the log" "$(grep -c "$ESC" "$CONDUCTOR_DIR/conductor.log" || true)" "0"
+assert_eq "none in the human's notice" "$(grep -c "$ESC" "$(notice human-inbox)" || true)" "0"
+assert_eq "none in the architect's" "$(grep -c "$ESC" "$(notice architect-inbox)" || true)" "0"
+expect_grep 'failed' "$(notice human-inbox)" "the readable text is still in the notice"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

@@ -94,6 +94,17 @@ RC=0
 assert_eq "no arguments: exit 0" "$RC" "0"
 has '^handler: none$' "$(human)" "an unknown handler is written as none"
 
+section "5 · Escape sequences in a value never reach the terminal or the files"
+new_dir
+ESC=$'\033'; BEL=$'\007'
+OUT="$("$NOTIFY" --kind failed --artifact "0001/a.md" --handler "h" \
+  --detail "bad ${ESC}[2J${ESC}]0;owned${BEL} detail" --last-error "worse ${ESC}[31m red${BEL}")"
+assert_eq "none in the banner" "$(printf '%s\n' "$OUT" | grep -c "$ESC" || true)" "0"
+assert_eq "none in the human's notice" "$(grep -c "$ESC" "$(human)" || true)" "0"
+assert_eq "none in the architect's" "$(grep -c "$ESC" "$(architect)" || true)" "0"
+assert_eq "no bell in the banner" "$(printf '%s\n' "$OUT" | grep -c "$BEL" || true)" "0"
+has 'bad .*2J.*owned.* detail' "$(human)" "the readable text is kept"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

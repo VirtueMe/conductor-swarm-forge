@@ -337,6 +337,7 @@ and records the event as processed only after the handler succeeds.
 | Exit 0 | the handler finished |
 | Exit 2 | the event cannot be handled; the loop does not retry |
 | Any other exit | the handler failed; the loop retries |
+| Answer | the adapter may write the model's last non-empty line to `$DISPATCH_ANSWER_FILE`; `dispatch_finish` does it for all three adapters, so the loop can show what the model said it did |
 | Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`: `harness`, `model`, `input_tokens` (input that was neither read from nor written to a cache), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` (null when the harness reports none, as Codex does) and `turns`. Write it even when the run fails, because the spend happened, unless the harness reported none (a killed Codex run) |
 
 `turns` is each harness's own count, so compare it within one harness and not across them:
@@ -544,6 +545,45 @@ usage record, so the field names live in one place, and `dispatch_finish` applie
 `HANDLER-FAILED:` check on the model's last line. The prompt and the final-line parser are in
 `dispatch-prompt.sh`. Not extracted: the tool checks and the model-flag handling at the top of
 each adapter, which differ in what they require and are short.
+
+## Live log
+
+The conductor window of a headless swarm used to show the loop's own messages, with no time on
+them and nothing about how an attempt ended. The loop now prints every line with a timestamp, in
+the window and in `$CONDUCTOR_DIR/conductor.log`, the same text in both:
+
+- the start (`started`, `ledger created`, `nothing to reconcile`) and the stop;
+- each event and the handler chosen: `0001/review-….md -> conductor/on-review-approved (attempt 1 of 3)`;
+- **how each attempt ended**: `… finished in 13s, $0.107 — Moved 0001 to merging.` The duration,
+  the cost (`no cost reported` for a harness that has none, `no usage record` when there is no
+  record, never a silent zero) and the model's own last line. A failure says
+  `… failed with exit 1 after 9s, no usage record: <what the adapter printed>`;
+- events with no handler, which were marked processed without a word before:
+  `0001/progress-….md: no handler for progress, skipped`;
+- a halt, with the last error, and the halt notice's banner;
+- `idle: nothing to do (N events handled since start)` every `CONDUCTOR_HEARTBEAT` seconds (default
+  600, 0 turns it off) while there is nothing to do, so that a quiet loop can be told from a hung
+  one. A dispatch that is running shows its `->` line and no `finished` line yet.
+
+**What the model said.** The loop sets `DISPATCH_ANSWER_FILE`; `dispatch_finish`, which all three
+adapters call with the model's final answer, writes its last non-empty line there (before it checks
+for `HANDLER-FAILED:`, so that line is kept too). No adapter changed. A run that fails before it
+has an answer shows the adapter's error instead.
+
+**One window.** `swarm-start.sh -hc` keeps the loop in the foreground of the conductor window, as
+before, so the halt banner and a restart stay in the window you are looking at. When the window is
+new (after a halt and a restart) it first prints the last 20 lines of `conductor.log` between
+`--- earlier in conductor.log:` and `--- now:`, so you see where the last run left off. Any other
+window can follow the file with `tail -F .conductor/conductor.log`. The issue described the window
+as tailing the log; that would have meant running the loop out of sight in a second window.
+
+**Control characters are removed** from every line before it is printed or written, from the adapter's
+error output shown in the window, and from the halt notice. The model's last line and an adapter's
+error can contain text from a task or a file that nobody trusts, and a terminal obeys escape
+sequences: left in, they could clear the screen, retitle the window or draw over a halt.
+
+`usage.jsonl` is the machine-readable sibling, one object per attempt; `conductor.log` is the one
+to read. A line that cannot be written to the log never changes what the loop does.
 
 ## Usage log
 

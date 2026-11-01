@@ -64,6 +64,26 @@ HANDLER-FAILED: task-locks.sh exited 1" 2>&1)"; then fail "a failed answer passe
 case "$ERR" in *"codex: handler reported failure: HANDLER-FAILED: task-locks.sh exited 1"*) ok "names the harness and quotes the line" ;; *) fail "message: $ERR" ;; esac
 if dispatch_finish pi ""; then ok "an empty answer passes (the exit code decides)"; else fail "empty answer failed"; fi
 
+echo "── the model's last line for the loop's log"
+export DISPATCH_ANSWER_FILE="$TMP/answer.txt"
+rm -f "$DISPATCH_ANSWER_FILE"
+dispatch_finish pi "Checked the lock set.
+Moved 0001 to merging.
+
+"
+assert_eq "the last non-empty line is kept" "$(cat "$DISPATCH_ANSWER_FILE")" "Moved 0001 to merging."
+dispatch_finish codex "locks failed.
+HANDLER-FAILED: task-locks.sh exited 1" 2> /dev/null || true
+assert_eq "a HANDLER-FAILED line is kept too" "$(cat "$DISPATCH_ANSWER_FILE")" "HANDLER-FAILED: task-locks.sh exited 1"
+dispatch_finish pi "$(printf 'x%.0s' $(seq 1 500))"
+assert_eq "a long line is cut" "$(wc -c < "$DISPATCH_ANSWER_FILE" | tr -d ' ')" "301"
+dispatch_finish pi ""
+assert_eq "an empty answer leaves an empty file" "$(wc -c < "$DISPATCH_ANSWER_FILE" | tr -d ' ')" "0"
+unset DISPATCH_ANSWER_FILE
+rm -f "$TMP/answer.txt"
+dispatch_finish pi "Moved the card."
+assert_eq "no variable, no file" "$([[ -e "$TMP/answer.txt" ]] && echo written || echo none)" "none"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

@@ -15,7 +15,9 @@
 #     cache, so a harness that reports a total has to subtract the cached part first.
 #
 #   dispatch_finish <harness> <answer>
-#     Returns 1, with a message, if the last non-empty line of the model's answer starts
+#     Writes the answer's last non-empty line to $DISPATCH_ANSWER_FILE if that is set, so the
+#     loop can show what the model said it did (it is written before the check below, so a
+#     HANDLER-FAILED line is kept too). Returns 1, with a message, if the last non-empty line of the model's answer starts
 #     with HANDLER-FAILED:. Returns 0 otherwise. Needs dispatch_final_exit from
 #     dispatch-prompt.sh.
 
@@ -36,6 +38,9 @@ dispatch_write_usage() {
 
 dispatch_finish() {
   local harness="${1:?Usage: dispatch_finish <harness> <answer>}" answer="${2-}"
+  if [[ -n "${DISPATCH_ANSWER_FILE:-}" ]]; then
+    { printf '%s\n' "$answer" | awk 'NF{l=$0} END{if (l != "") print substr(l, 1, 300)}' > "$DISPATCH_ANSWER_FILE"; } 2> /dev/null || true
+  fi
   dispatch_final_exit "$answer" && return 0
   echo "$harness: handler reported failure: $(printf '%s\n' "$answer" | awk 'NF{l=$0} END{print l}')" >&2
   return 1
