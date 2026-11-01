@@ -4,6 +4,7 @@
 #
 # Usage: preflight-check.sh [--lang <language>] [--test-cmd <cmd>] [--kanban-server]
 #        preflight-check.sh --github-import     (tools for import-github.sh only)
+#        preflight-check.sh --conductor-loop    (also check what conductor-loop.sh needs)
 
 set -euo pipefail
 
@@ -11,6 +12,7 @@ LANG_HINT=""
 TEST_CMD=""
 KANBAN_SERVER=false
 GITHUB_IMPORT=false
+CONDUCTOR_LOOP=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -18,6 +20,7 @@ while [[ $# -gt 0 ]]; do
     --test-cmd|-tc)   TEST_CMD="$2";  shift 2 ;;
     --kanban-server|-cbs) KANBAN_SERVER=true; shift ;;
     --github-import)  GITHUB_IMPORT=true; shift ;;
+    --conductor-loop) CONDUCTOR_LOOP=true; shift ;;
     *) shift ;;
   esac
 done
@@ -41,6 +44,13 @@ else
   check "git"     "worktree creation and branch management"
   check "python3" "workforce adapter selection"
   check "claude"  "AI agent CLI"
+fi
+
+# ── Headless conductor loop ──────────────────────────────────────────────────
+if [[ "$CONDUCTOR_LOOP" == true ]]; then
+  if ! command -v timeout &>/dev/null && ! command -v gtimeout &>/dev/null; then
+    MISSING+=("  timeout — per-event deadline in conductor-loop.sh (GNU coreutils; on macOS: brew install coreutils)")
+  fi
 fi
 
 # ── Kanban board ─────────────────────────────────────────────────────────────
