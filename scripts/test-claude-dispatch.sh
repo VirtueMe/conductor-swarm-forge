@@ -13,6 +13,9 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 ADAPTER="$ROOT_DIR/adapters/claude-code.sh"
 
 TMP="$(mktemp -d)"
+# A private tmux server: if a test ever reaches the real worker-spawn.sh, it cannot touch the
+# user's own tmux session.
+export TMUX_TMPDIR="$TMP/tmux"; mkdir -p "$TMUX_TMPDIR"
 trap 'rm -rf "$TMP"' EXIT
 
 FAILS=0

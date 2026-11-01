@@ -13,6 +13,9 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 ADAPTER="$ROOT_DIR/adapters/codex.sh"
 
 TMP="$(mktemp -d)"
+# A private tmux server: if a test ever reaches the real worker-spawn.sh, it cannot touch the
+# user's own tmux session.
+export TMUX_TMPDIR="$TMP/tmux"; mkdir -p "$TMUX_TMPDIR"
 trap 'rm -rf "$TMP"' EXIT
 
 FAILS=0
@@ -194,7 +197,8 @@ cp "$ROOT_DIR/workforces/default.json" "$CONDUCTOR_DIR/workforce.json"
 cp -r "$ROOT_DIR/skills" "$CONDUCTOR_DIR/skills"; cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
 printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
 "$SCRIPTS_DIR/task-create.sh" --title T --type chore --description x > /dev/null
-PATH="$TMP/bin:$PATH" STUB_OUT="$TMP/fx/ok.jsonl" bash "$SCRIPTS_DIR/conductor-loop.sh" --once > /dev/null 2>&1   # seeds the ledger
+PATH="$TMP/bin:$PATH" STUB_OUT="$TMP/fx/ok.jsonl" CONDUCTOR_ADAPTER_FILE="$ADAPTER" \
+  bash "$SCRIPTS_DIR/conductor-loop.sh" --once > /dev/null 2>&1   # seeds the ledger (and runs the reconcile) with the stub
 sleep 1
 "$SCRIPTS_DIR/task-signal.sh" --task 0001 --type signal --outcome complete > /dev/null
 RC=0

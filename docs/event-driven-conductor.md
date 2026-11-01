@@ -256,12 +256,9 @@ An adapter that only supports interactive sessions simply does not implement the
 
 **Why opt-in, not a plain capability check.** All three adapters now define
 `adapter_dispatch`, and the default workforce uses `claude-code` for the conductor, so a plain
-check would move every existing swarm onto the loop at once. The loop also does not run the
-startup reconcile (`startup.md` steps 1 to 6: register untracked tasks, unblock ready ones,
-respawn workers whose window was lost, re-notify a waiting human). A fresh swarm does not need
-it, since new tasks arrive as events. A restart with work in flight does. Until that is split
-out and run by the loop (#89), `swarm-start.sh -hc` prints a warning when it finds cards in a
-working stage, and the default stays interactive.
+check would move every existing swarm onto the loop at once. The loop has run on scratch swarms
+and stub harnesses, not yet on a long real one, so the default stays interactive until that
+changes. It also reconciles on every start (below), so a restart resumes interrupted work.
 
 **What `-hc` does:**
 
@@ -332,11 +329,11 @@ implementations of `adapter_dispatch`.
 `topology-load.sh conductor-skill`, calls the conductor adapter's `adapter_dispatch`,
 and records the event as processed only after the handler succeeds.
 
-**Contract**, called as `adapter_dispatch <skill_content> <artifact>`:
+**Contract**, called as `adapter_dispatch <skill_content> <event>`, where `<event>` is an artifact path or the word `startup` (the reconcile, which has no artifact or task):
 
 | | |
 | --- | --- |
-| Environment | `CONDUCTOR_DIR` (absolute), `PATH` with the scripts (from `conductor_env`), `TASK_ID`, `TASK_FILE`, `ARTIFACT`, `DISPATCH_DEADLINE` (seconds), `DISPATCH_USAGE_FILE` |
+| Environment | `CONDUCTOR_DIR` (absolute), `PATH` with the scripts (from `conductor_env`), `TASK_ID`, `TASK_FILE`, `ARTIFACT` (these three only for an artifact event; unset for the startup reconcile), `DISPATCH_DEADLINE` (seconds), `DISPATCH_USAGE_FILE` |
 | Exit 0 | the handler finished |
 | Exit 2 | the event cannot be handled; the loop does not retry |
 | Any other exit | the handler failed; the loop retries |
@@ -356,6 +353,7 @@ and the event last. `dispatch_final_exit` turns a final line starting with
 
 | Case | Behavior |
 | --- | --- |
+| The startup reconcile fails or its skill file is missing | Same as any event: retry, then halt, with `startup` as the artifact. No event is handled until it succeeds. |
 | Handler exits non-zero or hangs past the deadline | Retry up to `CONDUCTOR_MAX_ATTEMPTS` (3), `CONDUCTOR_RETRY_DELAY` (5 s) apart, then halt. The event stays unprocessed. |
 | Adapter exits 2, the handler cannot be resolved, the skill file is missing, or the artifact has no type | Halt at once. Retrying cannot help. |
 | The artifact has no handler (`assigned`, `progress`, `moved`, ...) | Record it as processed without a dispatch, so it is never listed again. |
@@ -399,8 +397,6 @@ leaves none.
 - The banner is lost if the conductor window closes when the loop exits, which tmux does by
   default for a window whose command ends. The inbox files survive. `swarm-start.sh -hc` keeps
   the window open by running the loop as `loop; exec $SHELL`.
-- `startup.md` mixes the startup reconcile and the poll loop, so the loop cannot yet
-  dispatch the reconcile as its first event (#89).
 - `unprocessed` scans the whole work tree for every event.
 - The loop needs GNU `timeout` (`gtimeout` on macOS, from `brew install coreutils`). It exits 3 with a message if neither exists; `preflight-check.sh --conductor-loop` checks for it.
 
@@ -548,6 +544,40 @@ usage record, so the field names live in one place, and `dispatch_finish` applie
 `HANDLER-FAILED:` check on the model's last line. The prompt and the final-line parser are in
 `dispatch-prompt.sh`. Not extracted: the tool checks and the model-flag handling at the top of
 each adapter, which differ in what they require and are short.
+
+## Startup reconcile
+
+`skills/conductor/startup.md` used to be two things: steps 1 to 6 reconciled the board with
+what is on disk, and step 7 was the poll loop. The reconcile is now its own skill,
+`skills/conductor/reconcile.md`, with no polling in it. `startup.md` loads it and then runs the
+poll loop, so the interactive conductor behaves as before. `conductor-loop.sh` dispatches the
+same skill as its first event, on every start:
+
+- **What it does:** registers task files that have no card, unblocks backlog cards whose
+  dependencies are done, respawns a worker whose window was lost (or re-notifies a human whose
+  inbox file is missing), and starts the entry stage for ready cards.
+- **Replay:** every step acts only when something is missing, and spawning skips a task that
+  already has a live worker, so running it again is safe. The one soft spot is a manual entry
+  stage: `stage-start.sh` notifies each time, so a restart notifies that human again.
+- **The event is `startup`:** there is no artifact and no task, so the dispatch prompt says
+  "Startup reconcile. There is no artifact and no task." and the per-event variables are unset.
+- **A fresh swarm skips it:** with no task files and no cards there is nothing to reconcile, and
+  no model call is made.
+- **It runs before events, after the ledger is ready.** Artifacts left unprocessed by a crash are
+  replayed afterwards.
+
+Which loop does the interactive conductor follow? As written, `startup.md` step 2 (the old
+step 7), which polls `work/` only and never returns. `conductor.prompt` also has a `## Watch
+loop` section with watchers on `tasks/` and `work/` that starts "after startup"; startup does
+not finish, so as written it is never reached. That section is **kept unchanged**, with a note
+above it, until a live interactive run shows which of the two the model follows (#98): deleting
+it on a reading of the text could end the one thing that starts tasks created mid-run, if the
+model does follow it. If it does not, a task created while the interactive conductor runs is not
+started until a restart, which is the gap #98 describes. The headless loop does not have it.
+
+The reconcile is also the most mechanical part of the conductor: a loop over cards that calls
+scripts. A live run cost $0.09 to $0.19 and 8 to 11 model turns, on every start with any task on
+the board, and once repeated a step. It is the first candidate for Phase 2 (a script, no model).
 
 ## Spike results
 

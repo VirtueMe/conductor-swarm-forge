@@ -333,24 +333,6 @@ launch_conductor_loop() {
   tmux new-session -d -s "$SESSION" -n "conductor" "bash -c $(printf '%q' "$script")"
 }
 
-# The loop does not run the startup reconcile yet (#89): it will not respawn a worker whose
-# window was lost, or re-notify a human who is waiting. Say so when there is work in flight.
-if [[ "$RUN_LOOP" == true ]]; then
-  IN_FLIGHT=""
-  while IFS= read -r stage; do
-    [[ -n "$stage" ]] || continue
-    [[ -n "$("$SCRIPTS_DIR/topology-load.sh" mode "$TOPOLOGY_FILE" "$stage" 2>/dev/null || true)" ]] || continue
-    for card in "$CONDUCTOR_DIR/kanban/$stage"/*.md; do
-      [[ -f "$card" ]] && IN_FLIGHT+=" $(basename "$card" .md)($stage)"
-    done
-  done < <("$SCRIPTS_DIR/topology-load.sh" stages "$TOPOLOGY_FILE")
-  if [[ -n "$IN_FLIGHT" ]]; then
-    echo "Warning: tasks are already in flight:${IN_FLIGHT}" >&2
-    echo "         The headless conductor does not resume interrupted work yet (#89): a worker whose" >&2
-    echo "         window was lost is not respawned. Start without --headless-conductor to reconcile first." >&2
-  fi
-fi
-
 # ── tmux ─────────────────────────────────────────────────────────────────────
 
 echo ""

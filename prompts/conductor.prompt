@@ -45,6 +45,11 @@ Load and follow `skills/conductor/startup.md`.
 
 ## Watch loop
 
+> Note (#89, #98): as written, `startup.md` step 2 is the event loop. It polls `work/` and does
+> not return, so the steps below are not reached. This section is kept unchanged until #98 shows
+> what the interactive conductor really does. The headless loop (`conductor-loop.sh`) does not
+> use it.
+
 After startup:
 
 1. Start the directory watchers as background processes:

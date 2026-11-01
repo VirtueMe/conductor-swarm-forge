@@ -124,25 +124,17 @@ lacks "conductor-loop" "$TMUX_LOG" "no loop"
 start --tool "$FAKE" -- --workforce interactive-only
 lacks "Warning" "$TMP/err" "without the flag the same adapter gives no warning"
 
-section "5 · A restart with work in flight is warned about"
+section "5 · A restart with work in flight starts the loop without a warning"
+# The loop runs the startup reconcile itself (#89), so there is nothing to warn about.
 # shellcheck disable=SC2329  # called through $PREPARE
 prepare_in_flight() {
-  mkdir -p "$TMP/target/.conductor/kanban/in-progress" "$TMP/target/.conductor/kanban/ready" "$TMP/target/.conductor/kanban/backlog"
+  mkdir -p "$TMP/target/.conductor/kanban/in-progress"
   : > "$TMP/target/.conductor/kanban/in-progress/0001.md"
-  : > "$TMP/target/.conductor/kanban/ready/0002.md"
-  : > "$TMP/target/.conductor/kanban/backlog/0003.md"
 }
 PREPARE=prepare_in_flight start -- -hc
-assert_eq "exit 0 (it warns, it does not refuse)" "$RC" "0"
-has "tasks are already in flight: 0001(in-progress)" "$TMP/err" "names the task and its stage"
-lacks "0002" "$TMP/err" "a card waiting in ready is not in flight"
-lacks "0003" "$TMP/err" "nor one in backlog"
-has "#89" "$TMP/err" "points at the follow-up"
-assert_eq "the loop is still launched" "$(new_session | grep -c 'conductor-loop.sh' || true)" "1"
-PREPARE=prepare_in_flight start --
-lacks "in flight" "$TMP/err" "the interactive conductor reconciles itself: no warning"
-start -- -hc
-lacks "in flight" "$TMP/err" "a fresh swarm: no warning"
+assert_eq "exit 0" "$RC" "0"
+lacks "in flight" "$TMP/err" "no warning"
+assert_eq "the loop is launched" "$(new_session | grep -c 'conductor-loop.sh' || true)" "1"
 
 section "6 · An existing tmux session is left alone"
 start --
