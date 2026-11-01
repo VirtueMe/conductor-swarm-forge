@@ -147,3 +147,9 @@ jobs:
 
       - name: test-pi-dispatch
         run: bash scripts/test-pi-dispatch.sh
+
+      - name: test-codex-dispatch
+        run: bash scripts/test-codex-dispatch.sh
+
+      - name: test-dispatch-result
+        run: bash scripts/test-dispatch-result.sh

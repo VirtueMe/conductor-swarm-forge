@@ -156,6 +156,8 @@ adapter_dispatch() {
 
   # shellcheck source=scripts/dispatch-prompt.sh
   source "${SCRIPTS_DIR:?SCRIPTS_DIR is not set}/dispatch-prompt.sh"
+  # shellcheck source=scripts/dispatch-result.sh
+  source "$SCRIPTS_DIR/dispatch-result.sh"
   # shellcheck source=scripts/wf-read.sh
   source "$SCRIPTS_DIR/wf-read.sh"
 
@@ -192,17 +194,16 @@ adapter_dispatch() {
 
   # The usage record, written whatever the outcome because the spend happened. `usage`
   # is all zeros on an error result, so the figures come from the per-model breakdown.
-  if [[ -n "${DISPATCH_USAGE_FILE:-}" ]]; then
-    jq -c '(.modelUsage // {}) as $m | {
-        harness: "claude-code",
-        model: (if ($m | length) > 0 then ($m | keys | join("+")) else null end),
-        input_tokens: ([$m[].inputTokens // 0] | add // 0),
-        output_tokens: ([$m[].outputTokens // 0] | add // 0),
-        cache_read_tokens: ([$m[].cacheReadInputTokens // 0] | add // 0),
-        cache_write_tokens: ([$m[].cacheCreationInputTokens // 0] | add // 0),
-        cost_usd: .total_cost_usd,
-        turns: .num_turns }' "$out" > "$DISPATCH_USAGE_FILE"
-  fi
+  local u_model u_in u_out u_cr u_cw u_cost u_turns
+  IFS=$'\t' read -r u_model u_in u_out u_cr u_cw u_cost u_turns < <(jq -r '(.modelUsage // {}) as $m | [
+      (if ($m | length) > 0 then ($m | keys | join("+")) else "-" end),
+      ([$m[].inputTokens // 0] | add // 0),
+      ([$m[].outputTokens // 0] | add // 0),
+      ([$m[].cacheReadInputTokens // 0] | add // 0),
+      ([$m[].cacheCreationInputTokens // 0] | add // 0),
+      (.total_cost_usd // "-"), (.num_turns // "-")
+    ] | @tsv' "$out")
+  dispatch_write_usage claude-code "$u_model" "$u_in" "$u_out" "$u_cr" "$u_cw" "$u_cost" "$u_turns"
 
   # "-" stands for an empty field: read would otherwise merge adjacent tabs.
   local subtype terminal status is_error denied
@@ -235,9 +236,6 @@ adapter_dispatch() {
     echo "claude-code: claude exited $rc" >&2
     return 1
   fi
-  if ! dispatch_final_exit "$answer"; then
-    echo "claude-code: handler reported failure: $(printf '%s\n' "$answer" | awk 'NF{l=$0} END{print l}')" >&2
-    return 1
-  fi
+  dispatch_finish claude-code "$answer" || return 1
   return 0
 }
