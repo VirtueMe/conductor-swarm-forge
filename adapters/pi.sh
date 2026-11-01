@@ -138,3 +138,116 @@ adapter_launch() {
     tmux new-session -d -s "$session" -n "$window_name" "$cmd"
   fi
 }
+
+# --- Headless dispatch (conductor-loop.sh) ------------------------------------
+
+# Run one conductor event through `pi --mode rpc` and report how it went.
+#   $1  skill content     $2  artifact path
+# Environment (set by conductor-loop.sh): CONDUCTOR_DIR, SCRIPTS_DIR, TASK_ID,
+#   DISPATCH_DEADLINE, DISPATCH_USAGE_FILE. PI_ABORT_GRACE (default 5) is how long to wait
+#   for a run to settle after an abort.
+# One pi process per event, so the stats are per event with no new_session. Unlike
+# claude -p, Pi has no timer of its own and the loop's outer timeout is only a backstop:
+# scripts/pi-rpc-run.py sends `abort` when DISPATCH_DEADLINE passes. Pi has no per-run
+# budget flag, so the deadline is the only bound on a run.
+# Needs python3 (the RPC client) and jq. Exit: 0 finished; 2 cannot succeed on a retry
+# (pi, python3 or jq missing, or a rejected request such as a bad model or credentials);
+# 1 anything else, including a deadline that passed.
+adapter_dispatch() {
+  local skill_content="${1:?Usage: adapter_dispatch <skill_content> <artifact>}"
+  local artifact="${2:?Usage: adapter_dispatch <skill_content> <artifact>}"
+
+  local tool
+  for tool in pi python3 jq; do
+    command -v "$tool" > /dev/null 2>&1 || { echo "pi: dispatch needs $tool" >&2; return 2; }
+  done
+
+  # shellcheck source=scripts/dispatch-prompt.sh
+  source "${SCRIPTS_DIR:?SCRIPTS_DIR is not set}/dispatch-prompt.sh"
+  # shellcheck source=scripts/wf-read.sh
+  source "$SCRIPTS_DIR/wf-read.sh"
+
+  local prompt params flags
+  prompt="$(dispatch_prompt "$skill_content" "$artifact")" || return 2
+  params="$(wf_field "${CONDUCTOR_DIR:?CONDUCTOR_DIR is not set}/workforce.json" conductor params)"
+  flags="$(adapter_params_to_flags "$params")" || return 2
+  # adapter_params_to_flags prints shell-quoted words, so eval rebuilds them exactly.
+  local -a model_flags=()
+  eval "model_flags=($flags)"
+
+  # Fixed names under the conductor dir: one dispatch runs at a time, a killed dispatch
+  # leaves files that the next one overwrites, and the last run stays for debugging.
+  local prompt_file="$CONDUCTOR_DIR/dispatch-prompt.txt" out="$CONDUCTOR_DIR/dispatch-result.json"
+  printf '%s\n' "$prompt" > "$prompt_file"
+  rm -f "$out"
+
+  local rc=0
+  # Pi runs tools unattended with no permission prompts, so limit them to what a handler
+  # needs: bash for the scripts, read for files. No edit or write.
+  python3 "$SCRIPTS_DIR/pi-rpc-run.py" \
+    --prompt-file "$prompt_file" --out "$out" \
+    --deadline "${DISPATCH_DEADLINE:-600}" --grace "${PI_ABORT_GRACE:-5}" \
+    -- --tools bash,read ${model_flags[@]+"${model_flags[@]}"} || rc=$?
+
+  if [[ ! -s "$out" ]] || ! jq -e . "$out" > /dev/null 2>&1; then
+    echo "pi: the RPC client produced no result (exit $rc)" >&2
+    return 1
+  fi
+
+  # The usage record, written whatever the outcome because the spend happened.
+  if [[ -n "${DISPATCH_USAGE_FILE:-}" ]]; then
+    jq -c '{
+        harness: "pi",
+        model: .model,
+        input_tokens: (.stats.tokens.input // 0),
+        output_tokens: (.stats.tokens.output // 0),
+        cache_read_tokens: (.stats.tokens.cacheRead // 0),
+        cache_write_tokens: (.stats.tokens.cacheWrite // 0),
+        cost_usd: (.stats.cost // null),
+        turns: (.stats.assistantMessages // null) }' "$out" > "$DISPATCH_USAGE_FILE"
+  fi
+
+  # "-" stands for an empty field: read would otherwise merge adjacent tabs.
+  local deadline_hit settled aborted rejected stop_reason retry_failed pi_exit
+  IFS=$'\t' read -r deadline_hit settled aborted rejected stop_reason retry_failed pi_exit < <(jq -r '[
+      (.deadline_hit | tostring), (.settled | tostring), (.aborted | tostring),
+      (.prompt_rejected // "-" | gsub("[\t\n]"; " ")), (.stop_reason // "-"),
+      (.auto_retry_failed // "-" | gsub("[\t\n]"; " ")), (.pi_exit // "-" | tostring)
+    ] | @tsv' "$out")
+  local error_message answer
+  error_message="$(jq -r '.error_message // ""' "$out")"
+  answer="$(jq -r '.final_text // ""' "$out")"
+
+  if [[ "$deadline_hit" == "true" ]]; then
+    echo "pi: the deadline (${DISPATCH_DEADLINE:-600}s) passed; the run was aborted" >&2; return 1
+  fi
+  if [[ "$rejected" != "-" ]]; then
+    echo "pi: the prompt was rejected: $rejected" >&2; return 1
+  fi
+  if [[ "$settled" != "true" ]]; then
+    echo "pi: exited before the run settled (exit $pi_exit): $(jq -r '.stderr // ""' "$out" | head -c 300 | tr '\n' ' ')" >&2
+    return 1
+  fi
+  if [[ "$aborted" == "true" ]]; then
+    echo "pi: the run was aborted" >&2; return 1
+  fi
+  # Pi reports a failed model call inside the run: the prompt is accepted and the run
+  # settles, with stopReason "error" and the HTTP status leading errorMessage.
+  if [[ "$stop_reason" == "error" ]]; then
+    case "$error_message" in
+      400*|401*|403*|404*)
+        echo "pi: the request was rejected: $(printf '%s' "$error_message" | head -c 200 | tr '\n' ' ')" >&2
+        return 2 ;;
+    esac
+    echo "pi: the model call failed: $(printf '%s' "$error_message" | head -c 200 | tr '\n' ' ')" >&2
+    return 1
+  fi
+  if [[ "$retry_failed" != "-" ]]; then
+    echo "pi: retries gave up: $retry_failed" >&2; return 1
+  fi
+  if ! dispatch_final_exit "$answer"; then
+    echo "pi: handler reported failure: $(printf '%s\n' "$answer" | awk 'NF{l=$0} END{print l}')" >&2
+    return 1
+  fi
+  return 0
+}

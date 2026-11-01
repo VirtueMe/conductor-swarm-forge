@@ -144,3 +144,6 @@ jobs:
 
       - name: test-claude-dispatch
         run: bash scripts/test-claude-dispatch.sh
+
+      - name: test-pi-dispatch
+        run: bash scripts/test-pi-dispatch.sh
