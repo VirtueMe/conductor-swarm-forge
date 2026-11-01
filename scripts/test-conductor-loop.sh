@@ -46,6 +46,7 @@ adapter_dispatch() {
   if [[ "$art" == "startup" ]]; then
     # The startup reconcile: logged apart from events, and the queued exit codes are not for it.
     echo "reconcile $(printf '%s' "$skill" | head -1) task_id=[${TASK_ID:-}] artifact=[${ARTIFACT:-}]" >> "$STUB_LOG"
+    [[ -n "${STUB_USAGE:-}" && -n "${DISPATCH_USAGE_FILE:-}" ]] && printf '%s\n' "$STUB_USAGE" > "$DISPATCH_USAGE_FILE"
     [[ -n "${STUB_ERRMSG:-}" && "${STUB_RECONCILE_RC:-0}" != 0 ]] && echo "$STUB_ERRMSG" >&2
     return "${STUB_RECONCILE_RC:-0}"
   fi
@@ -58,6 +59,7 @@ adapter_dispatch() {
     rc="$(head -1 "$STUB_RC")"
     tail -n +2 "$STUB_RC" > "$STUB_RC.next"; mv "$STUB_RC.next" "$STUB_RC"
   fi
+  [[ -n "${STUB_USAGE:-}" && -n "${DISPATCH_USAGE_FILE:-}" ]] && printf '%s\n' "$STUB_USAGE" > "$DISPATCH_USAGE_FILE"
   [[ -n "${STUB_ERRMSG:-}" ]] && echo "$STUB_ERRMSG" >&2
   [[ -f "$STUB_HOOK" ]] && bash "$STUB_HOOK"
   if [[ "$rc" == "sleep" ]]; then sleep "$STUB_SLEEP_ARG"; rc=0; fi
@@ -84,7 +86,7 @@ new_swarm() {
   cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
   printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
   : > "$STUB_LOG"; : > "$STUB_RC"; rm -f "$STUB_HOOK"
-  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG
+  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG STUB_USAGE
   export CONDUCTOR_RETRY_DELAY=0
 }
 create_task() { "$SCRIPTS_DIR/task-create.sh" --title "T" --type chore --description "x" > /dev/null; }
@@ -96,6 +98,10 @@ run_loop() { # sets RC
 dispatches() { grep -c '^start ' "$STUB_LOG" || true; }
 unprocessed() { "$SCRIPTS_DIR/artifact-ledger.sh" unprocessed; }
 queue() { : > "$STUB_RC"; local c; for c in "$@"; do echo "$c" >> "$STUB_RC"; done; }
+# ulines <event prefix>: the usage log lines for one event, as compact JSON
+ulines() { jq -c "select(.event | startswith(\"$1\"))" "$CONDUCTOR_DIR/usage.jsonl" 2> /dev/null; }
+# ufield <event prefix> <jq path>: one field of the last such line
+ufield() { ulines "$1" | tail -1 | jq -r "$2"; }
 notices() { find "$CONDUCTOR_DIR/$1" -name 'loop-halt-*.md' 2> /dev/null | wc -l | tr -d ' '; }
 notice() { find "$CONDUCTOR_DIR/$1" -name 'loop-halt-*.md' | head -1; }
 halt_kind() { awk -F': ' '/^kind: /{print $2}' "$CONDUCTOR_DIR/conductor-loop.halted" 2>/dev/null || true; }
@@ -440,6 +446,130 @@ run_loop
 assert_eq "exit 1" "$RC" "1"
 assert_eq "halt kind" "$(halt_kind)" "unresolvable"
 expect_grep 'no skill file' "$CONDUCTOR_DIR/conductor-loop.halted" "names the missing file"
+
+# 28 ------------------------------------------------------------------------------
+section "28 · Every dispatch is logged with its record"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"claude-code","model":"m1","input_tokens":8,"output_tokens":701,"cache_read_tokens":20055,"cache_write_tokens":7429,"cost_usd":0.1019,"turns":4}' run_loop
+assert_eq "one line for the event" "$(ulines 0001/signal | wc -l | tr -d ' ')" "1"
+assert_eq "the task" "$(ufield 0001/signal .task)" "0001"
+assert_eq "the handler" "$(ufield 0001/signal .handler)" "conductor/on-signal-complete"
+assert_eq "attempt" "$(ufield 0001/signal .attempt)" "1"
+assert_eq "outcome" "$(ufield 0001/signal .outcome)" "finished"
+assert_eq "rc" "$(ufield 0001/signal .rc)" "0"
+assert_eq "harness from the record" "$(ufield 0001/signal .harness)" "claude-code"
+assert_eq "model" "$(ufield 0001/signal .model)" "m1"
+assert_eq "input tokens" "$(ufield 0001/signal .input_tokens)" "8"
+assert_eq "output tokens" "$(ufield 0001/signal .output_tokens)" "701"
+assert_eq "cache read tokens" "$(ufield 0001/signal .cache_read_tokens)" "20055"
+assert_eq "cache write tokens" "$(ufield 0001/signal .cache_write_tokens)" "7429"
+assert_eq "cost" "$(ufield 0001/signal .cost_usd)" "0.1019"
+assert_eq "turns" "$(ufield 0001/signal .turns)" "4"
+assert_eq "usage was reported" "$(ufield 0001/signal .usage)" "reported"
+assert_eq "a UTC timestamp" "$(ufield 0001/signal .ts | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' || true)" "1"
+assert_eq "a duration in seconds" "$(ufield 0001/signal '.duration_s | type')" "number"
+
+# 29 ------------------------------------------------------------------------------
+section "29 · A harness that reports no cost is logged with a null cost, not zero"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"codex","model":null,"input_tokens":2965,"output_tokens":5,"cache_read_tokens":12288,"cache_write_tokens":0,"cost_usd":null,"turns":2}' run_loop
+assert_eq "cost is null" "$(ufield 0001/signal .cost_usd)" "null"
+assert_eq "the tokens are there" "$(ufield 0001/signal .input_tokens)" "2965"
+assert_eq "and the record counts as reported" "$(ufield 0001/signal .usage)" "reported"
+
+# 30 ------------------------------------------------------------------------------
+section "30 · An attempt with no record is logged as usage none"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+run_loop
+assert_eq "usage none" "$(ufield 0001/signal .usage)" "none"
+assert_eq "the harness is the adapter that ran" "$(ufield 0001/signal .harness)" "stub-adapter"
+assert_eq "tokens are null, not zero" "$(ufield 0001/signal .input_tokens)" "null"
+assert_eq "cost is null" "$(ufield 0001/signal .cost_usd)" "null"
+
+# 31 ------------------------------------------------------------------------------
+section "31 · Every attempt of a retried event is logged"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue 1 0
+STUB_USAGE='{"harness":"claude-code","cost_usd":0.05}' CONDUCTOR_MAX_ATTEMPTS=3 run_loop
+assert_eq "two lines" "$(ulines 0001/signal | wc -l | tr -d ' ')" "2"
+assert_eq "the first failed" "$(ulines 0001/signal | head -1 | jq -r '.outcome + " " + (.attempt|tostring) + " " + (.rc|tostring)')" "failed 1 1"
+assert_eq "the second finished" "$(ulines 0001/signal | tail -1 | jq -r '.outcome + " " + (.attempt|tostring) + " " + (.rc|tostring)')" "finished 2 0"
+assert_eq "the failed attempt kept its cost" "$(ulines 0001/signal | head -1 | jq -r .cost_usd)" "0.05"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue 1 1
+CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "a halt after two attempts leaves two lines" "$(ulines 0001/signal | wc -l | tr -d ' ')" "2"
+
+# 32 ------------------------------------------------------------------------------
+section "32 · The outcome says why an attempt ended"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue 2
+run_loop
+assert_eq "exit 2 is unusable" "$(ufield 0001/signal .outcome)" "unusable"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue sleep
+CONDUCTOR_MAX_ATTEMPTS=1 CONDUCTOR_DISPATCH_DEADLINE=1 CONDUCTOR_KILL_GRACE=1 run_loop
+assert_eq "a timeout is a timeout" "$(ufield 0001/signal .outcome)" "timeout"
+assert_eq "with the exit status of timeout" "$(ufield 0001/signal .rc)" "124"
+assert_eq "and no record" "$(ufield 0001/signal .usage)" "none"
+
+# 33 ------------------------------------------------------------------------------
+section "33 · The startup reconcile is logged like any event"
+new_swarm
+create_task
+STUB_USAGE='{"harness":"claude-code","cost_usd":0.19}' run_loop
+assert_eq "event" "$(ufield startup .event)" "startup"
+assert_eq "no task" "$(ufield startup .task)" "null"
+assert_eq "handler" "$(ufield startup .handler)" "conductor/reconcile"
+assert_eq "cost" "$(ufield startup .cost_usd)" "0.19"
+
+# 34 ------------------------------------------------------------------------------
+section "34 · A loop that is killed leaves a line for the attempt in flight"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+queue sleep
+CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err" &
+LOOP_PID=$!
+for _ in $(seq 1 50); do grep -q '^start ' "$STUB_LOG" && break; sleep 0.1; done
+kill -TERM "$LOOP_PID"; wait "$LOOP_PID" 2>/dev/null || true; LOOP_PID=""
+assert_eq "one line" "$(ulines 0001/signal | wc -l | tr -d ' ')" "1"
+assert_eq "interrupted" "$(ufield 0001/signal .outcome)" "interrupted"
+assert_eq "attempt 1" "$(ufield 0001/signal .attempt)" "1"
+assert_eq "and no record" "$(ufield 0001/signal .usage)" "none"
+
+# 35 ------------------------------------------------------------------------------
+section "35 · A log that cannot be written changes nothing"
+new_swarm
+create_task; run_loop
+rm -f "$CONDUCTOR_DIR/usage.jsonl"; mkdir -p "$CONDUCTOR_DIR/usage.jsonl"   # a directory where the file should be
+sleep 1; signal 0001 signal complete
+run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the event was handled and recorded" "$(unprocessed)" ""
+
+# 36 ------------------------------------------------------------------------------
+section "36 · The loop needs jq"
+new_swarm
+mkdir -p "$TMP/nojq"; for t in bash env cat sed awk grep tr cut head tail sort uniq mkdir cp rm mv ls find wc date git python3 touch printf basename dirname readlink tee mktemp chmod sleep kill timeout; do p="$(command -v "$t" 2> /dev/null || true)"; [[ -n "$p" ]] && ln -sf "$p" "$TMP/nojq/$t"; done
+RC=0
+PATH="$TMP/nojq" CONDUCTOR_ADAPTER_FILE="$STUB" "$BASH" "$LOOP" --once > /dev/null 2> "$TMP/loop.err" || RC=$?
+assert_eq "exit 3" "$RC" "3"
+expect_grep 'needs jq' "$TMP/loop.err" "and says so"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

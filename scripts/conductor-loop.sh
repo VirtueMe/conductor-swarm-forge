@@ -25,7 +25,10 @@ set -euo pipefail
 #   exit 0       the handler finished
 #   exit 2       the event cannot be handled; retrying will not help
 #   other        the handler failed; the loop retries
-#   usage        the adapter may write one JSON line to $DISPATCH_USAGE_FILE
+#   usage        the adapter may write one JSON line to $DISPATCH_USAGE_FILE; the loop
+#                appends it, with the event, the handler and the outcome, to
+#                $CONDUCTOR_DIR/usage.jsonl, one line per dispatch attempt (read it with
+#                usage-summary.sh)
 #
 # The loop first runs the startup reconcile (see reconcile below), then drains events.
 #
@@ -80,6 +83,8 @@ LOCK="$CONDUCTOR_DIR/conductor-loop.lock"
 export DISPATCH_USAGE_FILE="$CONDUCTOR_DIR/dispatch-usage.json"
 DISPATCH_STDERR="$CONDUCTOR_DIR/dispatch-stderr.log"
 LAST_ERROR=""
+USAGE_LOG="$CONDUCTOR_DIR/usage.jsonl"
+CUR_LABEL="" CUR_ATTEMPT=0 CUR_START=0
 
 log() { echo "conductor-loop: $*" >&2; }
 
@@ -96,6 +101,14 @@ if [[ -z "$TIMEOUT_CMD" ]]; then
 fi
 if [[ -z "$TIMEOUT_CMD" ]] || ! command -v "$TIMEOUT_CMD" > /dev/null 2>&1; then
   log "needs GNU timeout (timeout or gtimeout); on macOS: brew install coreutils"
+  exit 3
+fi
+
+# --- jq ---------------------------------------------------------------------
+
+# The usage log is written with jq (the adapters need it too).
+if ! command -v jq > /dev/null 2>&1; then
+  log "needs jq (apt install jq / brew install jq)"
   exit 3
 fi
 
@@ -132,11 +145,48 @@ acquire_lock || exit 4
 DISPATCH_PID=""
 SLEEP_PID=""
 
+# One line per dispatch attempt in $USAGE_LOG, whatever the outcome: a retried event costs money
+# each time, and an attempt that left no record (a killed or failed run) is logged with
+# usage "none" so that unknown spend is not mistaken for none. The record the adapter left
+# is read here, before the next attempt deletes it. The log is a convenience: a line that
+# cannot be written never changes what the loop does.
+log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
+  local record="{}" usage=none
+  if [[ -s "$DISPATCH_USAGE_FILE" ]] && jq -e . "$DISPATCH_USAGE_FILE" > /dev/null 2>&1; then
+    record="$(cat "$DISPATCH_USAGE_FILE")"
+    usage=reported
+  fi
+  jq -nc --argjson r "$record" --arg usage "$usage" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg event "$1" --arg attempt "$2" --arg outcome "$3" --arg rc "$4" --arg duration "$5" \
+    --arg handler "${SKILL_NAME:-}" --arg adapter "$(basename "$ADAPTER_FILE" .sh)" '
+    { ts: $ts,
+      event: $event,
+      task: (if ($event | contains("/")) then ($event | split("/")[0]) else null end),
+      handler: $handler,
+      attempt: ($attempt | tonumber),
+      outcome: $outcome,
+      rc: ($rc | tonumber),
+      duration_s: ($duration | tonumber),
+      harness: ($r.harness // $adapter),
+      model: ($r.model // null),
+      input_tokens: ($r.input_tokens // null),
+      output_tokens: ($r.output_tokens // null),
+      cache_read_tokens: ($r.cache_read_tokens // null),
+      cache_write_tokens: ($r.cache_write_tokens // null),
+      cost_usd: ($r.cost_usd // null),
+      turns: ($r.turns // null),
+      usage: $usage }' >> "$USAGE_LOG" 2> /dev/null || true
+}
+
 # Killing the loop forwards TERM to timeout, which passes it to the dispatch's whole
 # process group and escalates to KILL after the grace period (test 12 checks that
 # nothing from the dispatch is left running).
 cleanup() {
-  if [[ -n "$DISPATCH_PID" ]]; then kill -TERM "$DISPATCH_PID" 2>/dev/null || true; fi
+  if [[ -n "$DISPATCH_PID" ]]; then
+    kill -TERM "$DISPATCH_PID" 2>/dev/null || true
+    # The attempt in flight is lost with the loop; leave a line so its spend is not invisible.
+    log_usage "$CUR_LABEL" "$CUR_ATTEMPT" interrupted 143 "$(( SECONDS - CUR_START ))"
+  fi
   if [[ -n "$SLEEP_PID" ]]; then kill "$SLEEP_PID" 2>/dev/null || true; fi
   if [[ "$(cat "$LOCK/pid" 2>/dev/null || true)" == "$$" ]]; then rm -rf "$LOCK"; fi
 }
@@ -202,11 +252,20 @@ run_dispatch() { # <skill_content> <artifact>
 # Dispatch one event until its handler succeeds, retrying a failure, or halt. Returns only on
 # success. <label> names the event in logs and halt notices.
 dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "startup">
-  local label="$1" skill_content="$2" event="$3" attempt rc=0
+  local label="$1" skill_content="$2" event="$3" attempt rc=0 outcome
   for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
     log "$label -> $SKILL_NAME (attempt $attempt of $MAX_ATTEMPTS)"
     rc=0
+    CUR_LABEL="$label" CUR_ATTEMPT="$attempt" CUR_START=$SECONDS
     run_dispatch "$skill_content" "$event" || rc=$?
+    case "$rc" in
+      0) outcome=finished ;;
+      2) outcome=unusable ;;
+      124|137) outcome=timeout ;;
+      *) outcome=failed ;;
+    esac
+    log_usage "$label" "$attempt" "$outcome" "$rc" "$(( SECONDS - CUR_START ))"
+    CUR_LABEL="" CUR_ATTEMPT=0
     [[ "$rc" -eq 0 ]] && return 0
     [[ "$rc" -eq 2 ]] && halt unusable "$label" "the adapter reported that this event cannot be handled"
     log "$label failed with exit $rc"

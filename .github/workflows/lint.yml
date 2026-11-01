@@ -148,6 +148,9 @@ jobs:
       - name: test-swarm-start
         run: bash scripts/test-swarm-start.sh
 
+      - name: test-usage-summary
+        run: bash scripts/test-usage-summary.sh
+
       - name: test-claude-dispatch
         run: bash scripts/test-claude-dispatch.sh
 

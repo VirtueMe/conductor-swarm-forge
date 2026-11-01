@@ -365,7 +365,7 @@ and the event last. `dispatch_final_exit` turns a final line starting with
 | Project complete | `conductor-shutdown.sh` closes the architect window and the kanban server and, under the loop, only writes a flag. The loop exits after recording the event; closing its own window from inside the handler would kill it before the `mark`. |
 
 A halt writes `$CONDUCTOR_DIR/conductor-loop.halted`, tells the human and the architect, and
-exits 1. The usage log is #86 and the live log is #87.
+exits 1. The live log is #87.
 
 **The halt notice** (`scripts/loop-halt-notify.sh`). A halt stops the loop for every task, so
 the notice is not tied to a task or a stage and does not reuse `task-notify.sh`, which needs
@@ -544,6 +544,46 @@ usage record, so the field names live in one place, and `dispatch_finish` applie
 `HANDLER-FAILED:` check on the model's last line. The prompt and the final-line parser are in
 `dispatch-prompt.sh`. Not extracted: the tool checks and the model-flag handling at the top of
 each adapter, which differ in what they require and are short.
+
+## Usage log
+
+Each `adapter_dispatch` leaves a usage record in `$DISPATCH_USAGE_FILE`, but the loop deletes it
+before the next attempt, so only the last one survives. The loop now appends every dispatch
+attempt to `$CONDUCTOR_DIR/usage.jsonl` before that happens: one JSON object per line, so
+`jq` reads it directly and an append is atomic.
+
+| Field | Meaning |
+| --- | --- |
+| `ts` | UTC time the attempt ended |
+| `event`, `task` | the artifact path (or `startup` for the reconcile) and its task id (null for the reconcile) |
+| `handler` | the skill that ran, for example `conductor/on-review-approved` |
+| `attempt`, `outcome`, `rc`, `duration_s` | which attempt of the event; `finished`, `failed`, `timeout`, `unusable` or `interrupted`; the exit status; how long it took |
+| `harness`, `model` | from the record; `harness` falls back to the adapter's name when there is none |
+| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `turns` | from the record, as defined under the adapter contract |
+| `usage` | `reported` if the adapter left a record, `none` if not |
+
+- **One line per attempt, not per event.** A retried event costs money each time, and so does an
+  attempt that fails.
+- **Unknown is not free.** An attempt with no record (a Codex run killed by the timeout, a
+  harness that returned nothing parseable) is logged with `usage: none` and null tokens and cost.
+  Codex's records always have a null `cost_usd`. Both mean "not known", never zero.
+- **A stopped loop leaves a line.** If the loop is stopped with `TERM` or `INT` mid-dispatch, the
+  cleanup writes an `interrupted` line for the attempt in flight, so its spend is not invisible.
+  Whatever the harness had already spent is not known. A loop killed with `KILL`, or a machine
+  that loses power, leaves no line, because nothing runs afterwards.
+- **The log is a convenience.** A line that cannot be written never changes what the loop does.
+  The loop needs `jq` for it and exits 3 with a message if it is missing.
+
+`scripts/usage-summary.sh [--file F] [--since TIMESTAMP]` totals it: the period, the known cost,
+how many attempts had no cost, tokens, the spend on attempts that did not finish, and the same
+split by harness, handler and task. The known cost it prints is a floor, not the bill, and it
+says so.
+
+Measured so far, all single runs on `claude-opus-4-8`, so a direction and not a price list: a
+handler $0.07 to $0.11, a reconcile $0.09 to $0.19 (it runs on every start with any task on the
+board), Pi about $0.08; Codex reports tokens only. One real loop start on a two-card board, a
+reconcile and one handler, logged $0.23 in total. The log exists so that these numbers come from
+a real swarm instead of from test runs.
 
 ## Startup reconcile
 
