@@ -34,6 +34,7 @@ For each file, read its `type` field and load the matching skill:
 |------|--------------|
 | `drift` | `skills/architect/on-drift.md` |
 | `blocked` | `skills/architect/on-blocked.md` |
+| `halt` | `skills/architect/on-halt.md` |
 
 ## Rules
 

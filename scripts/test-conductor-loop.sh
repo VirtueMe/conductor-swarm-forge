@@ -49,6 +49,7 @@ adapter_dispatch() {
     rc="$(head -1 "$STUB_RC")"
     tail -n +2 "$STUB_RC" > "$STUB_RC.next"; mv "$STUB_RC.next" "$STUB_RC"
   fi
+  [[ -n "${STUB_ERRMSG:-}" ]] && echo "$STUB_ERRMSG" >&2
   [[ -f "$STUB_HOOK" ]] && bash "$STUB_HOOK"
   if [[ "$rc" == "sleep" ]]; then sleep "$STUB_SLEEP_ARG"; rc=0; fi
   echo "end $TASK_ID $rc" >> "$STUB_LOG"
@@ -86,6 +87,8 @@ run_loop() { # sets RC
 dispatches() { grep -c '^start ' "$STUB_LOG" || true; }
 unprocessed() { "$SCRIPTS_DIR/artifact-ledger.sh" unprocessed; }
 queue() { : > "$STUB_RC"; local c; for c in "$@"; do echo "$c" >> "$STUB_RC"; done; }
+notices() { find "$CONDUCTOR_DIR/$1" -name 'loop-halt-*.md' 2> /dev/null | wc -l | tr -d ' '; }
+notice() { find "$CONDUCTOR_DIR/$1" -name 'loop-halt-*.md' | head -1; }
 halt_kind() { awk -F': ' '/^kind: /{print $2}' "$CONDUCTOR_DIR/conductor-loop.halted" 2>/dev/null || true; }
 
 # 1 -------------------------------------------------------------------------------
@@ -277,6 +280,8 @@ RC=0
 PATH="$TMP/bin:$PATH" CONDUCTOR_ADAPTER_FILE="$STUB" timeout 20 bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err" || RC=$?
 assert_eq "the loop exited on its own" "$RC" "0"
 assert_eq "the event was recorded first" "$(unprocessed)" ""
+assert_eq "a requested shutdown is not a halt: no notice for the human" "$(notices human-inbox)" "0"
+assert_eq "nor for the architect" "$(notices architect-inbox)" "0"
 expect_grep 'kill-window -t swarm:architect' "$TMP/tmux.log" "architect window closed"
 if grep -q 'swarm:conductor' "$TMP/tmux.log"; then fail "the handler closed the loop's own window"; else ok "the loop's window was left to the loop"; fi
 : > "$TMP/tmux.log"
@@ -312,6 +317,72 @@ CONDUCTOR_TIMEOUT_CMD=no-such-timeout CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP
 assert_eq "exit 3" "$RC" "3"
 expect_grep "needs GNU timeout" "$TMP/loop.err" "says what to install"
 assert_eq "nothing was dispatched" "$(dispatches)" "0"
+
+# 19 ------------------------------------------------------------------------------
+section "19 · A halt tells the human and the architect"
+new_swarm
+create_task; run_loop; : > "$STUB_LOG"
+signal 0001 signal complete
+queue 1 1
+STUB_ERRMSG="stub: the model call failed" CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "one notice for the human" "$(notices human-inbox)" "1"
+assert_eq "one for the architect" "$(notices architect-inbox)" "1"
+expect_grep '^type: halt$' "$(notice architect-inbox)" "the architect's notice is typed halt"
+expect_grep '^kind: failed$' "$(notice human-inbox)" "the kind of halt"
+expect_grep '^artifact: 0001/signal-' "$(notice human-inbox)" "the artifact"
+expect_grep '^handler: conductor/on-signal-complete$' "$(notice human-inbox)" "the handler"
+expect_grep 'Last error: stub: the model call failed' "$(notice human-inbox)" "the last error the adapter reported"
+expect_grep '^last-error: stub: the model call failed' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt file has it too"
+expect_grep 'CONDUCTOR LOOP HALTED' "$TMP/loop.out" "a banner in the conductor window"
+
+# 20 ------------------------------------------------------------------------------
+section "20 · Every kind of halt notifies"
+new_swarm
+create_task; run_loop; : > "$STUB_LOG"
+signal 0001 signal weird
+run_loop
+assert_eq "unresolvable: halt kind" "$(halt_kind)" "unresolvable"
+assert_eq "unresolvable: both notified" "$(( $(notices human-inbox) + $(notices architect-inbox) ))" "2"
+new_swarm
+create_task; run_loop; : > "$STUB_LOG"
+signal 0001 signal complete
+queue 2
+run_loop
+assert_eq "unusable: halt kind" "$(halt_kind)" "unusable"
+assert_eq "unusable: both notified" "$(( $(notices human-inbox) + $(notices architect-inbox) ))" "2"
+
+# 21 ------------------------------------------------------------------------------
+section "21 · Starting again clears the notices"
+new_swarm
+create_task; run_loop; : > "$STUB_LOG"
+signal 0001 signal complete
+queue 1 1
+CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "halted, with notices" "$(( $(notices human-inbox) + $(notices architect-inbox) ))" "2"
+queue
+run_loop
+assert_eq "the restart succeeds" "$RC" "0"
+assert_eq "the human's notice is gone" "$(notices human-inbox)" "0"
+assert_eq "so is the architect's" "$(notices architect-inbox)" "0"
+assert_eq "and the halt file" "$([[ -f "$CONDUCTOR_DIR/conductor-loop.halted" ]] && echo yes || echo no)" "no"
+
+# 22 ------------------------------------------------------------------------------
+section "22 · A clean run leaves no notice"
+assert_eq "none for the human" "$(notices human-inbox)" "0"
+assert_eq "none for the architect" "$(notices architect-inbox)" "0"
+
+# 23 ------------------------------------------------------------------------------
+section "23 · A notice that cannot be written does not change the halt"
+new_swarm
+create_task; run_loop; : > "$STUB_LOG"
+touch "$CONDUCTOR_DIR/human-inbox"             # a file where the directory should be
+signal 0001 signal complete
+queue 1 1
+CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "the halt is still exit 1" "$RC" "1"
+assert_eq "the halt file is still written" "$(halt_kind)" "failed"
+assert_eq "the architect's notice is still written" "$(notices architect-inbox)" "1"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

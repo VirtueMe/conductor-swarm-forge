@@ -36,7 +36,10 @@ set -euo pipefail
 #     leaves the ledger as it was, so the event runs again on restart. Handlers must be
 #     safe to replay (the spawn guard covers the worker side).
 #
-# A halt writes $CONDUCTOR_DIR/conductor-loop.halted and exits 1.
+# A halt writes $CONDUCTOR_DIR/conductor-loop.halted, tells the human and the architect
+# (loop-halt-notify.sh: a banner here, a file in human-inbox/ and in architect-inbox/, and a
+# desktop notification if config.md has notify-channel: push), and exits 1. The next start
+# removes those notices along with the halt file.
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
@@ -70,6 +73,8 @@ FLAG="$CONDUCTOR_DIR/shutdown-requested"
 HALTED="$CONDUCTOR_DIR/conductor-loop.halted"
 LOCK="$CONDUCTOR_DIR/conductor-loop.lock"
 export DISPATCH_USAGE_FILE="$CONDUCTOR_DIR/dispatch-usage.json"
+DISPATCH_STDERR="$CONDUCTOR_DIR/dispatch-stderr.log"
+LAST_ERROR=""
 
 log() { echo "conductor-loop: $*" >&2; }
 
@@ -156,8 +161,12 @@ halt() { # <kind> <artifact> <detail>
     echo "artifact: $2"
     echo "handler: ${SKILL_NAME:-none}"
     echo "detail: $3"
+    [[ -n "$LAST_ERROR" ]] && echo "last-error: $LAST_ERROR"
   } > "$HALTED"
   log "HALT ($1) at $2: $3"
+  # Best effort: a notice that cannot be written must not change the halt or its exit status.
+  "$SCRIPTS_DIR/loop-halt-notify.sh" --kind "$1" --artifact "$2" --handler "${SKILL_NAME:-none}" \
+    --detail "$3" --last-error "$LAST_ERROR" || true
   exit 1
 }
 
@@ -165,14 +174,23 @@ halt() { # <kind> <artifact> <detail>
 # the adapter is sourced in a child shell. The outer limit is the adapter's deadline
 # plus a grace period, as a backstop for an adapter that does not stop itself.
 run_dispatch() { # <skill_content> <artifact>
-  rm -f "$DISPATCH_USAGE_FILE"
+  rm -f "$DISPATCH_USAGE_FILE" "$DISPATCH_STDERR"
   # shellcheck disable=SC2016  # $1 and $@ belong to the child shell
   DISPATCH_DEADLINE="$DEADLINE" "$TIMEOUT_CMD" -k "$KILL_GRACE" "$((DEADLINE + KILL_GRACE))" \
-    bash -c 'source "$1"; shift; adapter_dispatch "$@"' _ "$ADAPTER_FILE" "$1" "$2" &
+    bash -c 'source "$1"; shift; adapter_dispatch "$@"' _ "$ADAPTER_FILE" "$1" "$2" 2> "$DISPATCH_STDERR" &
   DISPATCH_PID=$!
   local rc=0
   wait "$DISPATCH_PID" || rc=$?
   DISPATCH_PID=""
+  # The adapter's stderr was held back in a file and is shown now, so progress output would
+  # appear only at the end. The adapters print one line, about a failure. The last line is the
+  # last error a halt reports.
+  if [[ -s "$DISPATCH_STDERR" ]]; then
+    cat "$DISPATCH_STDERR" >&2
+    LAST_ERROR="$(awk 'NF{l=$0} END{print substr(l, 1, 300)}' "$DISPATCH_STDERR")"
+  else
+    LAST_ERROR=""
+  fi
   return "$rc"
 }
 
@@ -181,6 +199,7 @@ handle_event() { # <artifact path relative to the work dir>
   local rel="$1" art type outcome skill_file skill_content attempt rc
   art="$WORK_DIR/$rel"
   SKILL_NAME=""
+  LAST_ERROR=""
 
   type="$(fm_field "$art" type)"
   outcome="$(fm_field "$art" outcome)"
@@ -241,7 +260,7 @@ poll_interval() {
   echo "${p:-3}"
 }
 
-rm -f "$FLAG" "$HALTED"
+rm -f "$FLAG" "$HALTED" "$CONDUCTOR_DIR"/human-inbox/loop-halt-*.md "$CONDUCTOR_DIR"/architect-inbox/loop-halt-*.md
 bootstrap_ledger
 log "started (pid $$)"
 

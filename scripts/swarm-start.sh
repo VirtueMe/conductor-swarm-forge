@@ -81,6 +81,9 @@ cd "$TARGET_DIR"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 # CONDUCTOR_POLL_INTERVAL — seconds the conductor sleeps between polls when the
 # artifact queue is empty (default 3). Written to config.md so the conductor can read it.
+# CONDUCTOR_NOTIFY_CHANNEL — "push" adds a desktop notification (macOS) when the headless
+#                            conductor loop halts. Anything else: no notification beyond the
+#                            conductor window and the inbox files. Default: none.
 # WORKFORCE was resolved and existence-checked above (from --workforce).
 
 echo "Target : $TARGET_DIR"
@@ -196,6 +199,7 @@ fi
   printf 'topology: %s\n'      "$TOPOLOGY"
   printf 'base-branch: %s\n'   "$BASE_BRANCH"
   printf 'poll-interval: %s\n' "${CONDUCTOR_POLL_INTERVAL:-3}"
+  printf 'notify-channel: %s\n' "${CONDUCTOR_NOTIFY_CHANNEL:-none}"
   printf -- '---\n'
 } > "$CONDUCTOR_DIR/config.md"
 echo "Topology : $TOPOLOGY"
