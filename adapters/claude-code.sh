@@ -128,3 +128,116 @@ adapter_launch() {
     tmux new-session -d -s "$session" -n "$window_name" "$cmd"
   fi
 }
+
+# --- Headless dispatch (conductor-loop.sh) ------------------------------------
+
+# Replaces Claude Code's default system prompt for a dispatched event. The dispatch
+# prompt already carries the briefing and the rules, so the default prompt is mostly
+# fixed context: measured on one handler it cut cache-write tokens from 17.9k to 7.4k
+# (with the tool and MCP trimming below) and the cost to about a third. One run each;
+# see "Claude Code dispatch" in docs/event-driven-conductor.md.
+CLAUDE_DISPATCH_SYSTEM_PROMPT="You are an automation agent. Run shell commands exactly as instructed and report the outcome in one line."
+
+# Run one conductor event with `claude -p` and report how it went.
+#   $1  skill content     $2  artifact path
+# Environment (set by conductor-loop.sh): CONDUCTOR_DIR, SCRIPTS_DIR, TASK_ID,
+#   DISPATCH_USAGE_FILE. CONDUCTOR_MAX_BUDGET_USD caps one run (default 1).
+# The deadline is the loop's: claude -p has no turn limit or timer of its own, so the
+# loop's outer timeout bounds it.
+# Needs jq to read the result. Exit: 0 finished; 2 cannot succeed on a retry (claude or
+# jq missing, a rejected request such as a bad model or credentials, budget reached);
+# 1 anything else.
+adapter_dispatch() {
+  local skill_content="${1:?Usage: adapter_dispatch <skill_content> <artifact>}"
+  local artifact="${2:?Usage: adapter_dispatch <skill_content> <artifact>}"
+
+  command -v claude > /dev/null 2>&1 || { echo "claude-code: claude is not installed" >&2; return 2; }
+  command -v jq > /dev/null 2>&1 || { echo "claude-code: dispatch needs jq (apt install jq / brew install jq)" >&2; return 2; }
+
+  # shellcheck source=scripts/dispatch-prompt.sh
+  source "${SCRIPTS_DIR:?SCRIPTS_DIR is not set}/dispatch-prompt.sh"
+  # shellcheck source=scripts/wf-read.sh
+  source "$SCRIPTS_DIR/wf-read.sh"
+
+  local prompt params flags
+  prompt="$(dispatch_prompt "$skill_content" "$artifact")" || return 2
+  params="$(wf_field "${CONDUCTOR_DIR:?CONDUCTOR_DIR is not set}/workforce.json" conductor params)"
+  flags="$(adapter_params_to_flags "$params")" || return 2
+  # adapter_params_to_flags prints shell-quoted words, so eval rebuilds them exactly.
+  local -a model_flags=()
+  eval "model_flags=($flags)"
+
+  # One dispatch runs at a time (the loop holds a lock), so these names can repeat. A
+  # dispatch that is killed leaves them behind, but they are overwritten by the next
+  # one, so nothing accumulates, and the last run stays around for debugging.
+  local out="$CONDUCTOR_DIR/dispatch-result.json" err="$CONDUCTOR_DIR/dispatch-result.err" rc=0
+  rm -f "$out" "$err"
+
+  # Only what a handler needs: Bash for the scripts, Read for files. No MCP servers and
+  # no user-level settings, which are most of the fixed context. -p cannot prompt, so
+  # anything not allowed is denied (and reported in permission_denials).
+  claude -p "$prompt" \
+    --output-format json --no-session-persistence \
+    --max-budget-usd "${CONDUCTOR_MAX_BUDGET_USD:-1}" \
+    --allowedTools Bash Read --tools Bash,Read \
+    --strict-mcp-config --setting-sources project \
+    --system-prompt "$CLAUDE_DISPATCH_SYSTEM_PROMPT" \
+    ${model_flags[@]+"${model_flags[@]}"} < /dev/null > "$out" 2> "$err" || rc=$?
+
+  if ! jq -e . "$out" > /dev/null 2>&1; then
+    [[ -s "$err" ]] && head -c 400 "$err" >&2
+    echo "claude-code: claude produced no JSON (exit $rc)" >&2
+    return 1
+  fi
+
+  # The usage record, written whatever the outcome because the spend happened. `usage`
+  # is all zeros on an error result, so the figures come from the per-model breakdown.
+  if [[ -n "${DISPATCH_USAGE_FILE:-}" ]]; then
+    jq -c '(.modelUsage // {}) as $m | {
+        harness: "claude-code",
+        model: (if ($m | length) > 0 then ($m | keys | join("+")) else null end),
+        input_tokens: ([$m[].inputTokens // 0] | add // 0),
+        output_tokens: ([$m[].outputTokens // 0] | add // 0),
+        cache_read_tokens: ([$m[].cacheReadInputTokens // 0] | add // 0),
+        cache_write_tokens: ([$m[].cacheCreationInputTokens // 0] | add // 0),
+        cost_usd: .total_cost_usd,
+        turns: .num_turns }' "$out" > "$DISPATCH_USAGE_FILE"
+  fi
+
+  # "-" stands for an empty field: read would otherwise merge adjacent tabs.
+  local subtype terminal status is_error denied
+  IFS=$'\t' read -r subtype terminal status is_error denied < <(jq -r '[
+      (.subtype // "-"), (.terminal_reason // "-"), (.api_error_status // "-" | tostring),
+      (.is_error // false | tostring),
+      ((.permission_denials // []) | map(.tool_name // "?") | join(",") | if . == "" then "-" else . end)
+    ] | @tsv' "$out")
+  local answer
+  answer="$(jq -r '.result // ""' "$out")"
+
+  # subtype alone is not enough: a rejected model reports subtype "success".
+  if [[ "$subtype" == "error_max_budget_usd" ]]; then
+    echo "claude-code: budget reached; raise CONDUCTOR_MAX_BUDGET_USD" >&2; return 2
+  fi
+  case "$status" in
+    400|401|403|404)
+      echo "claude-code: the request was rejected (HTTP $status): $(printf '%s' "$answer" | head -c 200 | tr '\n' ' ')" >&2
+      return 2 ;;
+  esac
+  if [[ "$is_error" == "true" || "$terminal" != "completed" ]]; then
+    echo "claude-code: run did not complete (terminal_reason=$terminal, subtype=$subtype, HTTP $status)" >&2
+    return 1
+  fi
+  if [[ "$denied" != "-" ]]; then
+    echo "claude-code: a tool was denied: $denied" >&2
+    return 1
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    echo "claude-code: claude exited $rc" >&2
+    return 1
+  fi
+  if ! dispatch_final_exit "$answer"; then
+    echo "claude-code: handler reported failure: $(printf '%s\n' "$answer" | awk 'NF{l=$0} END{print l}')" >&2
+    return 1
+  fi
+  return 0
+}
