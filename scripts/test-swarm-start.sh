@@ -185,6 +185,28 @@ start --tool "$FAKE" --env "CONDUCTOR_TEST_VAL=$VAL" -- -hc
 GOT="$( cd "$TMP" && SHELL=/bin/true PATH="$STUB:$PATH" bash -c "$(cat "$TMUX_CMD")" 2>&1 | head -1 )"
 assert_eq "the value arrives unchanged" "${GOT:0:${#VAL}}" "$VAL"
 
+section "10 · The window shows where the last run left off"
+# shellcheck disable=SC2016  # the stand-in is a program for another shell
+printf '#!/usr/bin/env bash\necho "THE LOOP RAN"\n' > "$FAKE/scripts/conductor-loop.sh"
+# shellcheck disable=SC2329  # called through $PREPARE
+prepare_log() {
+  mkdir -p "$TMP/target/.conductor"
+  for n in $(seq 1 30); do echo "2026-11-01 10:00:$(printf '%02d' "$n")  earlier line $n"; done > "$TMP/target/.conductor/conductor.log"
+}
+PREPARE=prepare_log start --tool "$FAKE" -- -hc
+RC=0
+( cd "$TMP" && SHELL=/bin/true PATH="$STUB:$PATH" bash -c "$(cat "$TMUX_CMD")" ) > "$TMP/win.out" 2>&1 || RC=$?
+assert_eq "the window command exits 0" "$RC" "0"
+assert_eq "it opens with the header" "$(sed -n 1p "$TMP/win.out")" "--- earlier in conductor.log:"
+assert_eq "then the last 20 lines, not the first" "$(sed -n 2p "$TMP/win.out" | sed 's/.*earlier line //')" "11"
+assert_eq "up to the newest" "$(sed -n 21p "$TMP/win.out" | sed 's/.*earlier line //')" "30"
+assert_eq "then a marker" "$(sed -n 22p "$TMP/win.out")" "--- now:"
+assert_eq "and then the loop" "$(sed -n 23p "$TMP/win.out")" "THE LOOP RAN"
+start --tool "$FAKE" -- -hc
+RC=0
+( cd "$TMP" && SHELL=/bin/true PATH="$STUB:$PATH" bash -c "$(cat "$TMUX_CMD")" ) > "$TMP/win.out" 2>&1 || RC=$?
+assert_eq "with no log yet, the window starts with the loop" "$(sed -n 1p "$TMP/win.out")" "THE LOOP RAN"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

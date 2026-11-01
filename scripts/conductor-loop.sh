@@ -16,6 +16,7 @@ set -euo pipefail
 #   CONDUCTOR_KILL_GRACE        seconds between the deadline and a hard kill (default 10)
 #   CONDUCTOR_RETRY_DELAY       seconds to wait between attempts at one event (default 5)
 #   CONDUCTOR_TIMEOUT_CMD       the timeout command (default: timeout, else gtimeout)
+#   CONDUCTOR_HEARTBEAT         seconds of idleness between 'idle' lines in the log (default 600; 0 = never)
 #
 # The adapter contract, called as `adapter_dispatch <skill_content> <event>`, where <event>
 # is an artifact path or the word "startup" (the reconcile, which has no artifact or task):
@@ -25,12 +26,21 @@ set -euo pipefail
 #   exit 0       the handler finished
 #   exit 2       the event cannot be handled; retrying will not help
 #   other        the handler failed; the loop retries
+#   answer       the adapter may write the model's last line to $DISPATCH_ANSWER_FILE
+#                (dispatch_finish does it); the loop shows it in conductor.log
 #   usage        the adapter may write one JSON line to $DISPATCH_USAGE_FILE; the loop
 #                appends it, with the event, the handler and the outcome, to
 #                $CONDUCTOR_DIR/usage.jsonl, one line per dispatch attempt (read it with
 #                usage-summary.sh)
 #
 # The loop first runs the startup reconcile (see reconcile below), then drains events.
+#
+# Everything the loop says is printed on stderr (the conductor window) and appended, with a
+# timestamp, to $CONDUCTOR_DIR/conductor.log: what it started, each event and the handler
+# chosen, how each attempt ended (duration, cost when known, and the model's own last line),
+# events skipped for having no handler, an 'idle' line now and then so that a quiet loop can be
+# told from a hung one, and a halt. The log is a convenience: a line that cannot be written
+# never changes what the loop does.
 #
 # Failure rules:
 #   - A failed or timed-out handler (the reconcile included) is retried, then the loop halts.
@@ -85,8 +95,22 @@ DISPATCH_STDERR="$CONDUCTOR_DIR/dispatch-stderr.log"
 LAST_ERROR=""
 USAGE_LOG="$CONDUCTOR_DIR/usage.jsonl"
 CUR_LABEL="" CUR_ATTEMPT=0 CUR_START=0
+export DISPATCH_ANSWER_FILE="$CONDUCTOR_DIR/dispatch-answer.txt"
+LOG_FILE="$CONDUCTOR_DIR/conductor.log"
+HEARTBEAT="${CONDUCTOR_HEARTBEAT:-600}"
+LAST_BEAT=$SECONDS EVENTS_DONE=0
 
-log() { echo "conductor-loop: $*" >&2; }
+# Every message passes through here, and some carry text a model wrote (its last line, an adapter's
+# error) that may have come from a task or a file nobody trusts. A terminal obeys escape sequences,
+# so control characters are removed: the message stays readable and cannot move the cursor, clear the
+# screen or retitle the window.
+log() {
+  local msg line
+  msg="$(printf '%s' "$*" | LC_ALL=C tr -d '\000-\037\177')"
+  line="$(date '+%Y-%m-%d %H:%M:%S')  $msg"
+  echo "$line" >&2
+  { echo "$line" >> "$LOG_FILE"; } 2> /dev/null || true
+}
 
 # --- The timeout command ----------------------------------------------------
 
@@ -218,7 +242,7 @@ halt() { # <kind> <artifact> <detail>
     echo "detail: $3"
     [[ -n "$LAST_ERROR" ]] && echo "last-error: $LAST_ERROR"
   } > "$HALTED"
-  log "HALT ($1) at $2: $3"
+  log "HALT ($1) at $2: $3${LAST_ERROR:+ (last error: $LAST_ERROR)}"
   # Best effort: a notice that cannot be written must not change the halt or its exit status.
   "$SCRIPTS_DIR/loop-halt-notify.sh" --kind "$1" --artifact "$2" --handler "${SKILL_NAME:-none}" \
     --detail "$3" --last-error "$LAST_ERROR" || true
@@ -229,7 +253,7 @@ halt() { # <kind> <artifact> <detail>
 # the adapter is sourced in a child shell. The outer limit is the adapter's deadline
 # plus a grace period, as a backstop for an adapter that does not stop itself.
 run_dispatch() { # <skill_content> <artifact>
-  rm -f "$DISPATCH_USAGE_FILE" "$DISPATCH_STDERR"
+  rm -f "$DISPATCH_USAGE_FILE" "$DISPATCH_STDERR" "$DISPATCH_ANSWER_FILE"
   # shellcheck disable=SC2016  # $1 and $@ belong to the child shell
   DISPATCH_DEADLINE="$DEADLINE" "$TIMEOUT_CMD" -k "$KILL_GRACE" "$((DEADLINE + KILL_GRACE))" \
     bash -c 'source "$1"; shift; adapter_dispatch "$@"' _ "$ADAPTER_FILE" "$1" "$2" 2> "$DISPATCH_STDERR" &
@@ -241,12 +265,33 @@ run_dispatch() { # <skill_content> <artifact>
   # appear only at the end. The adapters print one line, about a failure. The last line is the
   # last error a halt reports.
   if [[ -s "$DISPATCH_STDERR" ]]; then
-    cat "$DISPATCH_STDERR" >&2
+    # Shown as it was, minus control characters other than newline and tab (see log()).
+    LC_ALL=C tr -d '\000-\010\013-\037\177' < "$DISPATCH_STDERR" >&2
     LAST_ERROR="$(awk 'NF{l=$0} END{print substr(l, 1, 300)}' "$DISPATCH_STDERR")"
   else
     LAST_ERROR=""
   fi
   return "$rc"
+}
+
+# ", $0.107", ", no cost reported" or ", no usage record": what the attempt that just ended cost,
+# in words that do not call an unknown cost free.
+cost_note() {
+  local cost
+  if [[ -s "$DISPATCH_USAGE_FILE" ]] && jq -e . "$DISPATCH_USAGE_FILE" > /dev/null 2>&1; then
+    cost="$(jq -r '.cost_usd // empty' "$DISPATCH_USAGE_FILE" 2> /dev/null || true)"
+    if [[ -n "$cost" ]]; then printf ', $%.3f' "$cost"; else printf ', no cost reported'; fi
+  else
+    printf ', no usage record'
+  fi
+}
+
+# " — <what the model said last>", when the adapter left it.
+answer_note() {
+  local line
+  line="$(awk 'NF{l=$0} END{print substr(l, 1, 300)}' "$DISPATCH_ANSWER_FILE" 2> /dev/null || true)"
+  [[ -n "$line" ]] && printf ' — %s' "$line"
+  return 0
 }
 
 # Dispatch one event until its handler succeeds, retrying a failure, or halt. Returns only on
@@ -264,11 +309,15 @@ dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "
       124|137) outcome=timeout ;;
       *) outcome=failed ;;
     esac
-    log_usage "$label" "$attempt" "$outcome" "$rc" "$(( SECONDS - CUR_START ))"
+    local took=$(( SECONDS - CUR_START ))
+    log_usage "$label" "$attempt" "$outcome" "$rc" "$took"
     CUR_LABEL="" CUR_ATTEMPT=0
-    [[ "$rc" -eq 0 ]] && return 0
+    if [[ "$rc" -eq 0 ]]; then
+      log "$label finished in ${took}s$(cost_note)$(answer_note)"
+      return 0
+    fi
     [[ "$rc" -eq 2 ]] && halt unusable "$label" "the adapter reported that this event cannot be handled"
-    log "$label failed with exit $rc"
+    log "$label failed with exit $rc after ${took}s$(cost_note)${LAST_ERROR:+: $LAST_ERROR}"
     if (( attempt < MAX_ATTEMPTS )); then
       sleep "$RETRY_DELAY" &
       SLEEP_PID=$!
@@ -305,6 +354,8 @@ handle_event() { # <artifact path relative to the work dir>
 
   if [[ -z "$SKILL_NAME" ]]; then
     mark "$rel"                        # no handler: nothing to run, but never list it again
+    log "$rel: no handler for ${type}${outcome:+/$outcome}, skipped"
+    EVENTS_DONE=$(( EVENTS_DONE + 1 ))
     return 0
   fi
 
@@ -319,6 +370,7 @@ handle_event() { # <artifact path relative to the work dir>
 
   dispatch_until_done "$rel" "$skill_content" "$art"
   mark "$rel"
+  EVENTS_DONE=$(( EVENTS_DONE + 1 ))
 }
 
 # The startup reconcile (skills/conductor/reconcile.md) runs first, on every start: register
@@ -359,6 +411,10 @@ while :; do
   read -r rel < <("$SCRIPTS_DIR/artifact-ledger.sh" unprocessed) || true
   if [[ -z "$rel" ]]; then
     "$ONCE" && break
+    if (( HEARTBEAT > 0 && SECONDS - LAST_BEAT >= HEARTBEAT )); then
+      log "idle: nothing to do ($EVENTS_DONE events handled since start)"
+      LAST_BEAT=$SECONDS
+    fi
     sleep "$(poll_interval)" &
     SLEEP_PID=$!
     wait "$SLEEP_PID" || true
@@ -366,6 +422,7 @@ while :; do
     continue
   fi
   handle_event "$rel"
+  LAST_BEAT=$SECONDS
 done
 
 log "stopped"

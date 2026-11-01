@@ -319,6 +319,8 @@ fi
 #  - bash -c keeps the script independent of the user's login shell.
 #  - When the loop exits, the window turns into a shell (exec) instead of closing, so a
 #    halt's banner stays on screen and a restart is just running the loop again.
+#  - The loop prints its log lines (timestamped) in this window and appends them to
+#    $CONDUCTOR_DIR/conductor.log; any other window can `tail -F` that file.
 launch_conductor_loop() {
   local assignments="" name script
   # compgen -e lists the exported variables by name, so a value is read as it is: spaces,
@@ -327,7 +329,13 @@ launch_conductor_loop() {
     [[ "$name" == "CONDUCTOR_DIR" ]] && continue
     assignments+=" $(printf '%q' "$name=${!name}")"
   done < <(compgen -e | grep -E '^(CONDUCTOR_[A-Z_]+|PI_ABORT_GRACE)$' || true)
-  script="cd $(printf '%q' "$TARGET_DIR") && env CONDUCTOR_DIR=$(printf '%q' "$CONDUCTOR_DIR")${assignments} $(printf '%q' "$SCRIPTS_DIR/conductor-loop.sh"); "
+  # After a halt and a restart the window is new and empty, so it first shows where the last run
+  # left off: the end of conductor.log (the loop appends to it, with the same lines it prints).
+  local log; log="$(printf '%q' "$CONDUCTOR_DIR/conductor.log")"
+  script="cd $(printf '%q' "$TARGET_DIR") && "
+  # shellcheck disable=SC2016  # the quotes are for the window's shell
+  script+="if [ -s $log ]; then printf '%s\\n' '--- earlier in conductor.log:'; tail -n 20 $log; printf '%s\\n' '--- now:'; fi; "
+  script+="env CONDUCTOR_DIR=$(printf '%q' "$CONDUCTOR_DIR")${assignments} $(printf '%q' "$SCRIPTS_DIR/conductor-loop.sh"); "
   # shellcheck disable=SC2016  # these expand in the window's shell, not here
   script+='status=$?; printf "\nconductor-loop exited with status %s.\nThis window is now a shell: restart it with scripts/conductor-loop.sh\n" "$status"; exec "${SHELL:-bash}"'
   tmux new-session -d -s "$SESSION" -n "conductor" "bash -c $(printf '%q' "$script")"
