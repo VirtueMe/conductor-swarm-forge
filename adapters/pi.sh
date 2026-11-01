@@ -164,6 +164,8 @@ adapter_dispatch() {
 
   # shellcheck source=scripts/dispatch-prompt.sh
   source "${SCRIPTS_DIR:?SCRIPTS_DIR is not set}/dispatch-prompt.sh"
+  # shellcheck source=scripts/dispatch-result.sh
+  source "$SCRIPTS_DIR/dispatch-result.sh"
   # shellcheck source=scripts/wf-read.sh
   source "$SCRIPTS_DIR/wf-read.sh"
 
@@ -195,17 +197,13 @@ adapter_dispatch() {
   fi
 
   # The usage record, written whatever the outcome because the spend happened.
-  if [[ -n "${DISPATCH_USAGE_FILE:-}" ]]; then
-    jq -c '{
-        harness: "pi",
-        model: .model,
-        input_tokens: (.stats.tokens.input // 0),
-        output_tokens: (.stats.tokens.output // 0),
-        cache_read_tokens: (.stats.tokens.cacheRead // 0),
-        cache_write_tokens: (.stats.tokens.cacheWrite // 0),
-        cost_usd: (.stats.cost // null),
-        turns: (.stats.assistantMessages // null) }' "$out" > "$DISPATCH_USAGE_FILE"
-  fi
+  local u_model u_in u_out u_cr u_cw u_cost u_turns
+  IFS=$'\t' read -r u_model u_in u_out u_cr u_cw u_cost u_turns < <(jq -r '[
+      (.model // "-"), (.stats.tokens.input // 0), (.stats.tokens.output // 0),
+      (.stats.tokens.cacheRead // 0), (.stats.tokens.cacheWrite // 0),
+      (.stats.cost // "-"), (.stats.assistantMessages // "-")
+    ] | @tsv' "$out")
+  dispatch_write_usage pi "$u_model" "$u_in" "$u_out" "$u_cr" "$u_cw" "$u_cost" "$u_turns"
 
   # "-" stands for an empty field: read would otherwise merge adjacent tabs.
   local deadline_hit settled aborted rejected stop_reason retry_failed pi_exit
@@ -245,9 +243,6 @@ adapter_dispatch() {
   if [[ "$retry_failed" != "-" ]]; then
     echo "pi: retries gave up: $retry_failed" >&2; return 1
   fi
-  if ! dispatch_final_exit "$answer"; then
-    echo "pi: handler reported failure: $(printf '%s\n' "$answer" | awk 'NF{l=$0} END{print l}')" >&2
-    return 1
-  fi
+  dispatch_finish pi "$answer" || return 1
   return 0
 }

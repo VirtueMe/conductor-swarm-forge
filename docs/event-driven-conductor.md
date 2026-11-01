@@ -317,7 +317,12 @@ and records the event as processed only after the handler succeeds.
 | Exit 0 | the handler finished |
 | Exit 2 | the event cannot be handled; the loop does not retry |
 | Any other exit | the handler failed; the loop retries |
-| Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`: `harness`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` (null when the harness reports none, as Codex does) and `turns`. Write it even when the run fails, because the spend happened |
+| Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`: `harness`, `model`, `input_tokens` (input that was neither read from nor written to a cache), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` (null when the harness reports none, as Codex does) and `turns`. Write it even when the run fails, because the spend happened, unless the harness reported none (a killed Codex run) |
+
+`turns` is each harness's own count, so compare it within one harness and not across them:
+Claude Code reports `num_turns` (model round trips), Pi the number of assistant messages,
+and Codex the number of completed model and tool steps in the event stream. The token fields
+mean the same everywhere; `input_tokens` excludes anything read from or written to a cache.
 
 `scripts/dispatch-prompt.sh` builds the prompt for all three adapters: the static
 briefing first so caching can hit it, then the rules for a dispatched run, the skill,
@@ -435,6 +440,70 @@ tokens. With a 3 s deadline on the same event the client aborted after 3 s, `pi`
 afterwards, the card was untouched, and the $0.033 spent was recorded. Model names have to
 be written `provider/id`, or Pi asks which provider and nothing can answer.
 
+## Codex dispatch
+
+`adapter_dispatch` in `adapters/codex.sh` runs `codex exec --json --ephemeral
+--skip-git-repo-check` with the conductor's model and effort from the workforce, reads
+the JSON event stream with `jq`, and relies on the loop's `timeout` for the deadline.
+
+**What the stream looks like** (measured):
+
+- A finished run: `thread.started`, `turn.started`, one `item.completed` per message or
+  tool call, then `turn.completed` with `usage`. A command that exits non-zero is just a
+  `command_execution` item with `exit_code: 1`; the run still completes.
+- A failed run exits 1 with an `error` event and `turn.failed`. There is no HTTP status,
+  only text, so the adapter treats "not supported", "not found", "unauthorized", "not logged
+  in", "invalid api key", "authentication" and "forbidden" as exit 2 (not retried) and
+  everything else as exit 1. That is a heuristic on message text.
+- An `item.completed` of type `error` is a warning (Codex emits one for an unknown model
+  name even on a failed run), not a failure.
+- A run killed by the loop's timeout has no `turn.completed`, so **its spend is not
+  reported** and no usage record is written. No child process survived the kill.
+- `codex exec` **waits for stdin to end when stdin is a pipe**, even with the prompt given
+  as an argument. The adapter closes stdin (`< /dev/null`); without it a run hangs until the
+  timeout.
+
+**Usage.** `turn.completed` carries tokens only. Codex's `input_tokens` includes the cached
+part, so the record subtracts `cached_input_tokens` to match the other adapters, and sums
+over turns. There is no cost field, and `cost_usd` stays null: with a ChatGPT login there is
+no per-token bill to compute, and a price table for API use would go stale. `turns` counts
+the completed model and tool steps. The model is the one requested in the workforce, because
+the events do not name it.
+
+**Sandbox.** The issue asked for `workspace-write`. It cannot run a swarm: the sandbox
+blocks the tmux socket (`error connecting to /tmp/tmux-1000/... (Operation not permitted)`),
+and `--add-dir` for the socket directory does not change that. Handlers close and open
+worker windows through tmux, and the spawn guard's `tmux list-windows` would fail quietly
+and stop protecting against duplicates. So the default is **`danger-full-access`**, set with
+`CONDUCTOR_CODEX_SANDBOX` (`read-only`, `workspace-write` or `danger-full-access`). That puts
+Codex on par with the other two adapters, which also run shell commands unsandboxed: Claude
+Code is given `Bash`, Pi runs its tools with no permission prompts. It is still the widest
+grant of the three. A conductor whose handlers never touch tmux can set `workspace-write`.
+
+**Real run through the loop** (`on-review-approved`, `locks=free`, the account's default
+model, the default sandbox): the card moved to `merging` with one spawn, in 16 s over 6 steps
+(5.8k fresh input, 80k cached, 344 output tokens, no cost), and no process was left behind.
+Two earlier runs under `workspace-write`, where the handler's tmux calls fail quietly, were
+used to check the event parsing and the usage record.
+
+**Stricter than the others.** On a card with no `files-changed`, the live run stopped with
+`HANDLER-FAILED: ... the required locks guard could not be determined` where Claude Code and
+Pi had carried on with `locks=free`. The adapter did its job: the event halted the loop
+instead of guessing. Cards that went through a coder have a `files-changed` list.
+
+**Fixed context** is about 15k input tokens for a trivial prompt, most of it Codex's own.
+`--ignore-user-config` saved 549 tokens on one config and would drop the user's provider
+settings; `--ignore-rules` exited 2. Neither is used.
+
+## Shared dispatch code
+
+Three adapters read three different results, so how each one finds an error stays in the
+adapter. What they share is in `scripts/dispatch-result.sh`: `dispatch_write_usage` writes the
+usage record, so the field names live in one place, and `dispatch_finish` applies the
+`HANDLER-FAILED:` check on the model's last line. The prompt and the final-line parser are in
+`dispatch-prompt.sh`. Not extracted: the tool checks and the model-flag handling at the top of
+each adapter, which differ in what they require and are short.
+
 ## Spike results
 
 The spike (#73) ran one real handler, `on-review-approved`, under each harness
@@ -480,7 +549,10 @@ and Codex ran on their configured defaults; Pi ran on `claude-opus-4-8`.
 4. **A failed check can fail open.** In a first Claude Code run the scratch swarm
    was missing `integrations/`, so `task-locks.sh` errored. The model reported the
    error and carried on with `locks=free`, because the card had no `files-changed`.
-   A merge went ahead on a guard that had not run. In Phase 2 the lock check
+   A merge went ahead on a guard that had not run. Whether a model carries on or stops
+   there depends on the model, not only on the rule: on a card with no `files-changed`,
+   Claude Code and Pi read that as `locks=free`, while Codex stopped with `HANDLER-FAILED`
+   because it could not determine the guard. In Phase 2 the lock check
    should be code that fails closed. While a handler stays a skill, a failing
    `task-locks.sh` should stop the handler.
 5. **Fixed context dominates the cost of a small handler.** Claude Code's
