@@ -41,12 +41,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
+# KANBAN_SERVER and HEADLESS are always "true" or "false", and "false" is a non-empty string, so
+# ${VAR:+flag} would pass the flag every time: these two are compared, not tested for emptiness.
 PREFLIGHT_ARGS=()
-[[ "$HEADLESS" == true ]] && PREFLIGHT_ARGS+=(--conductor-loop)   # GNU timeout and jq, for the loop
+[[ "$KANBAN_SERVER" == true ]] && PREFLIGHT_ARGS+=(--kanban-server)   # node
+[[ "$HEADLESS" == true ]] && PREFLIGHT_ARGS+=(--conductor-loop)       # GNU timeout and jq, for the loop
 "$SCRIPTS_DIR/preflight-check.sh" \
   ${LANG:+--lang "$LANG"} \
   ${TEST_CMD:+--test-cmd "$TEST_CMD"} \
-  ${KANBAN_SERVER:+--kanban-server} \
   ${PREFLIGHT_ARGS[@]+"${PREFLIGHT_ARGS[@]}"} || exit 1
 
 # Resolve and check the topology before doing any work — fail fast.
