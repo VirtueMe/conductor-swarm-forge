@@ -13,6 +13,9 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 LOOP="$SCRIPTS_DIR/conductor-loop.sh"
 
 TMP="$(mktemp -d)"
+# A private tmux server: if a test ever reaches the real worker-spawn.sh, it cannot touch the
+# user's own tmux session.
+export TMUX_TMPDIR="$TMP/tmux"; mkdir -p "$TMUX_TMPDIR"
 LOOP_PID=""
 # shellcheck disable=SC2329  # invoked via trap, not a direct call
 cleanup() {
@@ -40,6 +43,12 @@ STUB="$TMP/stub-adapter.sh"
 cat > "$STUB" << 'STUB_EOF'
 adapter_dispatch() {
   local skill="$1" art="$2" rc=0
+  if [[ "$art" == "startup" ]]; then
+    # The startup reconcile: logged apart from events, and the queued exit codes are not for it.
+    echo "reconcile $(printf '%s' "$skill" | head -1) task_id=[${TASK_ID:-}] artifact=[${ARTIFACT:-}]" >> "$STUB_LOG"
+    [[ -n "${STUB_ERRMSG:-}" && "${STUB_RECONCILE_RC:-0}" != 0 ]] && echo "$STUB_ERRMSG" >&2
+    return "${STUB_RECONCILE_RC:-0}"
+  fi
   {
     echo "start $TASK_ID $(basename "$art") | $(printf '%s' "$skill" | head -1)"
     echo "env CONDUCTOR_DIR=$CONDUCTOR_DIR LOOP=${CONDUCTOR_LOOP:-} DEADLINE=${DISPATCH_DEADLINE:-} USAGE=${DISPATCH_USAGE_FILE:-}"
@@ -75,7 +84,7 @@ new_swarm() {
   cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
   printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
   : > "$STUB_LOG"; : > "$STUB_RC"; rm -f "$STUB_HOOK"
-  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD
+  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG
   export CONDUCTOR_RETRY_DELAY=0
 }
 create_task() { "$SCRIPTS_DIR/task-create.sh" --title "T" --type chore --description "x" > /dev/null; }
@@ -383,6 +392,54 @@ CONDUCTOR_MAX_ATTEMPTS=2 run_loop
 assert_eq "the halt is still exit 1" "$RC" "1"
 assert_eq "the halt file is still written" "$(halt_kind)" "failed"
 assert_eq "the architect's notice is still written" "$(notices architect-inbox)" "1"
+
+# 24 ------------------------------------------------------------------------------
+section "24 · The loop reconciles first, on every start"
+new_swarm
+create_task
+run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the reconcile was dispatched once" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "1"
+expect_grep '^reconcile # Skill: Reconcile ' "$STUB_LOG" "it is the reconcile skill"
+expect_grep 'task_id=\[\] artifact=\[\]' "$STUB_LOG" "with no task and no artifact"
+: > "$STUB_LOG"
+sleep 1; signal 0001 signal complete
+run_loop
+assert_eq "a second start reconciles again" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "1"
+assert_eq "before it handles the new event" "$(grep -E '^(reconcile|start) ' "$STUB_LOG" | cut -d' ' -f1 | tr '\n' ' ')" "reconcile start "
+
+# 25 ------------------------------------------------------------------------------
+section "25 · A fresh swarm has nothing to reconcile"
+new_swarm
+run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "no model call" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "0"
+expect_grep 'nothing to reconcile' "$TMP/loop.err" "and it says so"
+
+# 26 ------------------------------------------------------------------------------
+section "26 · A failing reconcile is retried, then halts before any event"
+new_swarm
+create_task
+signal 0001 signal complete
+sleep 1
+STUB_RECONCILE_RC=1 STUB_ERRMSG="stub: reconcile failed" CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "two attempts" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "2"
+assert_eq "no event was handled" "$(dispatches)" "0"
+assert_eq "halt kind" "$(halt_kind)" "failed"
+expect_grep '^artifact: startup$' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt names the startup"
+expect_grep '^handler: conductor/reconcile$' "$CONDUCTOR_DIR/conductor-loop.halted" "and the reconcile"
+expect_grep 'Last error: stub: reconcile failed' "$(notice human-inbox)" "the notice has the last error"
+
+# 27 ------------------------------------------------------------------------------
+section "27 · A missing reconcile skill halts"
+new_swarm
+create_task
+rm -f "$CONDUCTOR_DIR/skills/conductor/reconcile.md"
+run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "halt kind" "$(halt_kind)" "unresolvable"
+expect_grep 'no skill file' "$CONDUCTOR_DIR/conductor-loop.halted" "names the missing file"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

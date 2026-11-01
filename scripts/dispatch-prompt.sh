@@ -5,8 +5,9 @@
 # Sourced (not executed). The three adapters share this so the contract lives in one
 # place. It defines:
 #
-#   dispatch_prompt <skill_content> <artifact>
-#     Prints the prompt: the static briefing ($CONDUCTOR_DIR/prompts/conductor.prompt)
+#   dispatch_prompt <skill_content> <event>
+#     <event> is an artifact path, or the word "startup" for the reconcile the loop runs
+#     first, which has no artifact and no task. Prints the prompt: the static briefing ($CONDUCTOR_DIR/prompts/conductor.prompt)
 #     first so prompt caching can hit it, then the rules for a dispatched run, then the
 #     skill, then the event. Returns 1 if the briefing is missing.
 #
@@ -23,8 +24,8 @@
 DISPATCH_FAILED_MARKER="HANDLER-FAILED:"
 
 dispatch_prompt() {
-  local skill_content="${1:?Usage: dispatch_prompt <skill_content> <artifact>}"
-  local artifact="${2:?Usage: dispatch_prompt <skill_content> <artifact>}"
+  local skill_content="${1:?Usage: dispatch_prompt <skill_content> <event>}"
+  local event="${2:?Usage: dispatch_prompt <skill_content> <event>}"
   local briefing="${CONDUCTOR_DIR:?CONDUCTOR_DIR is not set}/prompts/conductor.prompt"
   [[ -f "$briefing" ]] || { echo "dispatch_prompt: no briefing at $briefing" >&2; return 1; }
 
@@ -32,14 +33,22 @@ dispatch_prompt() {
   printf '\n\n---\n\n## This is one dispatched event\n\n'
   printf 'You are handling a single event, not running the conductor. Ignore the Startup and\n'
   printf 'Watch loop sections of the briefing above. Do only what the skill below says.\n\n'
-  printf 'The scripts are on PATH. CONDUCTOR_DIR, TASK_ID, TASK_FILE and ARTIFACT are set in\n'
-  printf 'your shell environment.\n\n'
+  if [[ "$event" == "startup" ]]; then
+    printf 'The scripts are on PATH and CONDUCTOR_DIR is set in your shell environment.\n\n'
+  else
+    printf 'The scripts are on PATH. CONDUCTOR_DIR, TASK_ID, TASK_FILE and ARTIFACT are set in\n'
+    printf 'your shell environment.\n\n'
+  fi
   printf 'If any script exits non-zero, or a check the skill tells you to make cannot be\n'
   printf 'completed, stop at once and change nothing further. Make your final line:\n'
   printf '%s <one-line reason>\n' "$DISPATCH_FAILED_MARKER"
   printf 'Otherwise finish with one line saying what you did.\n\n'
   printf '## Skill to run\n\n%s\n\n' "$skill_content"
-  printf '## The event\n\nArtifact: %s\nTask: %s\n' "$artifact" "${TASK_ID:-unknown}"
+  if [[ "$event" == "startup" ]]; then
+    printf '## The event\n\nStartup reconcile. There is no artifact and no task.\n'
+  else
+    printf '## The event\n\nArtifact: %s\nTask: %s\n' "$event" "${TASK_ID:-unknown}"
+  fi
 }
 
 dispatch_final_exit() {

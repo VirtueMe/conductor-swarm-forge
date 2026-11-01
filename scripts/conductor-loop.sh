@@ -17,16 +17,21 @@ set -euo pipefail
 #   CONDUCTOR_RETRY_DELAY       seconds to wait between attempts at one event (default 5)
 #   CONDUCTOR_TIMEOUT_CMD       the timeout command (default: timeout, else gtimeout)
 #
-# The adapter contract, called as `adapter_dispatch <skill_content> <artifact>`:
+# The adapter contract, called as `adapter_dispatch <skill_content> <event>`, where <event>
+# is an artifact path or the word "startup" (the reconcile, which has no artifact or task):
 #   environment  CONDUCTOR_DIR (absolute), PATH with the scripts, TASK_ID, TASK_FILE,
-#                ARTIFACT, DISPATCH_DEADLINE (seconds), DISPATCH_USAGE_FILE
+#                ARTIFACT (these three only for an artifact event), DISPATCH_DEADLINE
+#                (seconds), DISPATCH_USAGE_FILE
 #   exit 0       the handler finished
 #   exit 2       the event cannot be handled; retrying will not help
 #   other        the handler failed; the loop retries
 #   usage        the adapter may write one JSON line to $DISPATCH_USAGE_FILE
 #
+# The loop first runs the startup reconcile (see reconcile below), then drains events.
+#
 # Failure rules:
-#   - A failed or timed-out handler is retried, then the loop halts. It never skips an
+#   - A failed or timed-out handler (the reconcile included) is retried, then the loop halts.
+#     It never skips an
 #     event: skipping can strand a task without anyone noticing.
 #   - An artifact whose handler cannot be resolved, or whose skill file is missing,
 #     halts at once. Retrying cannot fix it.
@@ -194,9 +199,30 @@ run_dispatch() { # <skill_content> <artifact>
   return "$rc"
 }
 
+# Dispatch one event until its handler succeeds, retrying a failure, or halt. Returns only on
+# success. <label> names the event in logs and halt notices.
+dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "startup">
+  local label="$1" skill_content="$2" event="$3" attempt rc=0
+  for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
+    log "$label -> $SKILL_NAME (attempt $attempt of $MAX_ATTEMPTS)"
+    rc=0
+    run_dispatch "$skill_content" "$event" || rc=$?
+    [[ "$rc" -eq 0 ]] && return 0
+    [[ "$rc" -eq 2 ]] && halt unusable "$label" "the adapter reported that this event cannot be handled"
+    log "$label failed with exit $rc"
+    if (( attempt < MAX_ATTEMPTS )); then
+      sleep "$RETRY_DELAY" &
+      SLEEP_PID=$!
+      wait "$SLEEP_PID" || true
+      SLEEP_PID=""
+    fi
+  done
+  halt failed "$label" "the handler failed $MAX_ATTEMPTS time(s); last exit $rc"
+}
+
 SKILL_NAME=""
 handle_event() { # <artifact path relative to the work dir>
-  local rel="$1" art type outcome skill_file skill_content attempt rc
+  local rel="$1" art type outcome skill_file skill_content
   art="$WORK_DIR/$rel"
   SKILL_NAME=""
   LAST_ERROR=""
@@ -232,24 +258,27 @@ handle_event() { # <artifact path relative to the work dir>
   export ARTIFACT="$art"
   export TASK_FILE="$CONDUCTOR_DIR/tasks/$TASK_ID.md"
 
-  for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
-    log "$rel -> $SKILL_NAME (attempt $attempt of $MAX_ATTEMPTS)"
-    rc=0
-    run_dispatch "$skill_content" "$art" || rc=$?
-    if [[ "$rc" -eq 0 ]]; then
-      mark "$rel"
-      return 0
-    fi
-    [[ "$rc" -eq 2 ]] && halt unusable "$rel" "the adapter reported that this event cannot be handled"
-    log "$rel failed with exit $rc"
-    if (( attempt < MAX_ATTEMPTS )); then
-      sleep "$RETRY_DELAY" &
-      SLEEP_PID=$!
-      wait "$SLEEP_PID" || true
-      SLEEP_PID=""
-    fi
-  done
-  halt failed "$rel" "the handler failed $MAX_ATTEMPTS time(s); last exit $rc"
+  dispatch_until_done "$rel" "$skill_content" "$art"
+  mark "$rel"
+}
+
+# The startup reconcile (skills/conductor/reconcile.md) runs first, on every start: register
+# untracked tasks, unblock ready ones, respawn a worker whose window was lost, start the entry
+# stage. It is the same skill the interactive conductor runs from startup.md, it is safe to run
+# again, and it has no artifact or task of its own, so the event is the word "startup". A fresh
+# swarm has nothing to reconcile and skips the model call.
+reconcile() {
+  if ! compgen -G "$CONDUCTOR_DIR/tasks/*.md" > /dev/null && ! compgen -G "$CONDUCTOR_DIR/kanban/*/*.md" > /dev/null; then
+    log "nothing to reconcile"
+    return 0
+  fi
+  SKILL_NAME="conductor/reconcile"
+  LAST_ERROR=""
+  local skill_file="$CONDUCTOR_DIR/skills/${SKILL_NAME}.md"
+  [[ -f "$skill_file" ]] || halt unresolvable startup "no skill file: $skill_file"
+  unset TASK_ID TASK_FILE ARTIFACT
+  dispatch_until_done startup "$(cat "$skill_file")" startup
+  SKILL_NAME=""
 }
 
 # --- Main -------------------------------------------------------------------
@@ -263,6 +292,7 @@ poll_interval() {
 rm -f "$FLAG" "$HALTED" "$CONDUCTOR_DIR"/human-inbox/loop-halt-*.md "$CONDUCTOR_DIR"/architect-inbox/loop-halt-*.md
 bootstrap_ledger
 log "started (pid $$)"
+reconcile
 
 while :; do
   if [[ -f "$FLAG" ]]; then log "shutdown requested"; break; fi

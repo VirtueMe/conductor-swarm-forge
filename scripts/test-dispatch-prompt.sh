@@ -44,6 +44,14 @@ has '^1. do the thing' "the skill text is included"
 has 'Artifact: /x/work/0007/review-1.md' "the artifact is named"
 has "^$DISPATCH_FAILED_MARKER" "the failure line is spelled out"
 has 'Ignore the Startup and' "the interactive sections are ruled out"
+has 'Watch loop sections' "by the names the prompt uses"
+
+echo "── the startup reconcile has no artifact or task"
+P="$(TASK_ID='' dispatch_prompt "# Skill: Reconcile" "startup")"
+has 'Startup reconcile. There is no artifact and no task.' "the event says so"
+if printf '%s\n' "$P" | grep -q 'Artifact:'; then fail "an artifact line for the reconcile"; else ok "no artifact line"; fi
+if printf '%s\n' "$P" | grep -q 'TASK_ID, TASK_FILE and ARTIFACT'; then fail "it claims per-event variables"; else ok "and does not claim per-event variables"; fi
+has 'CONDUCTOR_DIR is set' "it names only what is set"
 
 echo "── a missing briefing"
 if (CONDUCTOR_DIR="$TMP/none" dispatch_prompt "s" "a" > /dev/null 2>&1); then
