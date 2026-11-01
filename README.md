@@ -168,6 +168,7 @@ from there. Watch the board fill up at `http://localhost:3000`.
 | `--workforce <name>` | `-wf` | `default` | Workforce (`workforces/<name>.json`): which agent/adapter runs each role |
 | `--base-branch <name>` | `-bb` | repo default (`main`) | Branch the swarm works from: task branches fork from it and merges land on it. Reused if it exists locally or as `origin/<name>`; otherwise created from the default branch. `main` is left untouched. Recorded as `base-branch` in `.conductor/config.md` |
 | `--kanban-server` | `-cbs` | off | Start the Node.js kanban dashboard |
+| `--headless-conductor` | `-hc` | off | Run the conductor as the headless loop (`scripts/conductor-loop.sh`) instead of an interactive session. Needs an adapter with `adapter_dispatch` (`claude-code`, `codex` and `pi` have one), GNU `timeout` and `jq`. Does not yet resume interrupted work on a restart (#89). See `docs/event-driven-conductor.md` |
 
 Supported `--lang` values include `typescript`/`javascript`, `python`, `rust`,
 `go`, `ruby`, `clojure`, `elixir`, `java`, and `kotlin`.

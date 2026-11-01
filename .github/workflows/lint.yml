@@ -145,6 +145,9 @@ jobs:
       - name: test-loop-halt-notify
         run: bash scripts/test-loop-halt-notify.sh
 
+      - name: test-swarm-start
+        run: bash scripts/test-swarm-start.sh
+
       - name: test-claude-dispatch
         run: bash scripts/test-claude-dispatch.sh
 

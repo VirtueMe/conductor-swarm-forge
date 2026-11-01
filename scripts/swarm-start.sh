@@ -7,6 +7,7 @@ ADAPTERS_DIR="$ROOT_DIR/adapters"
 PROMPTS_DIR="$ROOT_DIR/prompts"
 SESSION="swarm"
 KANBAN_SERVER=false
+HEADLESS=false
 BRIEF_FILE=""
 TARGET_DIR=""
 LANG="typescript"
@@ -16,7 +17,7 @@ WORKFORCE_NAME="default"
 BASE_BRANCH=""
 
 usage() {
-  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--workforce|-wf <name>] [--base-branch|-bb <name>] [--kanban-server|-cbs]" >&2
+  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--workforce|-wf <name>] [--base-branch|-bb <name>] [--kanban-server|-cbs] [--headless-conductor|-hc]" >&2
   exit 1
 }
 
@@ -24,6 +25,7 @@ usage() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --kanban-server|-cbs) KANBAN_SERVER=true; shift ;;
+    --headless-conductor|-hc) HEADLESS=true; shift ;;
     --brief|-b)           BRIEF_FILE="$2"; shift 2 ;;
     --lang|-l)            LANG="$2"; shift 2 ;;
     --test-cmd|-tc)       TEST_CMD="$2"; shift 2 ;;
@@ -39,10 +41,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
+PREFLIGHT_ARGS=()
+[[ "$HEADLESS" == true ]] && PREFLIGHT_ARGS+=(--conductor-loop)   # GNU timeout and jq, for the loop
 "$SCRIPTS_DIR/preflight-check.sh" \
   ${LANG:+--lang "$LANG"} \
   ${TEST_CMD:+--test-cmd "$TEST_CMD"} \
-  ${KANBAN_SERVER:+--kanban-server} || exit 1
+  ${KANBAN_SERVER:+--kanban-server} \
+  ${PREFLIGHT_ARGS[@]+"${PREFLIGHT_ARGS[@]}"} || exit 1
 
 # Resolve and check the topology before doing any work — fail fast.
 # `check` runs structural validate then behavioral completeness (e.g. manual stages need a human handler).
@@ -226,15 +231,35 @@ source "$ADAPTER_FILE"
 # Conductor launch-time params (tuning bag) — handed to the adapter verbatim.
 CONDUCTOR_PARAMS=$(wf_field "$WORKFORCE" "conductor" params)
 
-SKILL_CONTENT=$(cat "$PROMPTS_DIR/conductor.prompt")
-TASK_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG: %s' \
-  "$TARGET_DIR/$CONDUCTOR_DIR/skills" "$TARGET_DIR" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" "${LANG:-unknown}")"
+# Headless conductor (opt-in): an adapter that defines adapter_dispatch can run the loop
+# instead of an interactive session. This is decided here, straight after the conductor's
+# adapter is sourced and before the architect's is: sourcing a second adapter could add or
+# replace functions. Without the flag nothing below changes.
+RUN_LOOP=false
+if [[ "$HEADLESS" == true ]]; then
+  if declare -F adapter_dispatch > /dev/null; then
+    RUN_LOOP=true
+  else
+    echo "Warning: --headless-conductor needs an adapter with adapter_dispatch; '$ADAPTER_NAME' has none." >&2
+    echo "         Falling back to the interactive conductor." >&2
+  fi
+fi
 
-adapter_write_briefing \
-  "." "conductor" "$SKILL_CONTENT" "$TASK_BODY" \
-  "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"
+if [[ "$RUN_LOOP" == true ]]; then
+  # The loop builds its own prompt from $CONDUCTOR_DIR/prompts, so there is no briefing to
+  # write: the file would be unused.
+  echo "Conductor: headless loop (adapter: $ADAPTER_NAME)"
+else
+  SKILL_CONTENT=$(cat "$PROMPTS_DIR/conductor.prompt")
+  TASK_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG: %s' \
+    "$TARGET_DIR/$CONDUCTOR_DIR/skills" "$TARGET_DIR" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" "${LANG:-unknown}")"
 
-echo "Conductor initialized (adapter: $ADAPTER_NAME)"
+  adapter_write_briefing \
+    "." "conductor" "$SKILL_CONTENT" "$TASK_BODY" \
+    "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"
+
+  echo "Conductor initialized (adapter: $ADAPTER_NAME)"
+fi
 
 # ── Architect briefing ────────────────────────────────────────────────────────
 
@@ -286,6 +311,46 @@ if [[ "$KANBAN_SERVER" == true ]]; then
   echo "Kanban board → http://localhost:${KANBAN_PORT}"
 fi
 
+# ── Headless conductor ───────────────────────────────────────────────────────
+
+# Starts conductor-loop.sh as the conductor window's command.
+#  - tmux gives a new window the server's environment, not ours, so the loop's tuning
+#    variables (CONDUCTOR_*, PI_ABORT_GRACE) are put on the command line.
+#  - bash -c keeps the script independent of the user's login shell.
+#  - When the loop exits, the window turns into a shell (exec) instead of closing, so a
+#    halt's banner stays on screen and a restart is just running the loop again.
+launch_conductor_loop() {
+  local assignments="" name script
+  # compgen -e lists the exported variables by name, so a value is read as it is: spaces,
+  # quotes and newlines all go through printf %q intact.
+  while IFS= read -r name; do
+    [[ "$name" == "CONDUCTOR_DIR" ]] && continue
+    assignments+=" $(printf '%q' "$name=${!name}")"
+  done < <(compgen -e | grep -E '^(CONDUCTOR_[A-Z_]+|PI_ABORT_GRACE)$' || true)
+  script="cd $(printf '%q' "$TARGET_DIR") && env CONDUCTOR_DIR=$(printf '%q' "$CONDUCTOR_DIR")${assignments} $(printf '%q' "$SCRIPTS_DIR/conductor-loop.sh"); "
+  # shellcheck disable=SC2016  # these expand in the window's shell, not here
+  script+='status=$?; printf "\nconductor-loop exited with status %s.\nThis window is now a shell: restart it with scripts/conductor-loop.sh\n" "$status"; exec "${SHELL:-bash}"'
+  tmux new-session -d -s "$SESSION" -n "conductor" "bash -c $(printf '%q' "$script")"
+}
+
+# The loop does not run the startup reconcile yet (#89): it will not respawn a worker whose
+# window was lost, or re-notify a human who is waiting. Say so when there is work in flight.
+if [[ "$RUN_LOOP" == true ]]; then
+  IN_FLIGHT=""
+  while IFS= read -r stage; do
+    [[ -n "$stage" ]] || continue
+    [[ -n "$("$SCRIPTS_DIR/topology-load.sh" mode "$TOPOLOGY_FILE" "$stage" 2>/dev/null || true)" ]] || continue
+    for card in "$CONDUCTOR_DIR/kanban/$stage"/*.md; do
+      [[ -f "$card" ]] && IN_FLIGHT+=" $(basename "$card" .md)($stage)"
+    done
+  done < <("$SCRIPTS_DIR/topology-load.sh" stages "$TOPOLOGY_FILE")
+  if [[ -n "$IN_FLIGHT" ]]; then
+    echo "Warning: tasks are already in flight:${IN_FLIGHT}" >&2
+    echo "         The headless conductor does not resume interrupted work yet (#89): a worker whose" >&2
+    echo "         window was lost is not respawned. Start without --headless-conductor to reconcile first." >&2
+  fi
+fi
+
 # ── tmux ─────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -294,7 +359,11 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "Attaching to existing tmux session '$SESSION'"
 else
   echo "Starting tmux session '$SESSION'"
-  adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR" "$CONDUCTOR_PARAMS"
+  if [[ "$RUN_LOOP" == true ]]; then
+    launch_conductor_loop
+  else
+    adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR" "$CONDUCTOR_PARAMS"
+  fi
   [[ -n "$BRIEF_FILE" ]] && adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR" "${ARCH_PARAMS:-}"
 
   # Kill kanban server automatically when the tmux session closes
