@@ -343,8 +343,27 @@ and the event last. `dispatch_final_exit` turns a final line starting with
 | A new task | A `card` artifact is mapped to `conductor/on-new-task` by the loop. `conductor-skill` itself is unchanged, so the interactive conductor sees nothing different. |
 | Project complete | `conductor-shutdown.sh` closes the architect window and the kanban server and, under the loop, only writes a flag. The loop exits after recording the event; closing its own window from inside the handler would kill it before the `mark`. |
 
-A halt writes `$CONDUCTOR_DIR/conductor-loop.halted` and exits 1. Telling a human is
-#85; the usage log is #86; the live log is #87.
+A halt writes `$CONDUCTOR_DIR/conductor-loop.halted`, tells the human and the architect, and
+exits 1. The usage log is #86 and the live log is #87.
+
+**The halt notice** (`scripts/loop-halt-notify.sh`). A halt stops the loop for every task, so
+the notice is not tied to a task or a stage and does not reuse `task-notify.sh`, which needs
+a task file and a manual stage with decisions to wait for. It uses the same places a person
+already looks:
+
+- a banner on the loop's stdout, which is the conductor window;
+- `human-inbox/loop-halt-<timestamp>.md`;
+- `architect-inbox/loop-halt-<timestamp>.md` with `type: halt`, which the architect's inbox
+  watch dispatches to `skills/architect/on-halt.md` (tell the human, do not try to fix the
+  loop). The watcher reports new file names, not overwrites, hence the timestamp;
+- a desktop notification on macOS when `config.md` has `notify-channel: push`
+  (`CONDUCTOR_NOTIFY_CHANNEL=push` at `swarm-start.sh`).
+
+Each names the kind of halt, the artifact, the handler, why, and the last error the adapter
+printed. The notice is best effort: a step that fails (an unwritable inbox) never changes the
+halt or its exit status. The next start of the loop removes the notices with the halt file, so
+a fixed problem leaves no old alarm. A requested shutdown (project complete) is not a halt and
+leaves none.
 
 **Known limits**
 
@@ -354,6 +373,9 @@ A halt writes `$CONDUCTOR_DIR/conductor-loop.halted` and exits 1. Telling a huma
 - The briefing the dispatch uses is the whole of `conductor.prompt`, including its
   interactive Startup and Watch loop sections, which the dispatch rules tell the
   model to ignore. Splitting the prompt would remove that.
+- The banner is lost if the conductor window closes when the loop exits, which tmux does by
+  default for a window whose command ends. The inbox files survive. Whatever launches the loop
+  (#84) has to keep the window open after the loop exits.
 - `startup.md` mixes the startup reconcile and the poll loop, so the loop cannot yet
   dispatch the reconcile as its first event (#89).
 - `unprocessed` scans the whole work tree for every event.
