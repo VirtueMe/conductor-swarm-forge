@@ -56,13 +56,11 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
    total=$(ls "$CONDUCTOR_DIR/tasks/" | wc -l | xargs)
    done=$(ls "$CONDUCTOR_DIR/kanban/done/" | wc -l | xargs)
    ```
-   If `total == done`, the project is complete:
+   If `total == done`, the project is complete. Shut the swarm down:
    ```bash
-   echo "All $total tasks done. Shutting down swarm."
-   # Close architect window if it exists
-   tmux kill-window -t "swarm:architect" 2>/dev/null || true
-   # Stop kanban server
-   kill $(cat "$CONDUCTOR_DIR/kanban-server.pid" 2>/dev/null) 2>/dev/null || true
-   # Close conductor window (self-terminate)
-   tmux kill-window -t "swarm:conductor"
+   conductor-shutdown.sh
    ```
+   It closes the architect window and stops the kanban server. In an interactive
+   conductor it then closes the conductor's own window. Under `conductor-loop.sh` it
+   only asks the loop to exit after this event, because closing the window would kill
+   the loop before it recorded the event as done.

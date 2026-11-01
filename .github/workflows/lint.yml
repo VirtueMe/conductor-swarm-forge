@@ -135,3 +135,9 @@ jobs:
 
       - name: test-conductor-script-refs
         run: bash scripts/test-conductor-script-refs.sh
+
+      - name: test-dispatch-prompt
+        run: bash scripts/test-dispatch-prompt.sh
+
+      - name: test-conductor-loop
+        run: bash scripts/test-conductor-loop.sh

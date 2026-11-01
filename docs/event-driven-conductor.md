@@ -302,6 +302,58 @@ implementations of `adapter_dispatch`.
    three harnesses. See [Spike results](#spike-results) for the findings and what
    they leave open.
 
+## The loop and the `adapter_dispatch` contract
+
+`scripts/conductor-loop.sh` is the headless conductor. It drains
+`artifact-ledger.sh unprocessed` one event at a time, resolves the handler with
+`topology-load.sh conductor-skill`, calls the conductor adapter's `adapter_dispatch`,
+and records the event as processed only after the handler succeeds.
+
+**Contract**, called as `adapter_dispatch <skill_content> <artifact>`:
+
+| | |
+| --- | --- |
+| Environment | `CONDUCTOR_DIR` (absolute), `PATH` with the scripts (from `conductor_env`), `TASK_ID`, `TASK_FILE`, `ARTIFACT`, `DISPATCH_DEADLINE` (seconds), `DISPATCH_USAGE_FILE` |
+| Exit 0 | the handler finished |
+| Exit 2 | the event cannot be handled; the loop does not retry |
+| Any other exit | the handler failed; the loop retries |
+| Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`; cost is optional because Codex reports none |
+
+`scripts/dispatch-prompt.sh` builds the prompt for all three adapters: the static
+briefing first so caching can hit it, then the rules for a dispatched run, the skill,
+and the event last. `dispatch_final_exit` turns a final line starting with
+`HANDLER-FAILED:` into a failed dispatch.
+
+**What the loop does when something goes wrong**
+
+| Case | Behavior |
+| --- | --- |
+| Handler exits non-zero or hangs past the deadline | Retry up to `CONDUCTOR_MAX_ATTEMPTS` (3), `CONDUCTOR_RETRY_DELAY` (5 s) apart, then halt. The event stays unprocessed. |
+| Adapter exits 2, the handler cannot be resolved, the skill file is missing, or the artifact has no type | Halt at once. Retrying cannot help. |
+| The artifact has no handler (`assigned`, `progress`, `moved`, ...) | Record it as processed without a dispatch, so it is never listed again. |
+| Crash or kill between "handler done" and `mark` | The event runs again on restart. Moves and spawns are safe to replay (the spawn guard). A replayed `progress` note is duplicated, which is noise, not damage. |
+| Loop killed during a dispatch | The dispatch is stopped, the event is not recorded, the lock is released. |
+| A second loop on the same conductor dir | Refused (exit 4). A lock left by a dead process is taken over. |
+| First start, no ledger yet | The ledger is seeded with the artifacts that exist, so history is not replayed. It is written whole or not at all. |
+| A new task | A `card` artifact is mapped to `conductor/on-new-task` by the loop. `conductor-skill` itself is unchanged, so the interactive conductor sees nothing different. |
+| Project complete | `conductor-shutdown.sh` closes the architect window and the kanban server and, under the loop, only writes a flag. The loop exits after recording the event; closing its own window from inside the handler would kill it before the `mark`. |
+
+A halt writes `$CONDUCTOR_DIR/conductor-loop.halted` and exits 1. Telling a human is
+#85; the usage log is #86; the live log is #87.
+
+**Known limits**
+
+- A model can ignore a failing guard script and carry on (the spike saw this). The
+  `HANDLER-FAILED:` rule in the prompt is a mitigation that depends on the model
+  following it. Phase 2 makes the guards code that fails closed.
+- The briefing the dispatch uses is the whole of `conductor.prompt`, including its
+  interactive Startup and Watch loop sections, which the dispatch rules tell the
+  model to ignore. Splitting the prompt would remove that.
+- `startup.md` mixes the startup reconcile and the poll loop, so the loop cannot yet
+  dispatch the reconcile as its first event (#89).
+- `unprocessed` scans the whole work tree for every event.
+- The loop needs GNU `timeout` (`gtimeout` on macOS, from `brew install coreutils`). It exits 3 with a message if neither exists; `preflight-check.sh --conductor-loop` checks for it.
+
 ## Spike results
 
 The spike (#73) ran one real handler, `on-review-approved`, under each harness
