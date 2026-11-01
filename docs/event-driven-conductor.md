@@ -391,6 +391,50 @@ from `ANTHROPIC_API_KEY` or `apiKeyHelper`, never OAuth or the keychain, so it w
 for anyone logged in the usual way. The baseline run also called `stage-start.sh` twice,
 as Pi did in the spike; the spawn guard absorbs it.
 
+## Pi dispatch
+
+`adapter_dispatch` in `adapters/pi.sh` runs one event through `pi --mode rpc --no-session
+--no-context-files --tools bash,read`, with the model and thinking level from the
+workforce. The conversation is in `scripts/pi-rpc-run.py` (python3, standard library
+only); the adapter builds the prompt, reads the client's result file with `jq`, and picks
+the exit code, as the Claude Code adapter does.
+
+**One `pi` process per event.** The design note first proposed a warm session with
+`new_session` between events. The loop runs every dispatch in a fresh `bash -c` child, so
+a warm process would need an owner that outlives the dispatch, for a saving of about 0.2 s.
+A fresh process already gives per-event stats, so `new_session` is not used.
+
+**What the protocol does** (measured on real runs):
+
+- A failed model call is not a protocol error. The prompt is accepted (`success: true`),
+  the run settles with `aborted: false`, and the failure is in the last assistant
+  message: `stopReason: "error"` and an `errorMessage` that begins with the HTTP status.
+  The client reads it from `agent_end.messages`, and the adapter maps 400, 401, 403 and 404
+  to exit 2 (not retried) and anything else to exit 1.
+- Pi retries transient errors itself (`auto_retry_start`, `auto_retry_end`). `agent_settled`
+  arrives only after that, so the loop's own retry sits on top of Pi's.
+- `abort` works at once: a `sleep 40` tool call stopped in about a second with
+  `agent_settled` and `aborted: true`. The `abort` response comes after the settle, and
+  `get_session_stats` still answers afterwards.
+- `new_session` zeroes the stats and changes the session id. A trivial prompt carries
+  about 2.3k input tokens, a third of the trimmed Claude Code prompt.
+- Tools run with no permission prompts, so the adapter allows only `bash` and `read`.
+- There is no per-run budget flag. The deadline is the only bound on a Pi run.
+
+**Deadline.** The client sends `abort` when `DISPATCH_DEADLINE` passes and waits
+`PI_ABORT_GRACE` seconds (5) for the run to settle, then stops `pi`. That finishes inside
+the loop's grace period, so the loop's outer `timeout` is only a backstop. A run that
+hits the deadline exits 1, and its usage is still recorded.
+
+**Usage record** from `get_session_stats` (tokens, cost, assistant messages as `turns`) and
+`get_state` (the model id), in the same shape as the other adapters.
+
+**Real runs through the loop** (`on-review-approved`, `locks=free`, `claude-opus-4-8`): the
+card moved to `merging` with one spawn, in 24 s over 6 turns, $0.080, 6.2k cache-write
+tokens. With a 3 s deadline on the same event the client aborted after 3 s, `pi` was gone
+afterwards, the card was untouched, and the $0.033 spent was recorded. Model names have to
+be written `provider/id`, or Pi asks which provider and nothing can answer.
+
 ## Spike results
 
 The spike (#73) ran one real handler, `on-review-approved`, under each harness
