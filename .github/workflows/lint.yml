@@ -148,6 +148,9 @@ jobs:
       - name: test-conductor-skill
         run: bash scripts/test-conductor-skill.sh
 
+      - name: test-handler-steps
+        run: bash scripts/test-handler-steps.sh
+
       - name: test-loop-halt-notify
         run: bash scripts/test-loop-halt-notify.sh
 
