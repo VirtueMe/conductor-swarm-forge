@@ -28,7 +28,7 @@ Run this sequence once when the conductor starts or restarts.
      Then loop back to the `find`.
    - If the batch is **non-empty**: process each artifact one at a time:
      1. Read the artifact file to determine its `type` and `outcome`.
-     2. Dispatch to the appropriate conductor skill (e.g. `on-signal-complete`, `on-review-approved`).
+     2. Dispatch to the appropriate conductor skill, found with `topology-load.sh conductor-skill` (e.g. `on-signal-complete`, `on-review-approved`; a `card` artifact, a new task, resolves to `on-new-task`). Set `TASK_ID` to the artifact's directory name under `work/` and `TASK_FILE` to `tasks/$TASK_ID.md`.
      3. After the skill completes successfully, advance the cursor:
         ```bash
         touch -r "$artifact" "$CONDUCTOR_DIR/last-poll"

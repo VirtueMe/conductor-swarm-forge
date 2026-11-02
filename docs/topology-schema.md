@@ -83,7 +83,8 @@ incoming work artifacts to its own skills. The conductor's watch loop calls
 **Lookup order:**
 1. `conductor_skills["{type}:{outcome}"]` — fully qualified override
 2. `conductor_skills["{type}"]` — type-level catch-all (any outcome for this type)
-3. Naming convention `conductor/on-{type}-{outcome}` — automatic fallback for
+3. Engine constants — a `card` (a new task) resolves to `conductor/on-new-task`, and
+   the naming convention `conductor/on-{type}-{outcome}` is the automatic fallback for
    standard event types: `signal`, `validation`, `review`, `merge`
 4. Empty (log + skip) — for unknown or ignored types (`assigned`, `progress`)
 

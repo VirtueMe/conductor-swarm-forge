@@ -147,6 +147,8 @@ assert_eq "both recorded" "$(unprocessed)" ""
 
 # 5 -------------------------------------------------------------------------------
 section "5 · A new task (a card artifact) runs the new-task handler"
+# The loop has no rule of its own for `card`: it gets the handler from topology-load.sh
+# conductor-skill, the rule the interactive conductor uses, so this also checks they agree.
 sleep 1; create_task
 run_loop
 expect_grep '^start 0002 card-.* | # Skill: On New Task' "$STUB_LOG" "on-new-task ran for task 0002"

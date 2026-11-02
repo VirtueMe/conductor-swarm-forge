@@ -1,13 +1,23 @@
 # Skill: On New Task
 
-Triggered when a new file appears in `tasks/`.
+Triggered by the new task's `card` artifact (`work/<id>/card-*.md`).
 
 ## Context
 
-- `$TASK_FILE` — the new file path, e.g. `tasks/0003.md`
-- `$TASK_ID` — the ID extracted from the filename, e.g. `0003`
+- `$TASK_ID` — the task id, the directory name of the `card` artifact, e.g. `0003`
+- `$TASK_FILE` — the task file, `tasks/$TASK_ID.md`, e.g. `tasks/0003.md`
 
 ## Steps
+
+0. **Skip a replayed event.** A restart or a crash can run this event again for a task that
+   has since moved on, and step 3 would pull it back. Find the task's card:
+   ```bash
+   ls "$CONDUCTOR_DIR"/kanban/*/$TASK_ID.md
+   ```
+   If it is in any column other than the first stage
+   (`topology-load.sh stages "$CONDUCTOR_DIR/topology.json" | head -1`), the task was already
+   placed: log "on-new-task: $TASK_ID already placed, skipped" and stop. If it is in the first
+   stage, or has no card yet, continue.
 
 1. Read `$TASK_FILE` and extract the `depends-on` field.
 

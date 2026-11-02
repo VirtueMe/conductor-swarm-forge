@@ -346,12 +346,6 @@ handle_event() { # <artifact path relative to the work dir>
   fi
   SKILL_NAME="$resolved"
 
-  # A new task is a `card` artifact. conductor-skill ignores it, so the loop maps it to
-  # the new-task handler itself rather than changing what the interactive conductor sees.
-  if [[ -z "$SKILL_NAME" && "$type" == "card" ]]; then
-    SKILL_NAME="conductor/on-new-task"
-  fi
-
   if [[ -z "$SKILL_NAME" ]]; then
     mark "$rel"                        # no handler: nothing to run, but never list it again
     log "$rel: no handler for ${type}${outcome:+/$outcome}, skipped"
