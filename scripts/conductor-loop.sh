@@ -83,6 +83,8 @@ source "$SCRIPTS_DIR/conductor-env.sh"
 source "$SCRIPTS_DIR/frontmatter.sh"
 # shellcheck source=scripts/wf-read.sh
 source "$SCRIPTS_DIR/wf-read.sh"
+# shellcheck source=scripts/handler-resolve.sh
+source "$SCRIPTS_DIR/handler-resolve.sh"
 
 # Sets CONDUCTOR_DIR (absolute), SCRIPTS_DIR and PATH, as a dispatched run needs them.
 conductor_env "${CONDUCTOR_DIR:-.conductor}"
@@ -386,7 +388,7 @@ handle_event() { # <artifact path relative to the work dir>
   fi
 
   # A script named for the skill is the handler; without one the skill goes to the model.
-  HANDLER_SCRIPT="$HANDLERS_DIR/$(basename "$SKILL_NAME").sh"
+  HANDLER_SCRIPT="$(handler_script "$HANDLERS_DIR" "$SKILL_NAME")"
   if [[ -x "$HANDLER_SCRIPT" ]]; then
     skill_content=""
   elif [[ -e "$HANDLER_SCRIPT" ]]; then
