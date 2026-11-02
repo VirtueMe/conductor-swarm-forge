@@ -393,8 +393,8 @@ leaves none.
   `HANDLER-FAILED:` rule in the prompt is a mitigation that depends on the model
   following it. Phase 2 makes the guards code that fails closed.
 - The briefing the dispatch uses is the whole of `conductor.prompt`, including its
-  interactive Startup and Watch loop sections, which the dispatch rules tell the
-  model to ignore. Splitting the prompt would remove that.
+  interactive Startup section, which the dispatch rules tell the model to ignore.
+  Splitting the prompt would remove that.
 - The banner is lost if the conductor window closes when the loop exits, which tmux does by
   default for a window whose command ends. The inbox files survive. `swarm-start.sh -hc` keeps
   the window open by running the loop as `loop; exec $SHELL`.
@@ -646,14 +646,26 @@ same skill as its first event, on every start:
 - **It runs before events, after the ledger is ready.** Artifacts left unprocessed by a crash are
   replayed afterwards.
 
-Which loop does the interactive conductor follow? As written, `startup.md` step 2 (the old
-step 7), which polls `work/` only and never returns. `conductor.prompt` also has a `## Watch
-loop` section with watchers on `tasks/` and `work/` that starts "after startup"; startup does
-not finish, so as written it is never reached. That section is **kept unchanged**, with a note
-above it, until a live interactive run shows which of the two the model follows (#98): deleting
-it on a reading of the text could end the one thing that starts tasks created mid-run, if the
-model does follow it. If it does not, a task created while the interactive conductor runs is not
-started until a restart, which is the gap #98 describes. The headless loop does not have it.
+Which loop does the interactive conductor follow? `startup.md` step 2 (the old step 7), which
+polls `work/` only and never returns. `conductor.prompt` used to have a second, `## Watch loop`
+section, with watchers on `tasks/` and `work/` that started "after startup"; startup does not
+finish, so it was never reached as written, and it is removed (#98).
+
+Live runs (#98, scratch swarm, real claude, from the checkout before the fix) showed why it
+mattered. The poll saw the new task's `card` artifact and skipped it (`conductor-skill` returned
+nothing for it, and the cursor moved past it), so the documented path never started a task
+created while the conductor ran. The task was started anyway, but only because the model
+improvised a way to see `tasks/`, each time a different one:
+
+| Run | How the task started | Time |
+|---|---|---|
+| auto mode | a new file in `tasks/`, "the dispatch rules" | 36s |
+| accept-edits, task created before the model had set its watchers up | not at all until a human told it | 129s |
+| accept-edits | an improvised background wait loop on `tasks/` | 118s |
+
+With `card` mapped to `conductor/on-new-task` in `conductor-skill`, the same poll starts the
+task, and the headless loop shares the rule. With the fix, two runs started the task from the
+`card` artifact in about 30 seconds each. They are single runs, not measurements.
 
 The reconcile is also the most mechanical part of the conductor: a loop over cards that calls
 scripts. A live run cost $0.09 to $0.19 and 8 to 11 model turns, on every start with any task on

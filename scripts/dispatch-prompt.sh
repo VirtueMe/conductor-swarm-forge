@@ -31,8 +31,8 @@ dispatch_prompt() {
 
   cat "$briefing"
   printf '\n\n---\n\n## This is one dispatched event\n\n'
-  printf 'You are handling a single event, not running the conductor. Ignore the Startup and\n'
-  printf 'Watch loop sections of the briefing above. Do only what the skill below says.\n\n'
+  printf 'You are handling a single event, not running the conductor. Ignore the Startup\n'
+  printf 'section of the briefing above. Do only what the skill below says.\n\n'
   if [[ "$event" == "startup" ]]; then
     printf 'The scripts are on PATH and CONDUCTOR_DIR is set in your shell environment.\n\n'
   else
