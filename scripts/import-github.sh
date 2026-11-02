@@ -48,6 +48,8 @@ PREFLIGHT_OUT="$("$SCRIPTS_DIR/preflight-check.sh" --github-import 2>&1)" || {
 
 # shellcheck source=scripts/frontmatter.sh
 source "$SCRIPTS_DIR/frontmatter.sh"
+# shellcheck source=scripts/artifact-list.sh
+source "$SCRIPTS_DIR/artifact-list.sh"
 
 PROJECT_DIR="$(cd "$(dirname "$CONDUCTOR_DIR")" && pwd)"
 MAP_FILE="${MAP_FILE:-$PROJECT_DIR/.export/github-map.tsv}"
@@ -183,30 +185,6 @@ tracker_close() { # <issue>
 }
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
-
-# Artifacts of one task, oldest first. Filenames start with the type, so they do
-# not sort by time: sort on the timestamp, break same-second ties by lifecycle
-# order, then by name.
-type_rank() {
-  case "$1" in
-    card) echo 0 ;; assigned) echo 1 ;; progress) echo 2 ;; drift) echo 3 ;;
-    signal) echo 4 ;; review) echo 5 ;; merge) echo 6 ;; moved) echo 7 ;;
-    done) echo 8 ;; *) echo 9 ;;
-  esac
-}
-
-list_artifacts() { # <task id> -> "<timestamp>|<rank>|<name>|<path>"
-  local dir="$CONDUCTOR_DIR/work/$1" f name type ts
-  [[ -d "$dir" ]] || return 0
-  for f in "$dir"/*.md; do
-    [[ -f "$f" ]] || continue
-    name="$(basename "$f")"
-    type="$(fm_field "$f" type)"
-    ts="$(fm_field "$f" timestamp)"
-    [[ -n "$ts" ]] || { ts="${name#*-}"; ts="${ts%.md}"; }
-    printf '%s|%s|%s|%s\n' "$ts" "$(type_rank "$type")" "$name" "$f"
-  done | sort
-}
 
 render_issue_body() { # <task id> <task file> <blocked-by text>
   local created

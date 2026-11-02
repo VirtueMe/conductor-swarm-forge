@@ -17,6 +17,8 @@ TASK_FILE="$TASKS_DIR/${ID}.md"
 # column and to default a brand-new card to the topology's first stage.
 # shellcheck source=scripts/stages-resolve.sh
 source "$SCRIPTS_DIR/stages-resolve.sh"
+# shellcheck source=scripts/artifact-list.sh
+source "$SCRIPTS_DIR/artifact-list.sh"
 STAGES="$(topology_stages "$CONDUCTOR_DIR")"
 FIRST_STAGE="$(printf '%s\n' "$STAGES" | head -1)"
 
@@ -51,15 +53,11 @@ FILES_CHANGED=()
 LAST_UPDATED=""
 HISTORY=""
 
-# Replay all artifacts in timestamp order
-WORK_PATH="$WORK_DIR/$ID"
-if [[ -d "$WORK_PATH" ]]; then
-  # Timestamped filenames sort lexically into chronological order.
-  for artifact in "$WORK_PATH"/*.md; do
-    [[ -f "$artifact" ]] || continue
-
+# Replay all artifacts oldest first. File names are <type>-<timestamp>.md, so a glob would order by type; the shared
+# list sorts on the timestamp field instead (see artifact-list.sh).
+if [[ -d "$WORK_DIR/$ID" ]]; then
+  while IFS='|' read -r ART_TIMESTAMP _ _ artifact; do
     ART_TYPE=$(yaml_field "$artifact" "type")
-    ART_TIMESTAMP=$(yaml_field "$artifact" "timestamp")
     LAST_UPDATED="$ART_TIMESTAMP"
 
     case "$ART_TYPE" in
@@ -113,7 +111,7 @@ if [[ -d "$WORK_PATH" ]]; then
         HISTORY+="- $ART_TIMESTAMP  closed"$'\n'
         ;;
     esac
-  done
+  done < <(list_artifacts "$ID")
 fi
 
 # Find current kanban location
