@@ -151,6 +151,9 @@ jobs:
       - name: test-handler-steps
         run: bash scripts/test-handler-steps.sh
 
+      - name: test-handler-replay
+        run: bash scripts/test-handler-replay.sh
+
       - name: test-loop-halt-notify
         run: bash scripts/test-loop-halt-notify.sh
 
