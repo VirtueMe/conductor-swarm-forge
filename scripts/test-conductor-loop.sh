@@ -87,7 +87,7 @@ new_swarm() {
   cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
   printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
   : > "$STUB_LOG"; : > "$STUB_RC"; rm -f "$STUB_HOOK"
-  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG STUB_USAGE STUB_ANSWER CONDUCTOR_HEARTBEAT
+  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG STUB_USAGE STUB_ANSWER CONDUCTOR_HEARTBEAT CONDUCTOR_HANDLERS_DIR
   export CONDUCTOR_RETRY_DELAY=0
 }
 create_task() { "$SCRIPTS_DIR/task-create.sh" --title "T" --type chore --description "x" > /dev/null; }
@@ -685,6 +685,116 @@ assert_eq "none in the log" "$(grep -c "$ESC" "$CONDUCTOR_DIR/conductor.log" || 
 assert_eq "none in the human's notice" "$(grep -c "$ESC" "$(notice human-inbox)" || true)" "0"
 assert_eq "none in the architect's" "$(grep -c "$ESC" "$(notice architect-inbox)" || true)" "0"
 expect_grep 'failed' "$(notice human-inbox)" "the readable text is still in the notice"
+
+# 44 ------------------------------------------------------------------------------
+section "44 · A script handler runs instead of the model"
+# CONDUCTOR_HANDLERS_DIR stands in for scripts/handlers: a script named for the resolved skill
+# (on-signal-complete.sh for conductor/on-signal-complete) is the handler. No script: the model.
+H="$TMP/handlers"
+fresh_event() { # a swarm with one task and an unprocessed signal-complete event
+  new_swarm
+  rm -rf "$H"; mkdir -p "$H"; export CONDUCTOR_HANDLERS_DIR="$H"
+  create_task; run_loop; : > "$STUB_LOG"
+  sleep 1; signal 0001 signal complete
+}
+SH_LOG="$TMP/handler.log"
+fresh_event
+cat > "$H/on-signal-complete.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+echo "ran task=$TASK_ID task_file_exists=$([[ -f "$TASK_FILE" ]] && echo yes || echo no) artifact=$(basename "$ARTIFACT") dir=$CONDUCTOR_DIR loop=${CONDUCTOR_LOOP:-}" >> "$SH_LOG"
+SH_EOF
+chmod +x "$H/on-signal-complete.sh"; : > "$SH_LOG"; export SH_LOG
+run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the script ran once" "$(grep -c '^ran ' "$SH_LOG" || true)" "1"
+expect_grep "^ran task=0001 task_file_exists=yes artifact=signal-.* dir=$CONDUCTOR_DIR loop=1" "$SH_LOG" "with TASK_ID, TASK_FILE, ARTIFACT, CONDUCTOR_DIR and CONDUCTOR_LOOP"
+assert_eq "the model was not dispatched" "$(dispatches)" "0"
+assert_eq "recorded as processed" "$(unprocessed)" ""
+assert_eq "no usage line: no model was called" "$(ulines 0001/signal | wc -l | tr -d ' ')" "0"
+expect_grep 'script' "$TMP/loop.err" "the window says it was a script"
+
+section "44b · A script that fails is retried, then succeeds"
+fresh_event
+cat > "$H/on-signal-complete.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+n=$(cat "$SH_LOG" 2>/dev/null | wc -l | tr -d ' ')
+echo "try" >> "$SH_LOG"
+[[ "$n" -ge 1 ]]
+SH_EOF
+chmod +x "$H/on-signal-complete.sh"; : > "$SH_LOG"
+CONDUCTOR_MAX_ATTEMPTS=3 run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "two attempts" "$(wc -l < "$SH_LOG" | tr -d ' ')" "2"
+assert_eq "recorded" "$(unprocessed)" ""
+assert_eq "the model was not dispatched" "$(dispatches)" "0"
+
+section "44c · A script that keeps failing halts and keeps the event"
+fresh_event
+cat > "$H/on-signal-complete.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+echo try >> "$SH_LOG"
+echo "no lock check" >&2
+exit 1
+SH_EOF
+chmod +x "$H/on-signal-complete.sh"; : > "$SH_LOG"
+CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "two attempts, no more" "$(wc -l < "$SH_LOG" | tr -d ' ')" "2"
+assert_eq "halt kind" "$(halt_kind)" "failed"
+expect_grep 'no lock check' "$CONDUCTOR_DIR/conductor-loop.halted" "the script's last error is in the halt"
+assert_eq "the event is still unprocessed" "$(unprocessed | wc -l | tr -d ' ')" "1"
+assert_eq "the model was not asked to take over" "$(dispatches)" "0"
+
+section "44d · A script that exits 2 halts without a retry"
+fresh_event
+cat > "$H/on-signal-complete.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+echo try >> "$SH_LOG"
+exit 2
+SH_EOF
+chmod +x "$H/on-signal-complete.sh"; : > "$SH_LOG"
+CONDUCTOR_MAX_ATTEMPTS=3 run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "one attempt" "$(wc -l < "$SH_LOG" | tr -d ' ')" "1"
+assert_eq "halt kind" "$(halt_kind)" "unusable"
+
+section "44e · A hung script is killed at the deadline"
+fresh_event
+printf '#!/usr/bin/env bash\nsleep %s\n' "$STUB_SLEEP_ARG" > "$H/on-signal-complete.sh"
+chmod +x "$H/on-signal-complete.sh"
+START=$SECONDS
+CONDUCTOR_MAX_ATTEMPTS=1 CONDUCTOR_DISPATCH_DEADLINE=1 CONDUCTOR_KILL_GRACE=1 run_loop
+ELAPSED=$(( SECONDS - START ))
+assert_eq "exit 1" "$RC" "1"
+if [[ "$ELAPSED" -le 8 ]]; then ok "stopped after ${ELAPSED}s, not 30s"; else fail "took ${ELAPSED}s"; fi
+assert_eq "halt kind" "$(halt_kind)" "failed"
+sleep 0.5
+assert_eq "the script's child process is gone too" "$(children_left)" "0"
+
+section "44f · With no script the model is dispatched as before"
+fresh_event
+rm -f "$H"/*.sh
+run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "one dispatch" "$(dispatches)" "1"
+expect_grep '^start 0001 signal-.* | # Skill: On Signal Complete' "$STUB_LOG" "the skill went to the model"
+assert_eq "and has its usage line" "$(ulines 0001/signal | wc -l | tr -d ' ')" "1"
+
+section "44g · A script that is there but not executable halts, not the model"
+fresh_event
+cat > "$H/on-signal-complete.sh" << 'SH_EOF'    # deliberately no chmod +x
+#!/usr/bin/env bash
+echo ran >> "$SH_LOG"
+SH_EOF
+: > "$SH_LOG"
+run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "halt kind" "$(halt_kind)" "unresolvable"
+expect_grep 'not executable' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt says why"
+assert_eq "the model was not asked instead" "$(dispatches)" "0"
+assert_eq "the script did not run" "$(wc -l < "$SH_LOG" | tr -d ' ')" "0"
+assert_eq "the event is still unprocessed" "$(unprocessed | wc -l | tr -d ' ')" "1"
+unset CONDUCTOR_HANDLERS_DIR
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
