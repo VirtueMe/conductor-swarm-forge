@@ -43,47 +43,9 @@ skill that spawns a worker must derive the role from the destination stage, not 
 
 Load and follow `skills/conductor/startup.md`.
 
-## Watch loop
-
-> Note (#89, #98): as written, `startup.md` step 2 is the event loop. It polls `work/` and does
-> not return, so the steps below are not reached. This section is kept unchanged until #98 shows
-> what the interactive conductor really does. The headless loop (`conductor-loop.sh`) does not
-> use it.
-
-After startup:
-
-1. Start the directory watchers as background processes:
-   ```bash
-   watch-dir.sh "$CONDUCTOR_DIR/tasks"
-   watch-dir.sh "$CONDUCTOR_DIR/work"
-   ```
-   Run each with `run_in_background: true` so they emit new file paths continuously.
-
-2. Use the **Monitor tool** on each background process to receive notifications as new files appear. Each notification will contain a file path.
-
-3. For each file path received, dispatch to the appropriate skill.
-
-**New file in `tasks/`** → always load `skills/conductor/on-new-task.md`.
-
-**New file in `work/`** (an artifact) → read type and outcome, then ask the
-topology which conductor skill handles it:
-```bash
-TYPE=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^type: /{sub(/^type: /,""); print; exit}' "$FILE")
-OUTCOME=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^outcome: /{sub(/^outcome: /,""); print; exit}' "$FILE")
-SKILL=$(topology-load.sh conductor-skill "$CONDUCTOR_DIR/topology.json" "$TYPE" "$OUTCOME" 2>/dev/null) || true
-if [[ -n "$SKILL" ]]; then
-  # load and follow skills/${SKILL}.md
-else
-  # Ignored or unknown event type — log and continue to the next file
-  echo "conductor: skipping unhandled artifact type='$TYPE' outcome='$OUTCOME' in $FILE" >&2
-fi
-```
-
-`conductor-skill` returns the skill path from the topology's `conductor_skills` map
-(for non-standard events like `human`) or from the naming convention
-`conductor/on-{type}-{outcome}` (for standard events: signal, validation, review,
-merge). It returns empty for ignored types (`assigned`, `progress`) or undeclared
-non-standard types — the else branch logs and skips so the watch loop continues.
+Startup ends in the event loop (step 2 of that skill), which never returns. It polls `work/`
+for new artifacts, and a new task arrives as its `card` artifact like any other event. Do not
+start separate watchers or use the `Monitor` tool, and do not watch `tasks/`.
 
 ## Rules
 

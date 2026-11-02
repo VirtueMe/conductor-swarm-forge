@@ -43,8 +43,8 @@ fi
 has '^1. do the thing' "the skill text is included"
 has 'Artifact: /x/work/0007/review-1.md' "the artifact is named"
 has "^$DISPATCH_FAILED_MARKER" "the failure line is spelled out"
-has 'Ignore the Startup and' "the interactive sections are ruled out"
-has 'Watch loop sections' "by the names the prompt uses"
+has 'Ignore the Startup' "the interactive startup is ruled out"
+has 'section of the briefing' "by the name the prompt uses"
 
 echo "── the startup reconcile has no artifact or task"
 P="$(TASK_ID='' dispatch_prompt "# Skill: Reconcile" "startup")"
