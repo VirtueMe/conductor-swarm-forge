@@ -362,7 +362,7 @@ and the event last. `dispatch_final_exit` turns a final line starting with
 | Loop killed during a dispatch | The dispatch is stopped, the event is not recorded, the lock is released. |
 | A second loop on the same conductor dir | Refused (exit 4). A lock left by a dead process is taken over. |
 | First start, no ledger yet | The ledger is seeded with the artifacts that exist, so history is not replayed. It is written whole or not at all. |
-| A new task | A `card` artifact is mapped to `conductor/on-new-task` by the loop. `conductor-skill` itself is unchanged, so the interactive conductor sees nothing different. |
+| A new task | A `card` artifact resolves to `conductor/on-new-task` through `conductor-skill`, the same rule the interactive conductor uses, so a task created mid-run is started by either. The handler's `TASK_ID` and `TASK_FILE` come from the artifact's task id. |
 | Project complete | `conductor-shutdown.sh` closes the architect window and the kanban server and, under the loop, only writes a flag. The loop exits after recording the event; closing its own window from inside the handler would kill it before the `mark`. |
 
 A halt writes `$CONDUCTOR_DIR/conductor-loop.halted`, tells the human and the architect, and

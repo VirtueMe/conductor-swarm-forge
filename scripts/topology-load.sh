@@ -383,7 +383,8 @@ elif cmd == "conductor-skill":
     # Lookup order:
     #   1. conductor_skills["{type}:{outcome}"] — fully qualified override
     #   2. conductor_skills["{type}"]           — type-level catch-all
-    #   3. Naming convention: conductor/on-{type}-{outcome} (engine constant — standard types)
+    #   3. Engine constants: `card` (a new task) -> conductor/on-new-task, and the
+    #      naming convention conductor/on-{type}-{outcome} for the standard types
     #   4. Empty output (exit 0)                — unknown/ignored types
     #
     # STANDARD and IGNORED are engine constants, not topology-configurable.
@@ -397,6 +398,7 @@ elif cmd == "conductor-skill":
 
     # Engine constants — not overridable by topology
     IGNORED = {"assigned", "progress"}   # artifacts the conductor never acts on
+    INTAKE = {"card": "conductor/on-new-task"}  # a new task; the card has no outcome
     STANDARD = {"signal", "validation", "review", "merge"}  # use naming convention
 
     cs = t.get("conductor_skills", {})
@@ -412,7 +414,13 @@ elif cmd == "conductor-skill":
     if atype in cs:
         print(cs[atype]); sys.exit(0)
 
-    # 3. Naming convention for engine-standard types
+    # 3a. A new task: the card artifact task-create.sh writes. on-new-task is the only
+    #     handler that moves a new task on, so the interactive conductor and the
+    #     headless loop must both reach it through this rule.
+    if atype in INTAKE:
+        print(INTAKE[atype]); sys.exit(0)
+
+    # 3b. Naming convention for engine-standard types
     if atype in STANDARD:
         if not outcome:
             die(f"conductor-skill: outcome required for standard type '{atype}'")
