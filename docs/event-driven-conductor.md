@@ -350,6 +350,24 @@ briefing first so caching can hit it, then the rules for a dispatched run, the s
 and the event last. `dispatch_final_exit` turns a final line starting with
 `HANDLER-FAILED:` into a failed dispatch.
 
+**Script handlers (Phase 2).** A handler can be a script instead of a skill. For the skill
+`conductor/on-x` the loop looks for `scripts/handlers/on-x.sh` (or
+`$CONDUCTOR_HANDLERS_DIR/on-x.sh`); if it exists and is executable it runs, and if not the skill
+goes to the model as before. The script gets the same environment as a dispatch (`CONDUCTOR_DIR`,
+`PATH` with the scripts, `TASK_ID`, `TASK_FILE`, `ARTIFACT`, `CONDUCTOR_LOOP`) and the same
+rules: exit 0 finished, exit 2 cannot be handled (halt, no retry), any other exit failed (retried,
+then halt), all under the same deadline, with its last stderr line in the halt notice. It costs no
+model call, so it writes no line to `usage.jsonl`, and the window shows `(script)`. The startup
+reconcile is still always the model's.
+
+Handlers share their steps through `scripts/handler-steps.sh`, which a script sources:
+
+| Function | What it does |
+| --- | --- |
+| `close_worker_window <task>` | closes the finishing worker's `<role>-<task>` window; a missing window is not an error |
+| `locks_guard <task>` | prints `free` or `held` for the task's `files-changed` against `task-locks.sh`. **Fails closed**: with no card, or a failing `task-locks.sh`, it prints nothing, says why on stderr and returns 1, so the handler stops. A card with no `files-changed` has nothing to clash with and is `free` |
+| `route_task <task> <event> [guard=value...]` | asks the topology for the destination, moves the task and starts the stage; sets `ROUTED_DEST`. No route is a failure and moves nothing; a failed move does not start the stage |
+
 **What the loop does when something goes wrong**
 
 | Case | Behavior |
@@ -391,7 +409,8 @@ leaves none.
 
 - A model can ignore a failing guard script and carry on (the spike saw this). The
   `HANDLER-FAILED:` rule in the prompt is a mitigation that depends on the model
-  following it. Phase 2 makes the guards code that fails closed.
+  following it. A script handler's guards fail closed (`locks_guard`); a skill's still depend
+  on the model.
 - The briefing the dispatch uses is the whole of `conductor.prompt`, including its
   interactive Startup section, which the dispatch rules tell the model to ignore.
   Splitting the prompt would remove that.
@@ -719,8 +738,8 @@ and Codex ran on their configured defaults; Pi ran on `claude-opus-4-8`.
    A merge went ahead on a guard that had not run. Whether a model carries on or stops
    there depends on the model, not only on the rule: on a card with no `files-changed`,
    Claude Code and Pi read that as `locks=free`, while Codex stopped with `HANDLER-FAILED`
-   because it could not determine the guard. In Phase 2 the lock check
-   should be code that fails closed. While a handler stays a skill, a failing
+   because it could not determine the guard. In a script handler the lock check is code that
+   fails closed (`locks_guard` in `handler-steps.sh`). While a handler stays a skill, a failing
    `task-locks.sh` should stop the handler.
 5. **Fixed context dominates the cost of a small handler.** Claude Code's
    17k cache-write tokens look like default system prompt and tool definitions,
