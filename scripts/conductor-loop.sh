@@ -17,6 +17,14 @@ set -euo pipefail
 #   CONDUCTOR_RETRY_DELAY       seconds to wait between attempts at one event (default 5)
 #   CONDUCTOR_TIMEOUT_CMD       the timeout command (default: timeout, else gtimeout)
 #   CONDUCTOR_HEARTBEAT         seconds of idleness between 'idle' lines in the log (default 600; 0 = never)
+#   CONDUCTOR_HANDLERS_DIR      where script handlers live (default: handlers/ next to this script)
+#
+# A handler is a script when one exists, else the skill goes to the model. For the skill
+# conductor/on-x the loop looks for $CONDUCTOR_HANDLERS_DIR/on-x.sh. A script runs under the same
+# deadline, retry and halt rules as a dispatch, with CONDUCTOR_DIR (absolute), PATH with the
+# scripts, and TASK_ID, TASK_FILE and ARTIFACT set. Its exit status means what an adapter's does:
+# 0 finished, 2 cannot be handled (halts, no retry), anything else failed (retried). It costs no
+# model call, so it writes no usage line. The startup reconcile is always the model's for now.
 #
 # The adapter contract, called as `adapter_dispatch <skill_content> <event>`, where <event>
 # is an artifact path or the word "startup" (the reconcile, which has no artifact or task):
@@ -86,6 +94,8 @@ KILL_GRACE="${CONDUCTOR_KILL_GRACE:-10}"
 RETRY_DELAY="${CONDUCTOR_RETRY_DELAY:-5}"
 
 WORK_DIR="$CONDUCTOR_DIR/work"
+HANDLERS_DIR="${CONDUCTOR_HANDLERS_DIR:-$SCRIPTS_DIR/handlers}"
+HANDLER_SCRIPT=""                      # the script handling the current event; empty = the model
 LEDGER="$CONDUCTOR_DIR/processed.log"
 FLAG="$CONDUCTOR_DIR/shutdown-requested"
 HALTED="$CONDUCTOR_DIR/conductor-loop.halted"
@@ -209,7 +219,8 @@ cleanup() {
   if [[ -n "$DISPATCH_PID" ]]; then
     kill -TERM "$DISPATCH_PID" 2>/dev/null || true
     # The attempt in flight is lost with the loop; leave a line so its spend is not invisible.
-    log_usage "$CUR_LABEL" "$CUR_ATTEMPT" interrupted 143 "$(( SECONDS - CUR_START ))"
+    # A script spends nothing, so it leaves none.
+    [[ -n "$HANDLER_SCRIPT" ]] || log_usage "$CUR_LABEL" "$CUR_ATTEMPT" interrupted 143 "$(( SECONDS - CUR_START ))"
   fi
   if [[ -n "$SLEEP_PID" ]]; then kill "$SLEEP_PID" 2>/dev/null || true; fi
   if [[ "$(cat "$LOCK/pid" 2>/dev/null || true)" == "$$" ]]; then rm -rf "$LOCK"; fi
@@ -249,21 +260,14 @@ halt() { # <kind> <artifact> <detail>
   exit 1
 }
 
-# Run adapter_dispatch under the deadline. `timeout` cannot call a shell function, so
-# the adapter is sourced in a child shell. The outer limit is the adapter's deadline
-# plus a grace period, as a backstop for an adapter that does not stop itself.
-run_dispatch() { # <skill_content> <artifact>
-  rm -f "$DISPATCH_USAGE_FILE" "$DISPATCH_STDERR" "$DISPATCH_ANSWER_FILE"
-  # shellcheck disable=SC2016  # $1 and $@ belong to the child shell
-  DISPATCH_DEADLINE="$DEADLINE" "$TIMEOUT_CMD" -k "$KILL_GRACE" "$((DEADLINE + KILL_GRACE))" \
-    bash -c 'source "$1"; shift; adapter_dispatch "$@"' _ "$ADAPTER_FILE" "$1" "$2" 2> "$DISPATCH_STDERR" &
-  DISPATCH_PID=$!
+# Wait for the dispatch just started in the background (DISPATCH_PID) and return its status. The
+# child's stderr was held back in a file and is shown now, so progress output would appear only at
+# the end. The adapters print one line, about a failure. The last line is the last error a halt
+# reports.
+wait_dispatch() {
   local rc=0
   wait "$DISPATCH_PID" || rc=$?
   DISPATCH_PID=""
-  # The adapter's stderr was held back in a file and is shown now, so progress output would
-  # appear only at the end. The adapters print one line, about a failure. The last line is the
-  # last error a halt reports.
   if [[ -s "$DISPATCH_STDERR" ]]; then
     # Shown as it was, minus control characters other than newline and tab (see log()).
     LC_ALL=C tr -d '\000-\010\013-\037\177' < "$DISPATCH_STDERR" >&2
@@ -274,10 +278,32 @@ run_dispatch() { # <skill_content> <artifact>
   return "$rc"
 }
 
+# Run adapter_dispatch under the deadline. `timeout` cannot call a shell function, so
+# the adapter is sourced in a child shell. The outer limit is the adapter's deadline
+# plus a grace period, as a backstop for an adapter that does not stop itself.
+run_dispatch() { # <skill_content> <artifact>
+  rm -f "$DISPATCH_USAGE_FILE" "$DISPATCH_STDERR" "$DISPATCH_ANSWER_FILE"
+  # shellcheck disable=SC2016  # $1 and $@ belong to the child shell
+  DISPATCH_DEADLINE="$DEADLINE" "$TIMEOUT_CMD" -k "$KILL_GRACE" "$((DEADLINE + KILL_GRACE))" \
+    bash -c 'source "$1"; shift; adapter_dispatch "$@"' _ "$ADAPTER_FILE" "$1" "$2" 2> "$DISPATCH_STDERR" &
+  DISPATCH_PID=$!
+  wait_dispatch
+}
+
+# Run the script handler under the same deadline. It inherits the loop's environment, which
+# handle_event has set for the event.
+run_script() {
+  rm -f "$DISPATCH_USAGE_FILE" "$DISPATCH_STDERR" "$DISPATCH_ANSWER_FILE"
+  "$TIMEOUT_CMD" -k "$KILL_GRACE" "$DEADLINE" "$HANDLER_SCRIPT" 2> "$DISPATCH_STDERR" &
+  DISPATCH_PID=$!
+  wait_dispatch
+}
+
 # ", $0.107", ", no cost reported" or ", no usage record": what the attempt that just ended cost,
 # in words that do not call an unknown cost free.
 cost_note() {
   local cost
+  [[ -z "$HANDLER_SCRIPT" ]] || return 0
   if [[ -s "$DISPATCH_USAGE_FILE" ]] && jq -e . "$DISPATCH_USAGE_FILE" > /dev/null 2>&1; then
     cost="$(jq -r '.cost_usd // empty' "$DISPATCH_USAGE_FILE" 2> /dev/null || true)"
     if [[ -n "$cost" ]]; then printf ', $%.3f' "$cost"; else printf ', no cost reported'; fi
@@ -295,14 +321,19 @@ answer_note() {
 }
 
 # Dispatch one event until its handler succeeds, retrying a failure, or halt. Returns only on
-# success. <label> names the event in logs and halt notices.
+# success. <label> names the event in logs and halt notices. HANDLER_SCRIPT, set by handle_event,
+# says how: a path means run that script, empty means dispatch <skill_content> to the model.
 dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "startup">
   local label="$1" skill_content="$2" event="$3" attempt rc=0 outcome
   for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
-    log "$label -> $SKILL_NAME (attempt $attempt of $MAX_ATTEMPTS)"
+    log "$label -> $SKILL_NAME${HANDLER_SCRIPT:+ (script)} (attempt $attempt of $MAX_ATTEMPTS)"
     rc=0
     CUR_LABEL="$label" CUR_ATTEMPT="$attempt" CUR_START=$SECONDS
-    run_dispatch "$skill_content" "$event" || rc=$?
+    if [[ -n "$HANDLER_SCRIPT" ]]; then
+      run_script || rc=$?
+    else
+      run_dispatch "$skill_content" "$event" || rc=$?
+    fi
     case "$rc" in
       0) outcome=finished ;;
       2) outcome=unusable ;;
@@ -310,7 +341,7 @@ dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "
       *) outcome=failed ;;
     esac
     local took=$(( SECONDS - CUR_START ))
-    log_usage "$label" "$attempt" "$outcome" "$rc" "$took"
+    [[ -n "$HANDLER_SCRIPT" ]] || log_usage "$label" "$attempt" "$outcome" "$rc" "$took"
     CUR_LABEL="" CUR_ATTEMPT=0
     if [[ "$rc" -eq 0 ]]; then
       log "$label finished in ${took}s$(cost_note)$(answer_note)"
@@ -333,6 +364,7 @@ handle_event() { # <artifact path relative to the work dir>
   local rel="$1" art type outcome skill_file skill_content
   art="$WORK_DIR/$rel"
   SKILL_NAME=""
+  HANDLER_SCRIPT=""
   LAST_ERROR=""
 
   type="$(fm_field "$art" type)"
@@ -353,9 +385,19 @@ handle_event() { # <artifact path relative to the work dir>
     return 0
   fi
 
-  skill_file="$CONDUCTOR_DIR/skills/${SKILL_NAME}.md"
-  [[ -f "$skill_file" ]] || halt unresolvable "$rel" "no skill file: $skill_file"
-  skill_content="$(cat "$skill_file")"
+  # A script named for the skill is the handler; without one the skill goes to the model.
+  HANDLER_SCRIPT="$HANDLERS_DIR/$(basename "$SKILL_NAME").sh"
+  if [[ -x "$HANDLER_SCRIPT" ]]; then
+    skill_content=""
+  elif [[ -e "$HANDLER_SCRIPT" ]]; then
+    # There, but it cannot run (a lost +x bit): the model must not quietly take over.
+    halt unresolvable "$rel" "handler script is not executable: $HANDLER_SCRIPT"
+  else
+    HANDLER_SCRIPT=""
+    skill_file="$CONDUCTOR_DIR/skills/${SKILL_NAME}.md"
+    [[ -f "$skill_file" ]] || halt unresolvable "$rel" "no skill file: $skill_file"
+    skill_content="$(cat "$skill_file")"
+  fi
 
   TASK_ID="${rel%%/*}"
   export TASK_ID
@@ -378,6 +420,7 @@ reconcile() {
     return 0
   fi
   SKILL_NAME="conductor/reconcile"
+  HANDLER_SCRIPT=""
   LAST_ERROR=""
   local skill_file="$CONDUCTOR_DIR/skills/${SKILL_NAME}.md"
   [[ -f "$skill_file" ]] || halt unresolvable startup "no skill file: $skill_file"
