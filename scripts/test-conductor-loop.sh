@@ -476,6 +476,8 @@ assert_eq "cache write tokens" "$(ufield 0001/signal .cache_write_tokens)" "7429
 assert_eq "cost" "$(ufield 0001/signal .cost_usd)" "0.1019"
 assert_eq "turns" "$(ufield 0001/signal .turns)" "4"
 assert_eq "usage was reported" "$(ufield 0001/signal .usage)" "reported"
+assert_eq "the role is the conductor" "$(ufield 0001/signal .role)" "conductor"
+assert_eq "a cost the harness reported is cost_source reported" "$(ufield 0001/signal .cost_source)" "reported"
 assert_eq "a UTC timestamp" "$(ufield 0001/signal .ts | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' || true)" "1"
 assert_eq "a duration in seconds" "$(ufield 0001/signal '.duration_s | type')" "number"
 
@@ -488,6 +490,7 @@ STUB_USAGE='{"harness":"codex","model":null,"input_tokens":2965,"output_tokens":
 assert_eq "cost is null" "$(ufield 0001/signal .cost_usd)" "null"
 assert_eq "the tokens are there" "$(ufield 0001/signal .input_tokens)" "2965"
 assert_eq "and the record counts as reported" "$(ufield 0001/signal .usage)" "reported"
+assert_eq "but its cost is unknown, not reported" "$(ufield 0001/signal .cost_source)" "unknown"
 
 # 30 ------------------------------------------------------------------------------
 section "30 · An attempt with no record is logged as usage none"
@@ -498,6 +501,8 @@ run_loop
 assert_eq "usage none" "$(ufield 0001/signal .usage)" "none"
 assert_eq "the harness is the adapter that ran" "$(ufield 0001/signal .harness)" "stub-adapter"
 assert_eq "tokens are null, not zero" "$(ufield 0001/signal .input_tokens)" "null"
+assert_eq "cost_source is unknown" "$(ufield 0001/signal .cost_source)" "unknown"
+assert_eq "the role is still the conductor" "$(ufield 0001/signal .role)" "conductor"
 assert_eq "cost is null" "$(ufield 0001/signal .cost_usd)" "null"
 
 # 31 ------------------------------------------------------------------------------
@@ -559,6 +564,8 @@ assert_eq "one line" "$(ulines 0001/signal | wc -l | tr -d ' ')" "1"
 assert_eq "interrupted" "$(ufield 0001/signal .outcome)" "interrupted"
 assert_eq "attempt 1" "$(ufield 0001/signal .attempt)" "1"
 assert_eq "and no record" "$(ufield 0001/signal .usage)" "none"
+assert_eq "its cost_source is unknown" "$(ufield 0001/signal .cost_source)" "unknown"
+assert_eq "its tokens and cost are null, not zero" "$(ufield 0001/signal '[.input_tokens, .output_tokens, .cost_usd] | map(. == null) | all')" "true"
 
 # 35 ------------------------------------------------------------------------------
 section "35 · A log that cannot be written changes nothing"

@@ -89,6 +89,22 @@ cp "$LOG" "$TMP/c/usage.jsonl"
 RC=0; CONDUCTOR_DIR="$TMP/c" "$SUMMARY" > "$OUT" 2>&1 || RC=$?
 has '5 attempts' "the default is \$CONDUCTOR_DIR/usage.jsonl"
 
+section "5b · Lines with role and cost_source read the same as lines without"
+# Every line gets the two fields (role "conductor", cost_source from whether a cost was reported),
+# or only every other one does: the totals must not move, since the summary still goes by cost_usd.
+add_fields='. + {role: "conductor", cost_source: (if .cost_usd != null then "reported" else "unknown" end)}'
+# the log has one line that is not JSON; it is dropped here, as the summary does
+jq -Rc 'fromjson? // empty' "$LOG" > "$TMP/old.jsonl"
+jq -c "$add_fields" "$TMP/old.jsonl" > "$TMP/new.jsonl"
+awk 'NR % 2' "$TMP/old.jsonl" > "$TMP/mixed.jsonl"
+jq -c "$add_fields" <(awk 'NR % 2 == 0' "$TMP/old.jsonl") >> "$TMP/mixed.jsonl"
+for variant in new mixed; do
+  run --file "$TMP/$variant.jsonl"
+  has 'Known cost: \$0.3345 over 3 attempts with a cost' "$variant: the same known cost"
+  has 'Unknown   : 2 attempts reported no cost' "$variant: the same unknown count"
+  has 'Tokens    : in 5846, out 3760, cache read 192785, cache write 15783' "$variant: the same tokens"
+done
+
 section "6 · Arguments"
 run --bogus
 assert_eq "an unknown flag: exit 1" "$RC" "1"
