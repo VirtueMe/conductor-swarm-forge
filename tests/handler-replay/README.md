@@ -102,3 +102,7 @@ were not hand-written: their `expect` was recorded from a live run of the
 `on-validation-passed` skill on 2026-11-03, twice each (the second with `--force`, and the file did
 not change), and the script matched all three. They cover each branch of the rule: a chore parks
 or merges by `locks`, and a feature goes to review.
+
+`validation-failed-rework` was recorded the same way from the `on-validation-failed` skill on
+2026-11-03 (once, so far), and the script matches it. The route has no guards, so one fixture
+covers it.

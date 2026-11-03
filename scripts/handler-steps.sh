@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The steps a script handler shares with its siblings. on-review-approved and
-# on-validation-passed repeat the same four (close the finishing worker's window,
-# compute the locks guard, route, move and start the next stage); here they are once.
+# The steps a script handler shares with its siblings. on-review-approved,
+# on-validation-passed and on-validation-failed repeat the same few (close the finishing
+# worker's window, compute the locks guard, route, move and start the next stage); here they
+# are once.
 #
 # Sourced (not executed) by a handler under scripts/handlers/. It needs what the loop
 # gives a handler: CONDUCTOR_DIR set, and the scripts on PATH. It defines:
@@ -20,6 +21,13 @@
 #                                   stderr and returns 1, so the handler stops. A model
 #                                   once read a failing task-locks.sh as "free" and let
 #                                   a merge go ahead on a guard that had not run
+#   progress_note <task> <label> <artifact>
+#                                   write a progress note for the next worker: "conductor:
+#                                   <label> — see <artifact>". The skills have the model
+#                                   summarise the failure here; a script cannot, so it points
+#                                   at the artifact, which the next worker's briefing already
+#                                   carries in full. Returns 1 (no note) on an empty label or
+#                                   artifact, or if task-signal.sh fails
 #   route_task <task> <event> [guard=value...]
 #                                   ask the topology where the event sends the task,
 #                                   move it there and start the stage. Sets ROUTED_DEST.
@@ -80,6 +88,14 @@ locks_guard() { # <task>
     if grep -qxF -- "$item" <<< "$locked"; then echo held; return 0; fi
   done < <(fm_list "$card" files-changed)
   echo free
+}
+
+progress_note() { # <task> <label> <artifact>
+  if [[ -z "${2:-}" || -z "${3:-}" ]]; then
+    echo "progress_note: needs a label and an artifact" >&2
+    return 1
+  fi
+  task-signal.sh --task "$1" --type progress --notes "conductor: $2 — see $3"
 }
 
 route_task() { # <task> <event> [guard=value...]

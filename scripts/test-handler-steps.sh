@@ -40,7 +40,7 @@ STAGE_DIR=review
 
 # --- stubs on PATH --------------------------------------------------------------
 STUB="$TMP/stub"; mkdir -p "$STUB"
-export STUB_LOG="$TMP/calls.log" STUB_LOCKED="$TMP/locked" STUB_LOCKS_RC="$TMP/locks.rc"
+export STUB_LOG="$TMP/calls.log" STUB_LOCKED="$TMP/locked" STUB_LOCKS_RC="$TMP/locks.rc" STUB_SIGNAL_RC="$TMP/signal.rc"
 cat > "$STUB/task-locks.sh" << 'S'
 #!/usr/bin/env bash
 echo "task-locks" >> "$STUB_LOG"
@@ -55,6 +55,12 @@ cat > "$STUB/stage-start.sh" << 'S'
 #!/usr/bin/env bash
 echo "stage-start $*" >> "$STUB_LOG"
 S
+cat > "$STUB/task-signal.sh" << 'S'
+#!/usr/bin/env bash
+echo "task-signal $*" >> "$STUB_LOG"
+[[ -f "$STUB_SIGNAL_RC" ]] && exit "$(cat "$STUB_SIGNAL_RC")"
+exit 0
+S
 cat > "$STUB/tmux" << 'S'
 #!/usr/bin/env bash
 echo "tmux $*" >> "$STUB_LOG"
@@ -62,7 +68,7 @@ if [[ "$1" == "list-windows" ]]; then printf 'conductor\ncoder-0001\nreviewer-00
 S
 chmod +x "$STUB"/*
 export PATH="$STUB:$SCRIPTS_DIR:$PATH"
-reset() { : > "$STUB_LOG"; : > "$STUB_LOCKED"; rm -f "$STUB_LOCKS_RC"; }
+reset() { : > "$STUB_LOG"; : > "$STUB_LOCKED"; rm -f "$STUB_LOCKS_RC" "$STUB_SIGNAL_RC"; }
 
 # shellcheck source=scripts/handler-steps.sh
 source "$SCRIPTS_DIR/handler-steps.sh"
@@ -118,6 +124,19 @@ reset
 RC=0; close_worker_window 0009 || RC=$?
 assert_eq "no window is not an error" "$RC" "0"
 assert_eq "and nothing is killed" "$(grep -c 'kill-window' "$STUB_LOG" || true)" "0"
+
+section "3b · The progress note"
+reset
+progress_note 0001 "validation failed" work/0001/validation-20261102-102000.md
+assert_eq "one progress signal for the task, pointing at the artifact" "$(cat "$STUB_LOG")" \
+  "task-signal --task 0001 --type progress --notes conductor: validation failed — see work/0001/validation-20261102-102000.md"
+reset; echo 1 > "$STUB_SIGNAL_RC"
+RC=0; progress_note 0001 "review rejected" work/0001/review-x.md || RC=$?
+assert_eq "a failing task-signal.sh is a failure, so the handler stops" "$RC" "1"
+reset
+RC=0; progress_note 0001 "" work/0001/x.md 2> "$TMP/err" || RC=$?
+assert_eq "an empty label is a failure" "$RC" "1"
+assert_eq "and writes no note" "$(grep -c task-signal "$STUB_LOG" || true)" "0"
 
 section "4 · Route, move, start"
 reset; card review src/a.txt
