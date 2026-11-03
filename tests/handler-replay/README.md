@@ -110,3 +110,8 @@ covers it.
 `review-rejected-rework` was recorded the same way from the `on-review-rejected` skill on
 2026-11-03, and the script matches it. Its note is written before the move, where the skill writes
 it between the move and the stage start; the gate does not compare notes.
+
+The four `new-task-*` fixtures (`no-deps`, `deps-pending`, `deps-done`, `replayed`) cover the
+`deps` guard and the replay guard of `on-new-task`. Their card starts in `backlog`, as
+`task-create.sh` leaves it; the replayed one starts past the first stage and expects no moves and
+no spawns. As the stub spawn does not advance a card, a task routed to `ready` ends there.

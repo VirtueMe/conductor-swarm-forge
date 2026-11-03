@@ -114,6 +114,35 @@ RC=0; OUT="$(card_field 0001 type 2> "$TMP/err")" || RC=$?
 assert_eq "no card for the task is a failure" "$RC" "1"
 assert_eq "and prints no answer" "$OUT" ""
 
+section "2c · The dependency guard"
+task_file() { # <depends-on line...>: the task file for 0001 (no argument: depends-on: [])
+  { printf -- '---\nid: 0001\ntitle: t\ntype: feature\n'
+    if [[ $# -eq 0 ]]; then printf 'depends-on: []\n'; else printf '%s\n' "$@"; fi
+    printf -- '---\n\nbody\n'; } > "$CONDUCTOR_DIR/tasks/0001.md"
+}
+mkdir -p "$CONDUCTOR_DIR/kanban/done" "$CONDUCTOR_DIR/kanban/backlog"
+: > "$CONDUCTOR_DIR/kanban/done/0007.md"; : > "$CONDUCTOR_DIR/kanban/backlog/0008.md"
+task_file
+assert_eq "no dependencies is all-done" "$(deps_done 0001)" "all-done"
+task_file 'depends-on:' '  - 0007'
+assert_eq "a dependency that is done" "$(deps_done 0001)" "all-done"
+task_file 'depends-on:' '  - 0007' '  - 0008'
+assert_eq "one dependency not done is pending" "$(deps_done 0001)" "pending"
+task_file 'depends-on:' '  - 0009'
+assert_eq "a dependency with no card at all is pending" "$(deps_done 0001)" "pending"
+task_file 'title: x'
+assert_eq "no depends-on field is no dependencies" "$(deps_done 0001)" "all-done"
+task_file 'depends-on: [0007]'
+RC=0; OUT="$(deps_done 0001 2> "$TMP/err")" || RC=$?
+assert_eq "an inline list is a failure, not all-done" "$RC" "1"
+assert_eq "and prints no answer" "$OUT" ""
+if grep -q 'inline' "$TMP/err"; then ok "and says why"; else fail "and says why ($(cat "$TMP/err"))"; fi
+rm -f "$CONDUCTOR_DIR/tasks/0001.md"
+RC=0; OUT="$(deps_done 0001 2> "$TMP/err")" || RC=$?
+assert_eq "no task file is a failure" "$RC" "1"
+assert_eq "and prints no answer" "$OUT" ""
+if grep -q 'no task file' "$TMP/err"; then ok "and says why"; else fail "and says why ($(cat "$TMP/err"))"; fi
+
 section "3 · Closing the finishing worker's window"
 reset
 close_worker_window 0001

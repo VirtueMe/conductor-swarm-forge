@@ -366,7 +366,7 @@ the lock check stubbed, and compares the moves, the spawns and the final stage w
 did; `--record` produces that expectation from a live run of the skill, which you run by hand. See
 `tests/handler-replay/README.md`.
 
-`on-review-approved`, `on-validation-passed`, `on-validation-failed` and `on-review-rejected` are converted (`scripts/handlers/`). CI
+`on-review-approved`, `on-validation-passed`, `on-validation-failed`, `on-review-rejected` and `on-new-task` are converted (`scripts/handlers/`). CI
 replays every fixture in `tests/handler-replay/` against its script. The skill file stays: it
 documents what the script must do, the loop dispatches it when the script is absent, and
 `--record` runs it.
