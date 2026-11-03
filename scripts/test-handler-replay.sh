@@ -145,6 +145,109 @@ else
   fail "both scripts use it"
 fi
 
+# --- record mode -----------------------------------------------------------------
+# Recording runs the SKILL through the real conductor-loop.sh, in the gate's scratch setup, and
+# writes `expect` from what it did. Here the adapter is a stub that makes known moves, so no model
+# is called; the live run is the user's.
+STUB_ADAPTER="$TMP/stub-adapter.sh"
+cat > "$STUB_ADAPTER" << 'S'
+adapter_dispatch() {
+  local skill="$1" event="$2"
+  if [[ "$event" == startup ]]; then echo startup >> "$STUB_STARTUPS"; return 0; fi
+  { echo "event $(basename "$event")"; printf '%s\n' "$skill" | head -1; } >> "$STUB_EVENTS"
+  pwd >> "$STUB_PWDS"
+  [[ -n "${STUB_FAIL:-}" ]] && return 1
+  [[ -n "${STUB_NOOP:-}" ]] && return 0
+  task-move.sh "$TASK_ID" merging
+  stage-start.sh "$TASK_ID" merging
+}
+S
+export STUB_STARTUPS="$TMP/startups" STUB_EVENTS="$TMP/events" STUB_PWDS="$TMP/pwds"
+record() { # <fixture dir> [more args] -> sets RC and OUT
+  local dir="$1"; shift
+  : > "$STUB_STARTUPS"; : > "$STUB_EVENTS"; : > "$STUB_PWDS"
+  RC=0; OUT="$("$GATE" --record "$dir" --adapter-file "$STUB_ADAPTER" "$@" 2>&1)" || RC=$?
+}
+fresh_fixture() { # <name>: a copy of the locks-free fixture with no expect
+  rm -rf "${TMP:?}/${1:?}"; cp -r "$FIX/review-approved-locks-free" "$TMP/$1"; rm -f "$TMP/$1/expect"
+}
+
+section "12 · Recording writes expect from what the skill did"
+fresh_fixture rec1
+record "$TMP/rec1"
+assert_eq "exit 0" "$RC" "0"
+assert_eq "expect is written from the moves, the spawn and the stage" "$(cat "$TMP/rec1/expect" 2>/dev/null)" "$(printf 'move 0001 merging\nspawn 0001 merger\nstage 0001 merging')"
+assert_eq "the event was dispatched once" "$(grep -c '^event ' "$STUB_EVENTS" || true)" "1"
+assert_eq "it was the fixture's event" "$(sed -n 1p "$STUB_EVENTS")" "event review-20261102-102000.md"
+assert_eq "the skill went to the model" "$(sed -n 2p "$STUB_EVENTS")" "# Skill: On Review Approved"
+assert_eq "the startup reconcile was not run" "$(wc -l < "$STUB_STARTUPS" | tr -d ' ')" "0"
+
+section "13 · A recorded expect is what the gate then checks"
+reference
+RC=0; OUT="$("$GATE" "$TMP/rec1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "the right handler passes against it" "$RC" "0"
+
+section "14 · Recording never replaces an expect unless asked"
+printf 'move 0001 elsewhere\n' > "$TMP/rec1/expect"
+record "$TMP/rec1"
+assert_eq "exit 2" "$RC" "2"
+assert_eq "expect is as it was" "$(cat "$TMP/rec1/expect")" "move 0001 elsewhere"
+assert_eq "and the skill was not run" "$(grep -c '^event ' "$STUB_EVENTS" || true)" "0"
+record "$TMP/rec1" --force
+assert_eq "--force: exit 0" "$RC" "0"
+assert_eq "--force: expect is replaced" "$(head -1 "$TMP/rec1/expect")" "move 0001 merging"
+
+section "15 · A failed skill records nothing"
+fresh_fixture rec2
+STUB_FAIL=1 record "$TMP/rec2"
+assert_eq "exit 1" "$RC" "1"
+assert_eq "no expect is written" "$([[ -e "$TMP/rec2/expect" ]] && echo yes || echo no)" "no"
+
+section "16 · Recording runs the skill even when a script handler exists"
+fresh_fixture rec3
+MARK="$TMP/script-ran"; rm -f "$MARK"; export MARK
+handler on-review-approved << 'S'
+#!/usr/bin/env bash
+echo ran >> "$MARK"
+S
+record "$TMP/rec3" --handlers-dir "$H"
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the script handler did not run" "$([[ -e "$MARK" ]] && echo yes || echo no)" "no"
+assert_eq "the skill did" "$(grep -c '^event ' "$STUB_EVENTS" || true)" "1"
+
+section "17 · Recording does not modify the rest of the fixture"
+fresh_fixture rec4
+before="$(cd "$TMP/rec4" && find . -type f -print0 | sort -z | xargs -0 cksum)"
+record "$TMP/rec4"
+after="$(cd "$TMP/rec4" && find . -type f ! -name expect -print0 | sort -z | xargs -0 cksum)"
+assert_eq "everything but expect is untouched" "$after" "$before"
+
+section "18 · The recorded skill does not run in the caller's directory"
+fresh_fixture rec5
+record "$TMP/rec5"
+assert_eq "exit 0" "$RC" "0"
+ran_in="$(head -1 "$STUB_PWDS")"
+if [[ -n "$ran_in" && "$ran_in" != "$PWD" ]]; then ok "it ran somewhere else than $PWD"; else fail "it ran in the caller's directory ($ran_in)"; fi
+if [[ "$ran_in" == "${TMPDIR:-/tmp}"/* || "$ran_in" == /tmp/* ]]; then ok "in a scratch directory"; else fail "in a scratch directory ($ran_in)"; fi
+
+section "19 · A run that changed nothing is not recorded"
+fresh_fixture rec6
+STUB_NOOP=1 record "$TMP/rec6"
+assert_eq "exit 1" "$RC" "1"
+assert_eq "no expect is written" "$([[ -e "$TMP/rec6/expect" ]] && echo yes || echo no)" "no"
+if grep -q 'no move' <<< "$OUT"; then ok "and it says why"; else fail "and it says why ($OUT)"; fi
+STUB_NOOP=1 record "$TMP/rec6" --allow-empty
+assert_eq "--allow-empty: exit 0" "$RC" "0"
+assert_eq "--allow-empty: records just where the card is" "$(cat "$TMP/rec6/expect")" "stage 0001 review"
+
+section "20 · Recording says what it may cost"
+fresh_fixture rec7
+record "$TMP/rec7"
+if grep -qF "up to \$1" <<< "$OUT"; then ok "the default cap is shown"; else fail "the default cap is shown ($OUT)"; fi
+fresh_fixture rec8
+CONDUCTOR_MAX_BUDGET_USD=0.25 record "$TMP/rec8"
+if grep -qF "up to \$0.25" <<< "$OUT"; then ok "and so is a set one"; else fail "and so is a set one ($OUT)"; fi
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

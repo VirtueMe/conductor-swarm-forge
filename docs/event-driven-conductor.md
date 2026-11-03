@@ -360,6 +360,12 @@ then halt), all under the same deadline, with its last stderr line in the halt n
 model call, so it writes no line to `usage.jsonl`, and the window shows `(script)`. The startup
 reconcile is still always the model's.
 
+A script handler is checked against the skill it replaces before it ships. `scripts/handler-replay.sh`
+runs it against a recorded situation (a fixture in `tests/handler-replay/`) with the workers and
+the lock check stubbed, and compares the moves, the spawns and the final stage with what the skill
+did; `--record` produces that expectation from a live run of the skill, which you run by hand. See
+`tests/handler-replay/README.md`.
+
 Handlers share their steps through `scripts/handler-steps.sh`, which a script sources:
 
 | Function | What it does |
