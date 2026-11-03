@@ -735,7 +735,7 @@ LOOP="$RC_ROOT/scripts/conductor-loop.sh" run_loop
 assert_eq "exit 0" "$RC" "0"
 assert_eq "the handler beside the loop ran" "$(grep -c '^ran task=0001' "$SH_LOG" || true)" "1"
 assert_eq "the model was not dispatched" "$(dispatches)" "0"
-if [[ -x "$SCRIPTS_DIR/handlers/on-review-approved.sh" && -x "$SCRIPTS_DIR/handlers/on-validation-passed.sh" ]]; then
+if [[ -x "$SCRIPTS_DIR/handlers/on-review-approved.sh" && -x "$SCRIPTS_DIR/handlers/on-validation-passed.sh" && -x "$SCRIPTS_DIR/handlers/on-validation-failed.sh" ]]; then
   ok "and the shipped handlers are executable"
 else
   fail "and the shipped handlers are executable"
