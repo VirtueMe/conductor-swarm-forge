@@ -38,6 +38,20 @@
 #                                   is never started early on a list nobody read. An ID with no card
 #                                   at all is "pending", the same as one still in progress: a
 #                                   mistyped ID keeps its task in backlog, and this is where to look
+#   task_deps <task>                print the IDs the task's depends-on lists, one per line. The
+#                                   same fail-closed rules as deps_done, which uses it
+#   unblock_dependents <task>       for each task in backlog whose depends-on lists <task> and whose
+#                                   dependencies are now all done, move it to ready and start the
+#                                   entry stage. A backlog task whose depends-on cannot be read
+#                                   (an inline list, say) stops it: skipping would leave a task
+#                                   waiting forever on a list nobody read
+#   release_merge_pending           for each task in merge-pending whose files are no longer locked,
+#                                   move it to merging and start it. The lock set is read again
+#                                   for every task, because starting a merge locks its files and
+#                                   the next task may overlap it. A failing lock check stops it
+#   project_done                    return 0 if there is at least one task file and every task
+#                                   file has a card in done, else 1. It compares task by task, not
+#                                   by count, so a stray done card cannot make up for a missing one
 #   progress_note <task> <label> <artifact>
 #                                   write a progress note for the next worker: "conductor:
 #                                   <label> — see <artifact>". The skills have the model
@@ -118,23 +132,68 @@ config_field() { # <name>
   sed -n "s/^$1:[[:space:]]*//p" "$CONDUCTOR_DIR/config.md" | sed -n '1s/[[:space:]]*$//p'
 }
 
-deps_done() { # <task>
-  local file inline dep
+task_deps() { # <task>
+  local file inline
   file="$CONDUCTOR_DIR/tasks/$1.md"
   if [[ ! -f "$file" ]]; then
-    echo "deps_done: no task file for $1 ($file), so its dependencies are unknown" >&2
+    echo "task_deps: no task file for $1 ($file), so its dependencies are unknown" >&2
     return 1
   fi
   inline="$(fm_field "$file" depends-on)"
   if [[ -n "$inline" && "$inline" != "[]" ]]; then
-    echo "deps_done: task $1 writes depends-on as an inline list ($inline); use one '  - id' line per task" >&2
+    echo "task_deps: task $1 writes depends-on as an inline list ($inline); use one '  - id' line per task" >&2
     return 1
   fi
+  fm_list "$file" depends-on
+}
+
+deps_done() { # <task>
+  local deps dep
+  deps="$(task_deps "$1")" || return 1
   while IFS= read -r dep; do
     [[ -n "$dep" ]] || continue
     [[ -f "$CONDUCTOR_DIR/kanban/done/$dep.md" ]] || { echo pending; return 0; }
-  done < <(fm_list "$file" depends-on)
+  done <<< "$deps"
   echo all-done
+}
+
+unblock_dependents() { # <task>
+  local card id deps dep listed
+  for card in "$CONDUCTOR_DIR"/kanban/backlog/*.md; do
+    [[ -f "$card" ]] || continue
+    id="$(basename "$card" .md)"
+    deps="$(task_deps "$id")" || return 1
+    listed=false
+    while IFS= read -r dep; do
+      [[ "$dep" == "$1" ]] && listed=true
+    done <<< "$deps"
+    [[ "$listed" == true ]] || continue
+    [[ "$(deps_done "$id")" == all-done ]] || continue
+    task-move.sh "$id" ready || return 1
+    stage-start.sh "$id" ready || return 1
+  done
+}
+
+release_merge_pending() {
+  local card id guard
+  for card in "$CONDUCTOR_DIR"/kanban/merge-pending/*.md; do
+    [[ -f "$card" ]] || continue
+    id="$(basename "$card" .md)"
+    guard="$(locks_guard "$id")" || return 1
+    [[ "$guard" == free ]] || continue
+    task-move.sh "$id" merging || return 1
+    stage-start.sh "$id" merging || return 1
+  done
+}
+
+project_done() {
+  local file found=false
+  for file in "$CONDUCTOR_DIR"/tasks/*.md; do
+    [[ -f "$file" ]] || continue
+    found=true
+    [[ -f "$CONDUCTOR_DIR/kanban/done/$(basename "$file")" ]] || return 1
+  done
+  [[ "$found" == true ]]
 }
 
 progress_note() { # <task> <label> <artifact>

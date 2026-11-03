@@ -229,6 +229,116 @@ assert_eq "a destination that is not a stage is a failure" "$RC" "1"
 assert_eq "and moves nothing" "$(grep -c 'task-move' "$STUB_LOG" || true)" "0"
 if grep -q '@stay' "$TMP/err"; then ok "and names it"; else fail "and names it ($(cat "$TMP/err"))"; fi
 
+# --- a small board for the steps that look across tasks ---------------------------
+# task-move.sh now moves the card file, and task-locks.sh reports the files of the cards in
+# merging (the real task-locks.sh answers that, on top of STUB_LOCKED), so a step that starts several
+# merges sees each lock taken.
+cat > "$STUB/task-move.sh" << 'S'
+#!/usr/bin/env bash
+echo "task-move $*" >> "$STUB_LOG"
+for f in "$CONDUCTOR_DIR"/kanban/*/"$1".md; do
+  [[ -f "$f" ]] && { mkdir -p "$CONDUCTOR_DIR/kanban/$2"; mv "$f" "$CONDUCTOR_DIR/kanban/$2/$1.md"; break; }
+done
+exit 0
+S
+export REAL_TASK_LOCKS="$SCRIPTS_DIR/task-locks.sh"
+cat > "$STUB/task-locks.sh" << 'S'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "task-locks" >> "$STUB_LOG"
+[[ -f "$STUB_LOCKS_RC" ]] && exit "$(cat "$STUB_LOCKS_RC")"
+{ cat "$STUB_LOCKED" 2> /dev/null || true; "$REAL_TASK_LOCKS"; } | sort -u
+S
+chmod +x "$STUB/task-move.sh" "$STUB/task-locks.sh"
+board_reset() { reset; rm -f "$CONDUCTOR_DIR"/kanban/*/*.md "$CONDUCTOR_DIR"/tasks/*.md; }
+bcard() { # <id> <stage> [files-changed item...]
+  local id="$1" stage="$2"; shift 2
+  mkdir -p "$CONDUCTOR_DIR/kanban/$stage"
+  { printf -- '---\nid: %s\nstatus: %s\n' "$id" "$stage"
+    if [[ $# -gt 0 ]]; then printf 'files-changed:\n'; printf '  - %s\n' "$@"; fi
+    printf -- '---\n\nbody\n'; } > "$CONDUCTOR_DIR/kanban/$stage/$id.md"
+}
+btask() { # <id> [dependency id...]
+  local id="$1"; shift
+  { printf -- '---\nid: %s\ntitle: t\ntype: feature\n' "$id"
+    if [[ $# -eq 0 ]]; then printf 'depends-on: []\n'; else printf 'depends-on:\n'; printf '  - %s\n' "$@"; fi
+    printf -- '---\n\nbody\n'; } > "$CONDUCTOR_DIR/tasks/$id.md"
+}
+calls() { grep -v '^task-locks$' "$STUB_LOG" || true; }
+
+section "6 · A task's dependencies, listed"
+board_reset; btask 0001; btask 0002 0001 0003
+assert_eq "no dependencies lists nothing" "$(task_deps 0001)" ""
+assert_eq "dependencies are listed one per line" "$(task_deps 0002 | tr '\n' ' ')" "0001 0003 "
+sed -i 's/^depends-on:$/depends-on: [0001]/; /^  - /d' "$CONDUCTOR_DIR/tasks/0002.md"
+RC=0; OUT="$(task_deps 0002 2> "$TMP/err")" || RC=$?
+assert_eq "an inline list is a failure" "$RC" "1"
+assert_eq "and lists nothing" "$OUT" ""
+
+section "7 · Unblocking the dependents of a finished task"
+board_reset
+btask 0001; btask 0002 0001; btask 0003 0001 0004; btask 0004; btask 0005 0009; btask 0006 0001; btask 0007
+bcard 0001 "done"; bcard 0002 backlog; bcard 0003 backlog; bcard 0004 in-progress; bcard 0005 backlog; bcard 0006 ready; bcard 0007 backlog
+unblock_dependents 0001
+assert_eq "a dependent with all its dependencies done is moved to ready and started" "$(calls)" "$(printf 'task-move 0002 ready\nstage-start 0002 ready')"
+assert_eq "and its card is in ready" "$([[ -f "$CONDUCTOR_DIR/kanban/ready/0002.md" ]] && echo yes)" "yes"
+assert_eq "a dependent still waiting on another stays in backlog" "$([[ -f "$CONDUCTOR_DIR/kanban/backlog/0003.md" ]] && echo yes)" "yes"
+board_reset
+btask 0001; btask 0002 0001
+bcard 0001 "done"; bcard 0002 backlog
+sed -i 's/^depends-on:$/depends-on: [0001]/; /^  - /d' "$CONDUCTOR_DIR/tasks/0002.md"
+RC=0; unblock_dependents 0001 2> "$TMP/err" || RC=$?
+assert_eq "a backlog task with an inline list is a failure, not skipped" "$RC" "1"
+if grep -q 'inline' "$TMP/err"; then ok "and says why"; else fail "and says why ($(cat "$TMP/err"))"; fi
+assert_eq "and moves nothing" "$(calls)" ""
+board_reset
+btask 0001; bcard 0001 "done"
+RC=0; unblock_dependents 0001 || RC=$?
+assert_eq "an empty backlog is nothing to do" "$RC" "0"
+
+section "8 · Releasing the merges that were waiting"
+board_reset
+bcard 0002 merge-pending src/a.txt src/b.txt; bcard 0003 merge-pending src/b.txt src/c.txt; bcard 0004 merge-pending src/d.txt
+release_merge_pending
+assert_eq "the first is released, the second overlaps it, the third is clear" \
+  "$(calls)" "$(printf 'task-move 0002 merging\nstage-start 0002 merging\ntask-move 0004 merging\nstage-start 0004 merging')"
+assert_eq "the one that overlaps stays pending" "$([[ -f "$CONDUCTOR_DIR/kanban/merge-pending/0003.md" ]] && echo yes)" "yes"
+board_reset
+bcard 0002 merge-pending src/a.txt
+printf 'src/a.txt\n' > "$STUB_LOCKED"
+release_merge_pending
+assert_eq "a task whose file is still locked stays" "$(calls)" ""
+board_reset
+bcard 0002 merge-pending src/a.txt
+echo 1 > "$STUB_LOCKS_RC"
+RC=0; release_merge_pending 2> "$TMP/err" || RC=$?
+assert_eq "a failing lock check is a failure" "$RC" "1"
+assert_eq "and moves nothing" "$(calls)" ""
+board_reset
+RC=0; release_merge_pending || RC=$?
+assert_eq "nothing pending is nothing to do" "$RC" "0"
+
+section "9 · Is the whole project done"
+board_reset
+btask 0001; btask 0002; bcard 0001 "done"; bcard 0002 "done"
+RC=0; project_done || RC=$?
+assert_eq "every task has a done card" "$RC" "0"
+rm -f "$CONDUCTOR_DIR/kanban/done/0002.md"; bcard 0002 merging
+RC=0; project_done || RC=$?
+assert_eq "one that is not done" "$RC" "1"
+board_reset
+bcard 0001 "done"; bcard 0002 "done"; btask 0001
+RC=0; project_done || RC=$?
+assert_eq "a done card with no task file is ignored" "$RC" "0"
+board_reset
+btask 0001; btask 0002; bcard 0001 "done"; bcard 0003 "done"
+RC=0; project_done || RC=$?
+assert_eq "a count that matches is not enough: 0002 has no done card" "$RC" "1"
+board_reset
+bcard 0001 "done"
+RC=0; project_done || RC=$?
+assert_eq "no task files is not a finished project" "$RC" "1"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

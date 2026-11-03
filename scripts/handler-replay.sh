@@ -36,7 +36,8 @@ set -euo pipefail
 #
 # The outcome is three groups of lines, compared exactly and in order:
 #   move <task> <stage>      each move the handler made (the `moved` artifacts it wrote)
-#   spawn <task> <role>      each worker it started, or  notify <task> <stage>  for a manual stage
+#   spawn <task> <role>      each worker it started, or  notify <task> <stage>  for a manual stage,
+#                            or  shutdown  if it shut the swarm down
 #   stage <task> <stage>     where the card ended up
 # Notes, timestamps and the wording of artifacts are not compared (the skill side is a model).
 
@@ -103,11 +104,22 @@ while [[ $# -gt 0 ]]; do
 done
 echo "notify $task $stage" >> "$REPLAY_CALLS"
 S
+# What task-locks.sh answers: the fixture's `locks`, plus whatever the real task-locks.sh reports
+# for the scratch board (the files of the cards in merging), so a handler that starts several
+# merges sees each lock taken. The real one is kept under another name and called, not copied.
+# The real one finds the integration adapter next to the scripts directory, so that is linked in.
+mv "$SCR/task-locks.sh" "$SCR/task-locks-real.sh"
+ln -s "$SRC_ROOT/integrations" "$TMP/integrations"
 cat > "$SCR/task-locks.sh" << 'S'
 #!/usr/bin/env bash
-cat "$REPLAY_LOCKS"
+set -euo pipefail
+{ cat "$REPLAY_LOCKS"; "$SCRIPTS_DIR/task-locks-real.sh"; } | sort -u
 S
-chmod +x "$SCR"/worker-spawn.sh "$SCR"/task-notify.sh "$SCR"/task-locks.sh
+cat > "$SCR/conductor-shutdown.sh" << 'S'
+#!/usr/bin/env bash
+echo "shutdown" >> "$REPLAY_CALLS"
+S
+chmod +x "$SCR"/worker-spawn.sh "$SCR"/task-notify.sh "$SCR"/task-locks.sh "$SCR"/conductor-shutdown.sh
 BIN="$TMP/bin"; mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/tmux"; chmod +x "$BIN/tmux"   # no windows, nothing to close
 
