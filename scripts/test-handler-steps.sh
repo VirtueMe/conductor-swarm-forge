@@ -143,6 +143,29 @@ assert_eq "no task file is a failure" "$RC" "1"
 assert_eq "and prints no answer" "$OUT" ""
 if grep -q 'no task file' "$TMP/err"; then ok "and says why"; else fail "and says why ($(cat "$TMP/err"))"; fi
 
+section "2d · Reading the project config"
+cfg() { printf '%s\n' "$@" > "$CONDUCTOR_DIR/config.md"; }
+cfg 'lang: bash' 'test-cmd: npm test' 'poll-interval: 3'
+assert_eq "a value is read whole, spaces and all" "$(config_field test-cmd)" "npm test"
+cfg 'test-cmd: make test A=1'
+assert_eq "an equals sign inside the value stays" "$(config_field test-cmd)" "make test A=1"
+cfg '---' 'lang: bash' 'test-cmd: ./run-tests' '---'
+assert_eq "a config with frontmatter fences reads the same" "$(config_field test-cmd)" "./run-tests"
+cfg 'lang: bash' 'test-cmd:' 'poll-interval: 3'
+assert_eq "an empty value is empty: not configured" "$(config_field test-cmd)" ""
+cfg 'lang: bash' 'test-cmd:    '
+assert_eq "so is a value of only spaces" "$(config_field test-cmd)" ""
+cfg 'lang: bash'
+assert_eq "a key the config lacks is empty" "$(config_field test-cmd)" ""
+cfg 'test-cmd-extra: x'
+assert_eq "a longer key does not stand in for the shorter" "$(config_field test-cmd)" ""
+rm -f "$CONDUCTOR_DIR/config.md"
+RC=0; OUT="$(config_field test-cmd)" || RC=$?
+assert_eq "no config file is not a failure" "$RC" "0"
+assert_eq "and is empty" "$OUT" ""
+RC=0; config_field 'a.b' 2> "$TMP/err" > /dev/null || RC=$?
+assert_eq "a name that is not a plain key is a failure" "$RC" "1"
+
 section "3 · Closing the finishing worker's window"
 reset
 close_worker_window 0001

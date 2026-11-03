@@ -23,7 +23,8 @@ set -euo pipefail
 #        3 there is no script handler for the fixture's event
 #
 # A fixture (see tests/handler-replay/README.md) is a .conductor-shaped tree plus `event` (the
-# artifact that triggers the handler), `locks` (what task-locks.sh reports as locked) and `expect`.
+# artifact that triggers the handler), `locks` (what task-locks.sh reports as locked) and `expect`,
+# and optionally `config.md` (the project config a handler reads, test-cmd say).
 # The fixture is copied first and never modified, except that --record writes `expect`.
 #
 # Both modes run against a scratch copy of scripts/. In it worker-spawn.sh, task-notify.sh and
@@ -115,6 +116,7 @@ CD="$TMP/.conductor"
 mkdir -p "$CD"
 cp -r "$FIXTURE/tasks" "$FIXTURE/work" "$CD/"
 [[ -d "$FIXTURE/kanban" ]] && cp -r "$FIXTURE/kanban" "$CD/"
+[[ -f "$FIXTURE/config.md" ]] && cp "$FIXTURE/config.md" "$CD/config.md"
 if [[ -f "$FIXTURE/topology.json" ]]; then
   cp "$FIXTURE/topology.json" "$CD/topology.json"
 else
@@ -175,7 +177,7 @@ if [[ "$MODE" == record ]]; then
   cp -r "$SRC_ROOT/skills" "$CD/skills"
   cp -r "$SRC_ROOT/prompts" "$CD/prompts"
   cp "$SRC_ROOT/workforces/default.json" "$CD/workforce.json"
-  printf 'lang: bash\npoll-interval: 1\n' > "$CD/config.md"
+  [[ -f "$CD/config.md" ]] || printf 'lang: bash\npoll-interval: 1\n' > "$CD/config.md"
 
   # The loop handles what the ledger does not list. List everything but the event, so it handles
   # exactly the event (without a ledger it would list the whole history as already done).

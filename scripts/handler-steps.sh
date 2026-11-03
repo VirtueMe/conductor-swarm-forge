@@ -21,6 +21,14 @@
 #                                   stderr and returns 1, so the handler stops. A model
 #                                   once read a failing task-locks.sh as "free" and let
 #                                   a merge go ahead on a guard that had not run
+#   config_field <name>             print the value of a key in the project's config.md (test-cmd,
+#                                   say), the whole line after "name:" without its surrounding
+#                                   spaces. Unlike the others it does not fail closed: an empty
+#                                   value, a key the file lacks and no config file all print
+#                                   nothing and return 0, because the topology reads "empty" as
+#                                   "not configured" and that is a real answer, not an unknown.
+#                                   Only a name that is not a plain key (letters, digits, - and _)
+#                                   is a failure
 #   deps_done <task>                print "all-done" or "pending": whether every task the task's
 #                                   depends-on lists has a card in kanban/done/. No depends-on
 #                                   (or an empty one) is all-done. Fails closed: with no task
@@ -97,6 +105,17 @@ locks_guard() { # <task>
     if grep -qxF -- "$item" <<< "$locked"; then echo held; return 0; fi
   done < <(fm_list "$card" files-changed)
   echo free
+}
+
+config_field() { # <name>
+  if [[ ! "${1:-}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "config_field: '${1:-}' is not a plain config key" >&2
+    return 1
+  fi
+  [[ -f "$CONDUCTOR_DIR/config.md" ]] || return 0
+  # The first "name:" line; no match is not an error. The config has no fixed shape (the loop's
+  # own readers take it with or without frontmatter fences), so this reads lines, not frontmatter.
+  sed -n "s/^$1:[[:space:]]*//p" "$CONDUCTOR_DIR/config.md" | sed -n '1s/[[:space:]]*$//p'
 }
 
 deps_done() { # <task>

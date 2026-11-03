@@ -28,6 +28,7 @@ One directory per situation, shaped like a `.conductor` so the gate can copy it:
 | `kanban/<stage>/<id>.md` | the card, in the stage it is in when the event arrives |
 | `event` | one line: the triggering artifact, relative to the conductor dir (`work/0001/review-….md`) |
 | `locks` | the files `task-locks.sh` reports as locked, one per line; empty for none |
+| `config.md` | optional; the project config a handler reads (`test-cmd`, say). Without it the scratch conductor dir has none, so nothing is configured |
 | `expect` | the outcome the skill produced (below) |
 | `topology.json` | optional; the shipped `software-dev` topology when absent |
 
@@ -115,3 +116,8 @@ The four `new-task-*` fixtures (`no-deps`, `deps-pending`, `deps-done`, `replaye
 `deps` guard and the replay guard of `on-new-task`. Their card starts in `backlog`, as
 `task-create.sh` leaves it; the replayed one starts past the first stage and expects no moves and
 no spawns. As the stub spawn does not advance a card, a task routed to `ready` ends there.
+
+The five `signal-complete-*` fixtures (`design`, `test-cmd`, `chore-locks-free`, `chore-locks-held`,
+`feature-review`) cover each branch of the `on-signal-complete` rule. The `test-cmd` one carries a
+`config.md` with `test-cmd` set; the others have it empty, which is how `swarm-start.sh` writes an
+unconfigured project.
