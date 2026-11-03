@@ -154,6 +154,12 @@ jobs:
       - name: test-handler-replay
         run: bash scripts/test-handler-replay.sh
 
+      - name: replay the script handlers against their fixtures
+        run: |
+          for f in tests/handler-replay/*/; do
+            bash scripts/handler-replay.sh "$f"
+          done
+
       - name: test-loop-halt-notify
         run: bash scripts/test-loop-halt-notify.sh
 
