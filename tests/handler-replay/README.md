@@ -89,6 +89,10 @@ this yourself (it calls a model, a few cents each time), for example with `!` in
 
 ## Where `expect` comes from
 
-The three fixtures here were written by hand from what `skills/conductor/on-review-approved.md`
-says, to prove the gate works. They are not recorded, so they do not show what the skill does.
-Replace them by recording (above) before relying on them for a conversion.
+The three fixtures here (`review-approved-locks-free`, `-locks-held`, `-manual-merge`) were first
+written by hand from what `skills/conductor/on-review-approved.md` says, to prove the gate works.
+On 2026-11-03 each was recorded from a live run of the skill (`--record`, default workforce
+adapter, into a temporary copy) and the recorded `expect` was identical to the hand-written one
+in all three. That is one run per fixture: it shows the skill does this, not that it always does.
+A fixture for a new handler should be recorded, and for a handler with any judgment in it,
+recorded more than once.
