@@ -492,6 +492,43 @@ assert_eq "the tokens are there" "$(ufield 0001/signal .input_tokens)" "2965"
 assert_eq "and the record counts as reported" "$(ufield 0001/signal .usage)" "reported"
 assert_eq "but its cost is unknown, not reported" "$(ufield 0001/signal .cost_source)" "unknown"
 
+# 29b -----------------------------------------------------------------------------
+section "29b · A known model gets an estimate next to a reported cost"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":701,"cache_read_tokens":20055,"cache_write_tokens":7429,"cost_usd":0.1019,"turns":4}' run_loop
+assert_eq "the harness's own cost is kept" "$(ufield 0001/signal .cost_usd)" "0.1019"
+assert_eq "the estimate is there too" "$(ufield 0001/signal .estimated_cost_usd)" "0.07402375"
+assert_eq "cost_source stays reported" "$(ufield 0001/signal .cost_source)" "reported"
+
+# 29c -----------------------------------------------------------------------------
+section "29c · With no reported cost the estimate is the cost, and an unknown model has none"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"codex","model":"gpt-5","input_tokens":2965,"output_tokens":5,"cache_read_tokens":12288,"cache_write_tokens":0,"cost_usd":null,"turns":2}' run_loop
+assert_eq "no reported cost" "$(ufield 0001/signal .cost_usd)" "null"
+assert_eq "estimated from the table" "$(ufield 0001/signal .estimated_cost_usd)" "0.00529225"
+assert_eq "cost_source is estimated" "$(ufield 0001/signal .cost_source)" "estimated"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"codex","model":"not-a-model","input_tokens":2965,"output_tokens":5,"cache_read_tokens":12288,"cache_write_tokens":0,"cost_usd":null,"turns":2}' run_loop
+assert_eq "an unknown model: no estimate, not zero" "$(ufield 0001/signal .estimated_cost_usd)" "null"
+assert_eq "cost_source is unknown" "$(ufield 0001/signal .cost_source)" "unknown"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+run_loop
+assert_eq "an attempt with no record has no estimate" "$(ufield 0001/signal .estimated_cost_usd)" "null"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+CONDUCTOR_PRICES="$TMP/missing.json" STUB_USAGE='{"harness":"codex","model":"gpt-5","input_tokens":1,"output_tokens":1,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":null,"turns":1}' run_loop
+assert_eq "a missing price table still writes the line" "$(ulines 0001/signal | wc -l | tr -d ' ')" "1"
+assert_eq "with no estimate" "$(ufield 0001/signal .estimated_cost_usd)" "null"
+
 # 30 ------------------------------------------------------------------------------
 section "30 · An attempt with no record is logged as usage none"
 new_swarm
