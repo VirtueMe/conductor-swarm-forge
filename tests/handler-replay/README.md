@@ -57,7 +57,38 @@ is real: `task-move.sh`, `task-replay.sh`, `stage-start.sh` and `topology-load.s
 and spawns. A real spawn also writes an `assigned` artifact and moves the card to the working
 stage; the stub does not, so `expect` records the decision to spawn, not those effects.
 
+## Recording a fixture from a live run
+
+`expect` should be what the skill actually did, so it is recorded, not written by hand. You run
+this yourself (it calls a model, a few cents each time), for example with `!` in a session:
+
+1. **Write the situation.** Copy a fixture directory, or build one, with everything except
+   `expect`: the task, its artifacts including the triggering one, the card in its starting stage,
+   `event`, and `locks`. Change `locks` or the card to make each branch of the handler its own
+   fixture (files locked and free, each task `type`).
+2. **Record:**
+
+   ```bash
+   scripts/handler-replay.sh --record tests/handler-replay/<name>
+   ```
+
+   It runs the **skill** for the event through the real `conductor-loop.sh` and the conductor
+   adapter from the default workforce (`--adapter-file <file>` picks another), in the same stubbed
+   scratch setup the gate uses, and writes `expect` from the moves, spawns and final stage. The
+   loop is told every other artifact is already handled, so only the fixture's event runs. The
+   startup reconcile is skipped, because it is not what is being recorded, and a script handler for
+   the event is ignored, so the skill runs even after it has been converted. It never replaces an
+   existing `expect` unless you add `--force`, and refuses a run in which the skill made no move and
+   started no worker (`--allow-empty` records one anyway), because that is almost always a skill
+   that did not act. The loop runs from a scratch directory, not from where you started it, and the
+   cost cap (`CONDUCTOR_MAX_BUDGET_USD`, default $1) is printed first.
+3. **Read what it printed.** That is what the model did in one run. For a handler with no judgment
+   in it (the mechanical ones this gate is for) record twice with `--force` and check the two agree;
+   a difference means the skill is not as mechanical as thought.
+4. **Commit the fixture** with the handler that it gates.
+
 ## Where `expect` comes from
 
-`expect` is meant to be recorded from a live run of the skill. Until recording is available, the
-two fixtures here were written by hand from what `skills/conductor/on-review-approved.md` says.
+The three fixtures here were written by hand from what `skills/conductor/on-review-approved.md`
+says, to prove the gate works. They are not recorded, so they do not show what the skill does.
+Replace them by recording (above) before relying on them for a conversion.
