@@ -2,6 +2,12 @@
 
 Triggered when a `review-*.md` artifact with `outcome: approved` appears in `work/<id>/`.
 
+> A script handler (the file of this name under `scripts/handlers/`) does these steps without a
+> model. The loop runs it when it exists and is executable, and dispatches this skill otherwise.
+> This file stays as the documentation of what the script must do, as the fallback when the
+> script is absent, and as what `handler-replay.sh --record` runs to produce a fixture's
+> expectation.
+
 ## Context
 
 - `$TASK_ID` — the task ID from the artifact's `task-id` field
