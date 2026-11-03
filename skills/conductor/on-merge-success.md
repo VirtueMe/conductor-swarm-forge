@@ -33,8 +33,11 @@ Triggered when a `merge-*.md` artifact with `outcome: success` appears in `work/
    are NOT part of `route`'s output, so run them here.
 
 3. **Unblock dependents** (`then: unblock-dependents`) — find all tasks in
-   `kanban/backlog/` whose `depends-on` includes `$TASK_ID`:
-   - For each candidate, read its `depends-on` list
+   `kanban/backlog/` whose `depends-on` includes `$TASK_ID`. A kanban card does not
+   carry `depends-on`; it is only in the task file, `$CONDUCTOR_DIR/tasks/<id>.md`
+   (a `depends-on:` list in its frontmatter, one `- <id>` line per task). Read it
+   from there for every card in `kanban/backlog/`, not from the card:
+   - For each candidate, read its `depends-on` list from `tasks/<id>.md`
    - Check whether every listed ID now has a card in `kanban/done/`
    - If all dependencies are satisfied, move it to `ready` and start the entry
      stage — `stage-start.sh` spawns an agent if the entry stage is auto, and

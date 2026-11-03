@@ -23,7 +23,7 @@ There is no artifact and no task for this event. Everything it needs is in the k
    task-move.sh <id> backlog
    ```
 
-3. **Unblock ready tasks** — for each card in `kanban/backlog/`, read its `depends-on` field. If every listed ID has a card in `kanban/done/`, run:
+3. **Unblock ready tasks** — for each card in `kanban/backlog/`, read the `depends-on` list in its task file, `$CONDUCTOR_DIR/tasks/<id>.md` (the card does not carry it). If every listed ID has a card in `kanban/done/`, run:
    ```bash
    task-move.sh <id> ready
    ```
