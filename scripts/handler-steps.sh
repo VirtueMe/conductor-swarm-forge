@@ -8,6 +8,11 @@
 #
 #   close_worker_window <task>      close the tmux window named <role>-<task>; always
 #                                   returns 0, a missing window is not an error
+#   card_field <task> <field>       print a field of the task's current card (its type, say).
+#                                   Fails closed: with no card, or an empty field, it prints
+#                                   nothing, says why on stderr and returns 1. A missing type
+#                                   would otherwise route as "not a chore" and send a task to
+#                                   review without anyone having decided it
 #   locks_guard <task>              print "free" or "held": whether any file in the
 #                                   task's files-changed is locked by an active merge.
 #                                   Fails closed: if it cannot tell (no card, or
@@ -37,12 +42,32 @@ close_worker_window() { # <task>
   return 0
 }
 
-locks_guard() { # <task>
-  local card="" f locked item
+# The path of the task's current card, or nothing (returns 1) if it has none.
+card_path() { # <task>
+  local f
   for f in "$CONDUCTOR_DIR"/kanban/*/"$1".md; do
-    [[ -f "$f" ]] && { card="$f"; break; }
+    [[ -f "$f" ]] && { echo "$f"; return 0; }
   done
-  if [[ -z "$card" ]]; then
+  return 1
+}
+
+card_field() { # <task> <field>
+  local card value
+  if ! card="$(card_path "$1")"; then
+    echo "card_field: no card for task $1, so its $2 is unknown" >&2
+    return 1
+  fi
+  value="$(fm_field "$card" "$2")"
+  if [[ -z "$value" ]]; then
+    echo "card_field: the card for task $1 has no $2" >&2
+    return 1
+  fi
+  printf '%s\n' "$value"
+}
+
+locks_guard() { # <task>
+  local card locked item
+  if ! card="$(card_path "$1")"; then
     echo "locks_guard: no card for task $1, so its files are unknown" >&2
     return 1
   fi

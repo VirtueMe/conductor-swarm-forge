@@ -96,3 +96,9 @@ adapter, into a temporary copy) and the recorded `expect` was identical to the h
 in all three. That is one run per fixture: it shows the skill does this, not that it always does.
 A fixture for a new handler should be recorded, and for a handler with any judgment in it,
 recorded more than once.
+
+The three `validation-passed-*` fixtures (`chore-locks-free`, `chore-locks-held`, `feature-review`)
+were not hand-written: their `expect` was recorded from a live run of the
+`on-validation-passed` skill on 2026-11-03, twice each (the second with `--force`, and the file did
+not change), and the script matched all three. They cover each branch of the rule: a chore parks
+or merges by `locks`, and a feature goes to review.
