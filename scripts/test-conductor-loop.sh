@@ -737,7 +737,8 @@ assert_eq "the handler beside the loop ran" "$(grep -c '^ran task=0001' "$SH_LOG
 assert_eq "the model was not dispatched" "$(dispatches)" "0"
 if [[ -x "$SCRIPTS_DIR/handlers/on-review-approved.sh" && -x "$SCRIPTS_DIR/handlers/on-validation-passed.sh" \
    && -x "$SCRIPTS_DIR/handlers/on-validation-failed.sh" && -x "$SCRIPTS_DIR/handlers/on-review-rejected.sh" \
-   && -x "$SCRIPTS_DIR/handlers/on-new-task.sh" ]]; then
+   && -x "$SCRIPTS_DIR/handlers/on-new-task.sh" \
+   && -x "$SCRIPTS_DIR/handlers/on-signal-complete.sh" ]]; then
   ok "and the shipped handlers are executable"
 else
   fail "and the shipped handlers are executable"

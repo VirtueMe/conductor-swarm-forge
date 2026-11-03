@@ -156,16 +156,17 @@ adapter_dispatch() {
   if [[ "$event" == startup ]]; then echo startup >> "$STUB_STARTUPS"; return 0; fi
   { echo "event $(basename "$event")"; printf '%s\n' "$skill" | head -1; } >> "$STUB_EVENTS"
   pwd >> "$STUB_PWDS"
+  cat "$CONDUCTOR_DIR/config.md" >> "$STUB_CONFIGS" 2> /dev/null || true
   [[ -n "${STUB_FAIL:-}" ]] && return 1
   [[ -n "${STUB_NOOP:-}" ]] && return 0
   task-move.sh "$TASK_ID" merging
   stage-start.sh "$TASK_ID" merging
 }
 S
-export STUB_STARTUPS="$TMP/startups" STUB_EVENTS="$TMP/events" STUB_PWDS="$TMP/pwds"
+export STUB_STARTUPS="$TMP/startups" STUB_EVENTS="$TMP/events" STUB_PWDS="$TMP/pwds" STUB_CONFIGS="$TMP/configs"
 record() { # <fixture dir> [more args] -> sets RC and OUT
   local dir="$1"; shift
-  : > "$STUB_STARTUPS"; : > "$STUB_EVENTS"; : > "$STUB_PWDS"
+  : > "$STUB_STARTUPS"; : > "$STUB_EVENTS"; : > "$STUB_PWDS"; : > "$STUB_CONFIGS"
   RC=0; OUT="$("$GATE" --record "$dir" --adapter-file "$STUB_ADAPTER" "$@" 2>&1)" || RC=$?
 }
 fresh_fixture() { # <name>: a copy of the locks-free fixture with no expect
@@ -247,6 +248,31 @@ if grep -qF "up to \$1" <<< "$OUT"; then ok "the default cap is shown"; else fai
 fresh_fixture rec8
 CONDUCTOR_MAX_BUDGET_USD=0.25 record "$TMP/rec8"
 if grep -qF "up to \$0.25" <<< "$OUT"; then ok "and so is a set one"; else fail "and so is a set one ($OUT)"; fi
+
+section "21 · A fixture can carry the project config"
+# A handler may read config.md (on-signal-complete reads test-cmd), so a fixture can supply one.
+handler on-review-approved << 'S'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$SCRIPTS_DIR/handler-steps.sh"
+[[ "$(config_field test-cmd)" == "make check" ]] || exit 0     # acts only when test-cmd is set
+close_worker_window "$TASK_ID"
+route_task "$TASK_ID" review-approved locks=free
+S
+rm -rf "$TMP/cfg1"; cp -r "$FIX/review-approved-locks-free" "$TMP/cfg1"
+printf 'lang: bash\ntest-cmd: make check\n' > "$TMP/cfg1/config.md"
+RC=0; OUT="$("$GATE" "$TMP/cfg1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "with the fixture's config.md the handler sees test-cmd: exit 0" "$RC" "0"
+rm "$TMP/cfg1/config.md"
+RC=0; OUT="$("$GATE" "$TMP/cfg1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "without one it sees nothing configured: exit 1" "$RC" "1"
+fresh_fixture rec9
+printf 'lang: bash\ntest-cmd: make check\n' > "$TMP/rec9/config.md"
+record "$TMP/rec9"
+if grep -qx 'test-cmd: make check' "$STUB_CONFIGS"; then ok "recording runs the skill with the fixture's config.md"; else fail "recording runs the skill with the fixture's config.md ($(cat "$STUB_CONFIGS"))"; fi
+fresh_fixture rec10
+record "$TMP/rec10"
+if grep -qx 'poll-interval: 1' "$STUB_CONFIGS" && ! grep -q 'test-cmd' "$STUB_CONFIGS"; then ok "and with the default config when the fixture has none"; else fail "and with the default config when the fixture has none ($(cat "$STUB_CONFIGS"))"; fi
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

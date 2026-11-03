@@ -178,6 +178,9 @@ cp "$topo" "$CONDUCTOR_DIR/topology.json"
 cp "$ROOT_DIR/workforces/default.json" "$CONDUCTOR_DIR/workforce.json"
 cp -r "$ROOT_DIR/skills" "$CONDUCTOR_DIR/skills"; cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
 printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
+# These tests check what reaches the model, so no script handler may stand in for it; the real
+# handlers directory would change meaning each time a handler is converted.
+mkdir -p "$TMP/no-handlers"; export CONDUCTOR_HANDLERS_DIR="$TMP/no-handlers"
 "$SCRIPTS_DIR/task-create.sh" --title T --type chore --description x > /dev/null
 PATH="$TMP/bin:$PATH" bash "$SCRIPTS_DIR/conductor-loop.sh" --once > /dev/null 2>&1   # seeds the ledger
 sleep 1
