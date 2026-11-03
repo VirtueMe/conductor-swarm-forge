@@ -21,6 +21,15 @@
 #                                   stderr and returns 1, so the handler stops. A model
 #                                   once read a failing task-locks.sh as "free" and let
 #                                   a merge go ahead on a guard that had not run
+#   deps_done <task>                print "all-done" or "pending": whether every task the task's
+#                                   depends-on lists has a card in kanban/done/. No depends-on
+#                                   (or an empty one) is all-done. Fails closed: with no task
+#                                   file, or a depends-on written as an inline list (which the
+#                                   list reader would take for empty and so for "no dependencies"),
+#                                   it prints nothing, says why on stderr and returns 1, so a task
+#                                   is never started early on a list nobody read. An ID with no card
+#                                   at all is "pending", the same as one still in progress: a
+#                                   mistyped ID keeps its task in backlog, and this is where to look
 #   progress_note <task> <label> <artifact>
 #                                   write a progress note for the next worker: "conductor:
 #                                   <label> — see <artifact>". The skills have the model
@@ -88,6 +97,25 @@ locks_guard() { # <task>
     if grep -qxF -- "$item" <<< "$locked"; then echo held; return 0; fi
   done < <(fm_list "$card" files-changed)
   echo free
+}
+
+deps_done() { # <task>
+  local file inline dep
+  file="$CONDUCTOR_DIR/tasks/$1.md"
+  if [[ ! -f "$file" ]]; then
+    echo "deps_done: no task file for $1 ($file), so its dependencies are unknown" >&2
+    return 1
+  fi
+  inline="$(fm_field "$file" depends-on)"
+  if [[ -n "$inline" && "$inline" != "[]" ]]; then
+    echo "deps_done: task $1 writes depends-on as an inline list ($inline); use one '  - id' line per task" >&2
+    return 1
+  fi
+  while IFS= read -r dep; do
+    [[ -n "$dep" ]] || continue
+    [[ -f "$CONDUCTOR_DIR/kanban/done/$dep.md" ]] || { echo pending; return 0; }
+  done < <(fm_list "$file" depends-on)
+  echo all-done
 }
 
 progress_note() { # <task> <label> <artifact>

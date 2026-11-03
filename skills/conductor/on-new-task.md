@@ -2,6 +2,12 @@
 
 Triggered by the new task's `card` artifact (`work/<id>/card-*.md`).
 
+> A script handler (the file of this name under `scripts/handlers/`) does these steps without a
+> model. The loop runs it when it exists and is executable, and dispatches this skill otherwise.
+> This file stays as the documentation of what the script must do, as the fallback when the
+> script is absent, and as what `handler-replay.sh --record` runs to produce a fixture's
+> expectation. A skipped replay (step 0) is a success for the script: it exits 0 and moves nothing.
+
 ## Context
 
 - `$TASK_ID` — the task id, the directory name of the `card` artifact, e.g. `0003`
