@@ -49,6 +49,20 @@
 #                                   move it to merging and start it. The lock set is read again
 #                                   for every task, because starting a merge locks its files and
 #                                   the next task may overlap it. A failing lock check stops it
+#   register_untracked              for each task file with no card in any column, move it to backlog
+#                                   (task-move.sh creates the card). Starts nothing
+#   unblock_ready                   for each card in backlog whose depends-on are all done, move it to
+#                                   ready. Moves only: start_ready starts them. Unlike
+#                                   unblock_dependents it looks at every backlog card, not at the
+#                                   dependents of one task. A card whose depends-on cannot be read
+#                                   stops it, for the same reason
+#   resume_interrupted              for each card in a working stage, check that what the stage is
+#                                   waiting on exists: an auto stage needs the window <role>-<task>,
+#                                   else the worker is spawned again; a manual stage needs a file
+#                                   human-inbox/<task>-*.md, else the human is notified again. Cards
+#                                   in holding columns are left alone
+#   start_ready                     stage-start.sh for each card in ready: spawn the entry stage's
+#                                   worker, or notify. stage-start.sh skips a task with a live worker
 #   project_done                    return 0 if there is at least one task file and every task
 #                                   file has a card in done, else 1. It compares task by task, not
 #                                   by count, so a stray done card cannot make up for a missing one
@@ -183,6 +197,53 @@ release_merge_pending() {
     [[ "$guard" == free ]] || continue
     task-move.sh "$id" merging || return 1
     stage-start.sh "$id" merging || return 1
+  done
+}
+
+register_untracked() {
+  local file id
+  for file in "$CONDUCTOR_DIR"/tasks/*.md; do
+    [[ -f "$file" ]] || continue
+    id="$(basename "$file" .md)"
+    card_path "$id" > /dev/null && continue
+    task-move.sh "$id" backlog || return 1
+  done
+}
+
+unblock_ready() {
+  local card id deps
+  for card in "$CONDUCTOR_DIR"/kanban/backlog/*.md; do
+    [[ -f "$card" ]] || continue
+    id="$(basename "$card" .md)"
+    deps="$(deps_done "$id")" || return 1
+    [[ "$deps" == all-done ]] || continue
+    task-move.sh "$id" ready || return 1
+  done
+}
+
+resume_interrupted() {
+  local card id stage role mode windows
+  windows="$(tmux list-windows -t swarm -F '#{window_name}' 2> /dev/null || true)"
+  for card in "$CONDUCTOR_DIR"/kanban/*/*.md; do
+    [[ -f "$card" ]] || continue
+    id="$(basename "$card" .md)"
+    stage="$(basename "$(dirname "$card")")"
+    role="$(topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$stage")" || return 1
+    mode="$(topology-load.sh mode "$CONDUCTOR_DIR/topology.json" "$stage")" || return 1
+    if [[ -n "$role" ]]; then
+      grep -qxF -- "$role-$id" <<< "$windows" || worker-spawn.sh "$id" "$role" || return 1
+    elif [[ "$mode" == manual ]]; then
+      compgen -G "$CONDUCTOR_DIR/human-inbox/$id-*.md" > /dev/null 2>&1 \
+        || task-notify.sh --task "$id" --stage "$stage" || return 1
+    fi
+  done
+}
+
+start_ready() {
+  local card
+  for card in "$CONDUCTOR_DIR"/kanban/ready/*.md; do
+    [[ -f "$card" ]] || continue
+    stage-start.sh "$(basename "$card" .md)" ready || return 1
   done
 }
 

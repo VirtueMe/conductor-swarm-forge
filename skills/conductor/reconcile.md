@@ -4,6 +4,13 @@ Bring the board in line with what is on disk. Run it once when the conductor sta
 restarts: `startup.md` runs it in the interactive conductor, and `conductor-loop.sh` runs it
 as its first event in the headless one. It is safe to run again, and it does no polling.
 
+> A script handler (the file of this name under `scripts/handlers/`) does these steps without a
+> model. The loop runs it when it exists and is executable, and dispatches this skill otherwise.
+> This file stays as the documentation of what the script must do, as the fallback when the
+> script is absent, and as what `handler-replay.sh --record` runs to produce a fixture's
+> expectation. The script has no step 1 or 6 (`task-list.sh` only prints the board for a model to
+> read); it does steps 2 to 5 in this order.
+
 There is no artifact and no task for this event. Everything it needs is in the kanban columns,
 `tasks/` and the tmux windows.
 

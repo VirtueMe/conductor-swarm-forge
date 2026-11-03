@@ -1,0 +1,5 @@
+move 0001 backlog
+move 0001 ready
+spawn 0001 coder
+stage 0001 ready
+stage 0002 done

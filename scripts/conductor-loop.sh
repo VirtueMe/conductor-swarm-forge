@@ -24,7 +24,8 @@ set -euo pipefail
 # deadline, retry and halt rules as a dispatch, with CONDUCTOR_DIR (absolute), PATH with the
 # scripts, and TASK_ID, TASK_FILE and ARTIFACT set. Its exit status means what an adapter's does:
 # 0 finished, 2 cannot be handled (halts, no retry), anything else failed (retried). It costs no
-# model call, so it writes no usage line. The startup reconcile is always the model's for now.
+# model call, so it writes no usage line. The startup reconcile is resolved the same way, as
+# conductor/reconcile: $CONDUCTOR_HANDLERS_DIR/reconcile.sh, with no TASK_ID, TASK_FILE or ARTIFACT.
 #
 # The adapter contract, called as `adapter_dispatch <skill_content> <event>`, where <event>
 # is an artifact path or the word "startup" (the reconcile, which has no artifact or task):
@@ -361,9 +362,30 @@ dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "
   halt failed "$label" "the handler failed $MAX_ATTEMPTS time(s); last exit $rc"
 }
 
+# Decide how SKILL_NAME is handled, for the artifact (or "startup") named <label> in halt notices:
+# a script named for the skill is the handler; without one the skill goes to the model. Sets
+# HANDLER_SCRIPT (empty when the model handles it) and SKILL_CONTENT (empty when a script does).
+# This is the one place that says so for the loop, as handler-resolve.sh is for finding the script.
+SKILL_CONTENT=""
+resolve_handler() { # <label>
+  SKILL_CONTENT=""
+  HANDLER_SCRIPT="$(handler_script "$HANDLERS_DIR" "$SKILL_NAME")"
+  if [[ -x "$HANDLER_SCRIPT" ]]; then
+    :
+  elif [[ -e "$HANDLER_SCRIPT" ]]; then
+    # There, but it cannot run (a lost +x bit): the model must not quietly take over.
+    halt unresolvable "$1" "handler script is not executable: $HANDLER_SCRIPT"
+  else
+    HANDLER_SCRIPT=""
+    local skill_file="$CONDUCTOR_DIR/skills/${SKILL_NAME}.md"
+    [[ -f "$skill_file" ]] || halt unresolvable "$1" "no skill file: $skill_file"
+    SKILL_CONTENT="$(cat "$skill_file")"
+  fi
+}
+
 SKILL_NAME=""
 handle_event() { # <artifact path relative to the work dir>
-  local rel="$1" art type outcome skill_file skill_content
+  local rel="$1" art type outcome
   art="$WORK_DIR/$rel"
   SKILL_NAME=""
   HANDLER_SCRIPT=""
@@ -387,26 +409,14 @@ handle_event() { # <artifact path relative to the work dir>
     return 0
   fi
 
-  # A script named for the skill is the handler; without one the skill goes to the model.
-  HANDLER_SCRIPT="$(handler_script "$HANDLERS_DIR" "$SKILL_NAME")"
-  if [[ -x "$HANDLER_SCRIPT" ]]; then
-    skill_content=""
-  elif [[ -e "$HANDLER_SCRIPT" ]]; then
-    # There, but it cannot run (a lost +x bit): the model must not quietly take over.
-    halt unresolvable "$rel" "handler script is not executable: $HANDLER_SCRIPT"
-  else
-    HANDLER_SCRIPT=""
-    skill_file="$CONDUCTOR_DIR/skills/${SKILL_NAME}.md"
-    [[ -f "$skill_file" ]] || halt unresolvable "$rel" "no skill file: $skill_file"
-    skill_content="$(cat "$skill_file")"
-  fi
+  resolve_handler "$rel"
 
   TASK_ID="${rel%%/*}"
   export TASK_ID
   export ARTIFACT="$art"
   export TASK_FILE="$CONDUCTOR_DIR/tasks/$TASK_ID.md"
 
-  dispatch_until_done "$rel" "$skill_content" "$art"
+  dispatch_until_done "$rel" "$SKILL_CONTENT" "$art"
   mark "$rel"
   EVENTS_DONE=$(( EVENTS_DONE + 1 ))
 }
@@ -414,20 +424,20 @@ handle_event() { # <artifact path relative to the work dir>
 # The startup reconcile (skills/conductor/reconcile.md) runs first, on every start: register
 # untracked tasks, unblock ready ones, respawn a worker whose window was lost, start the entry
 # stage. It is the same skill the interactive conductor runs from startup.md, it is safe to run
-# again, and it has no artifact or task of its own, so the event is the word "startup". A fresh
-# swarm has nothing to reconcile and skips the model call.
+# again, and it has no artifact or task of its own, so the event is the word "startup". Like any
+# handler it is a script when handlers/reconcile.sh exists, else the model's. A fresh swarm has
+# nothing to reconcile and skips it either way.
 reconcile() {
   if ! compgen -G "$CONDUCTOR_DIR/tasks/*.md" > /dev/null && ! compgen -G "$CONDUCTOR_DIR/kanban/*/*.md" > /dev/null; then
     log "nothing to reconcile"
     return 0
   fi
   SKILL_NAME="conductor/reconcile"
-  HANDLER_SCRIPT=""
   LAST_ERROR=""
-  local skill_file="$CONDUCTOR_DIR/skills/${SKILL_NAME}.md"
-  [[ -f "$skill_file" ]] || halt unresolvable startup "no skill file: $skill_file"
+  resolve_handler startup
   unset TASK_ID TASK_FILE ARTIFACT
-  dispatch_until_done startup "$(cat "$skill_file")" startup
+  dispatch_until_done startup "$SKILL_CONTENT" startup
+  HANDLER_SCRIPT=""
   SKILL_NAME=""
 }
 
