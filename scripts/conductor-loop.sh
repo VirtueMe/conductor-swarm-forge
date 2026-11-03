@@ -200,6 +200,7 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       event: $event,
       task: (if ($event | contains("/")) then ($event | split("/")[0]) else null end),
       handler: $handler,
+      role: "conductor",
       attempt: ($attempt | tonumber),
       outcome: $outcome,
       rc: ($rc | tonumber),
@@ -211,6 +212,7 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       cache_read_tokens: ($r.cache_read_tokens // null),
       cache_write_tokens: ($r.cache_write_tokens // null),
       cost_usd: ($r.cost_usd // null),
+      cost_source: (if ($r.cost_usd // null) != null then "reported" else "unknown" end),
       turns: ($r.turns // null),
       usage: $usage }' >> "$USAGE_LOG" 2> /dev/null || true
 }

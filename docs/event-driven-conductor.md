@@ -627,16 +627,22 @@ attempt to `$CONDUCTOR_DIR/usage.jsonl` before that happens: one JSON object per
 | `ts` | UTC time the attempt ended |
 | `event`, `task` | the artifact path (or `startup` for the reconcile) and its task id (null for the reconcile) |
 | `handler` | the skill that ran, for example `conductor/on-review-approved` |
+| `role` | who spent it: `conductor` for every line the loop writes. Lines from other writers (workers) carry their own role. A line from before this field existed has none |
 | `attempt`, `outcome`, `rc`, `duration_s` | which attempt of the event; `finished`, `failed`, `timeout`, `unusable` or `interrupted`; the exit status; how long it took |
 | `harness`, `model` | from the record; `harness` falls back to the adapter's name when there is none |
 | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `turns` | from the record, as defined under the adapter contract |
+| `cost_source` | how `cost_usd` is known: `reported` (the harness gave a cost), `estimated` (computed from a price table; nothing writes this yet) or `unknown` (no cost: a harness that has none, such as Codex, or an attempt with no record). It is `unknown` exactly when `cost_usd` is null, today. A line from before this field existed has none, and a reader treats a null `cost_usd` as unknown |
 | `usage` | `reported` if the adapter left a record, `none` if not |
 
 - **One line per attempt, not per event.** A retried event costs money each time, and so does an
   attempt that fails.
 - **Unknown is not free.** An attempt with no record (a Codex run killed by the timeout, a
-  harness that returned nothing parseable) is logged with `usage: none` and null tokens and cost.
-  Codex's records always have a null `cost_usd`. Both mean "not known", never zero.
+  harness that returned nothing parseable) is logged with `usage: none`, `cost_source: unknown`
+  and null tokens and cost. Codex's records always have a null `cost_usd`, so their
+  `cost_source` is `unknown` while their tokens are real. Both mean "not known", never zero.
+- **Fields that can be null:** `task` (the reconcile), `model`, the four token counts and
+  `cost_usd` and `turns` (an attempt with no record), and `cost_usd` alone for a harness that has
+  no cost. `role`, `cost_source`, `usage` and the fields of the attempt itself are always there.
 - **A stopped loop leaves a line.** If the loop is stopped with `TERM` or `INT` mid-dispatch, the
   cleanup writes an `interrupted` line for the attempt in flight, so its spend is not invisible.
   Whatever the harness had already spent is not known. A loop killed with `KILL`, or a machine

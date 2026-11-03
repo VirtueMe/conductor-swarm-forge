@@ -7,7 +7,8 @@ set -euo pipefail
 # Usage: usage-summary.sh [--file <usage.jsonl>] [--since <timestamp>]
 # Env:   CONDUCTOR_DIR (default: .conductor)
 #
-# The log has one JSON line per dispatch attempt (see conductor-loop.sh). A cost of null means
+# The log has one JSON line per dispatch attempt (see conductor-loop.sh; the fields are listed in
+# docs/event-driven-conductor.md, "Usage log"). A cost of null means
 # the harness did not report one: Codex never does, and a run that was killed or failed before
 # it answered leaves no record. Those attempts are counted as "unknown", never as free, so the
 # known total is a floor, not the bill.
