@@ -237,8 +237,10 @@ cat > "$STUB/task-move.sh" << 'S'
 #!/usr/bin/env bash
 echo "task-move $*" >> "$STUB_LOG"
 for f in "$CONDUCTOR_DIR"/kanban/*/"$1".md; do
-  [[ -f "$f" ]] && { mkdir -p "$CONDUCTOR_DIR/kanban/$2"; mv "$f" "$CONDUCTOR_DIR/kanban/$2/$1.md"; break; }
+  [[ -f "$f" ]] && { mkdir -p "$CONDUCTOR_DIR/kanban/$2"; mv "$f" "$CONDUCTOR_DIR/kanban/$2/$1.md"; exit 0; }
 done
+# no card yet: like the real one, create it
+mkdir -p "$CONDUCTOR_DIR/kanban/$2"; printf -- '---\nid: %s\n---\n' "$1" > "$CONDUCTOR_DIR/kanban/$2/$1.md"
 exit 0
 S
 export REAL_TASK_LOCKS="$SCRIPTS_DIR/task-locks.sh"
@@ -338,6 +340,97 @@ board_reset
 bcard 0001 "done"
 RC=0; project_done || RC=$?
 assert_eq "no task files is not a finished project" "$RC" "1"
+
+# Working stages for the reconcile steps: in-progress (coder), validation (validator), review
+# (reviewer), merging (merger) are auto; a manual stage needs its own topology.
+cat > "$STUB/worker-spawn.sh" << 'S'
+#!/usr/bin/env bash
+echo "worker-spawn $*" >> "$STUB_LOG"
+S
+cat > "$STUB/task-notify.sh" << 'S'
+#!/usr/bin/env bash
+echo "task-notify $*" >> "$STUB_LOG"
+S
+chmod +x "$STUB/worker-spawn.sh" "$STUB/task-notify.sh"
+
+section "10 · Registering the tasks that have no card"
+board_reset
+btask 0001; btask 0002; btask 0003; bcard 0002 review; bcard 0003 "done"
+register_untracked
+assert_eq "only the task with no card in any column is moved to backlog" "$(calls)" "task-move 0001 backlog"
+assert_eq "and gets its card" "$([[ -f "$CONDUCTOR_DIR/kanban/backlog/0001.md" ]] && echo yes)" "yes"
+reset; register_untracked
+assert_eq "run again it does nothing" "$(calls)" ""
+board_reset
+RC=0; register_untracked || RC=$?
+assert_eq "no tasks is nothing to do" "$RC" "0"
+
+section "11 · Unblocking every backlog card that is ready"
+board_reset
+btask 0001; btask 0002 0001; btask 0003 0001 0004; btask 0004; btask 0005; btask 0006 0009
+bcard 0001 "done"; bcard 0002 backlog; bcard 0003 backlog; bcard 0004 in-progress; bcard 0005 backlog; bcard 0006 backlog
+unblock_ready
+assert_eq "cards whose dependencies are all done go to ready, and nothing is started" \
+  "$(calls)" "$(printf 'task-move 0002 ready\ntask-move 0005 ready')"
+assert_eq "one still waiting stays" "$([[ -f "$CONDUCTOR_DIR/kanban/backlog/0003.md" ]] && echo yes)" "yes"
+assert_eq "so does one waiting on an ID with no card" "$([[ -f "$CONDUCTOR_DIR/kanban/backlog/0006.md" ]] && echo yes)" "yes"
+reset; unblock_ready
+assert_eq "run again it does nothing new" "$(calls)" ""
+board_reset
+btask 0001; bcard 0001 backlog
+sed -i 's/^depends-on: \[\]$/depends-on: [0009]/' "$CONDUCTOR_DIR/tasks/0001.md"
+RC=0; unblock_ready 2> "$TMP/err" || RC=$?
+assert_eq "an unreadable depends-on is a failure, not skipped" "$RC" "1"
+assert_eq "and moves nothing" "$(calls)" ""
+
+section "12 · Resuming interrupted work"
+# The tmux stub lists the windows conductor, coder-0001 and reviewer-0002.
+board_reset
+bcard 0001 in-progress; bcard 0002 review; bcard 0003 in-progress; bcard 0004 validation
+bcard 0005 backlog; bcard 0006 ready; bcard 0007 merge-pending; bcard 0008 "done"
+resume_interrupted
+assert_eq "a working-stage card with no window gets its worker; one with its window, and holding columns, do not" \
+  "$(calls | grep -v '^tmux ')" "$(printf 'worker-spawn 0003 coder\nworker-spawn 0004 validator')"
+assert_eq "the window must be that role's: reviewer-0002 does not stand in for a coder" \
+  "$(board_reset; bcard 0002 in-progress; resume_interrupted; calls | grep -v '^tmux ')" "worker-spawn 0002 coder"
+RC=0; board_reset; bcard 0001 in-progress; resume_interrupted || RC=$?
+assert_eq "all consistent: exit 0" "$RC" "0"
+assert_eq "and nothing is spawned" "$(calls | grep -c '^worker-spawn' || true)" "0"
+
+section "13 · Resuming a manual stage"
+cp "$CONDUCTOR_DIR/topology.json" "$TMP/topology.auto"
+jq '.working_stages["review"] = {"mode":"manual","await":"human-review","skill":"reviewer/review"}' "$TMP/topology.auto" > "$CONDUCTOR_DIR/topology.json" 2> /dev/null || true
+if jq -e '.working_stages.review.mode == "manual"' "$CONDUCTOR_DIR/topology.json" > /dev/null 2>&1; then
+  board_reset; rm -rf "$CONDUCTOR_DIR/human-inbox"
+  bcard 0001 review; bcard 0002 review
+  mkdir -p "$CONDUCTOR_DIR/human-inbox"; touch "$CONDUCTOR_DIR/human-inbox/0002-20261103-100000.md"
+  resume_interrupted
+  assert_eq "the manual card with no inbox file is notified again; the one with a file is not" \
+    "$(calls | grep -v '^tmux ')" "task-notify --task 0001 --stage review"
+else
+  fail "could not build a manual topology (jq missing?)"
+fi
+cp "$TMP/topology.auto" "$CONDUCTOR_DIR/topology.json"
+
+section "14 · A failing spawn stops the resume"
+board_reset
+bcard 0003 in-progress; bcard 0004 validation
+# shellcheck disable=SC2016  # the stub's own $* and $STUB_LOG
+printf '#!/usr/bin/env bash\necho "worker-spawn $*" >> "$STUB_LOG"\nexit 1\n' > "$STUB/worker-spawn.sh"
+RC=0; resume_interrupted || RC=$?
+assert_eq "exit 1" "$RC" "1"
+assert_eq "at the first failure" "$(calls | grep -c '^worker-spawn' || true)" "1"
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\necho "worker-spawn $*" >> "$STUB_LOG"\n' > "$STUB/worker-spawn.sh"
+
+section "15 · Starting the ready cards"
+board_reset
+bcard 0001 ready; bcard 0002 ready; bcard 0003 backlog; bcard 0004 in-progress
+start_ready
+assert_eq "each ready card is started" "$(calls)" "$(printf 'stage-start 0001 ready\nstage-start 0002 ready')"
+board_reset
+RC=0; start_ready || RC=$?
+assert_eq "none ready is nothing to do" "$RC" "0"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

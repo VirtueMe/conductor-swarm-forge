@@ -739,7 +739,8 @@ if [[ -x "$SCRIPTS_DIR/handlers/on-review-approved.sh" && -x "$SCRIPTS_DIR/handl
    && -x "$SCRIPTS_DIR/handlers/on-validation-failed.sh" && -x "$SCRIPTS_DIR/handlers/on-review-rejected.sh" \
    && -x "$SCRIPTS_DIR/handlers/on-new-task.sh" \
    && -x "$SCRIPTS_DIR/handlers/on-signal-complete.sh" \
-   && -x "$SCRIPTS_DIR/handlers/on-merge-success.sh" ]]; then
+   && -x "$SCRIPTS_DIR/handlers/on-merge-success.sh" \
+   && -x "$SCRIPTS_DIR/handlers/reconcile.sh" ]]; then
   ok "and the shipped handlers are executable"
 else
   fail "and the shipped handlers are executable"
@@ -826,6 +827,58 @@ expect_grep 'not executable' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt sa
 assert_eq "the model was not asked instead" "$(dispatches)" "0"
 assert_eq "the script did not run" "$(wc -l < "$SH_LOG" | tr -d ' ')" "0"
 assert_eq "the event is still unprocessed" "$(unprocessed | wc -l | tr -d ' ')" "1"
+
+section "44h · The startup reconcile is a script when handlers/reconcile.sh exists"
+new_swarm
+rm -rf "$H"; mkdir -p "$H"; export CONDUCTOR_HANDLERS_DIR="$H"
+create_task
+cat > "$H/reconcile.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+echo "reconciled task=[${TASK_ID:-}] file=[${TASK_FILE:-}] artifact=[${ARTIFACT:-}] dir=$CONDUCTOR_DIR loop=${CONDUCTOR_LOOP:-}" >> "$SH_LOG"
+SH_EOF
+chmod +x "$H/reconcile.sh"; : > "$SH_LOG"; : > "$STUB_LOG"
+TASK_ID=leak TASK_FILE=leak ARTIFACT=leak run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the script ran once" "$(grep -c '^reconciled ' "$SH_LOG" || true)" "1"
+expect_grep "^reconciled task=\[\] file=\[\] artifact=\[\] dir=$CONDUCTOR_DIR loop=1" "$SH_LOG" "with no task and no artifact, and the conductor dir"
+assert_eq "the model was not dispatched for it" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "0"
+expect_grep 'conductor/reconcile (script)' "$TMP/loop.err" "the window says it was a script"
+assert_eq "no usage line: no model was called" "$([[ -s "$CONDUCTOR_DIR/usage.jsonl" ]] && echo some || echo none)" "none"
+
+section "44i · A failing reconcile script is retried, then halts before any event"
+new_swarm; export CONDUCTOR_HANDLERS_DIR="$H"
+create_task; signal 0001 signal complete; sleep 1
+# shellcheck disable=SC2016  # the script's own $SH_LOG
+printf '#!/usr/bin/env bash\necho try >> "$SH_LOG"\necho "board unreadable" >&2\nexit 1\n' > "$H/reconcile.sh"
+chmod +x "$H/reconcile.sh"; : > "$SH_LOG"
+CONDUCTOR_MAX_ATTEMPTS=2 run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "two attempts" "$(wc -l < "$SH_LOG" | tr -d ' ')" "2"
+assert_eq "halt kind" "$(halt_kind)" "failed"
+expect_grep '^artifact: startup$' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt names the startup"
+expect_grep 'board unreadable' "$CONDUCTOR_DIR/conductor-loop.halted" "with the script's last error"
+assert_eq "no event was handled and the model was not asked" "$(dispatches)" "0"
+
+section "44j · With no reconcile script the model is dispatched as before"
+new_swarm; export CONDUCTOR_HANDLERS_DIR="$H"
+create_task
+rm -f "$H"/*.sh
+run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the reconcile skill went to the model" "$(grep -c '^reconcile # Skill: Reconcile' "$STUB_LOG" || true)" "1"
+
+section "44k · A reconcile script that is not executable halts, not the model"
+new_swarm; export CONDUCTOR_HANDLERS_DIR="$H"
+create_task
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\necho ran >> "$SH_LOG"\n' > "$H/reconcile.sh"   # deliberately no chmod +x
+: > "$SH_LOG"
+run_loop
+assert_eq "exit 1" "$RC" "1"
+assert_eq "halt kind" "$(halt_kind)" "unresolvable"
+expect_grep 'not executable' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt says why"
+assert_eq "the model was not asked instead" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "0"
+assert_eq "the script did not run" "$(wc -l < "$SH_LOG" | tr -d ' ')" "0"
 unset CONDUCTOR_HANDLERS_DIR
 
 echo ""

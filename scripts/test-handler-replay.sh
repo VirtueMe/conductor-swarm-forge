@@ -294,6 +294,61 @@ printf 'move 0001 merging\nspawn 0001 merger\nstage 0001 merging\n' > "$TMP/sd1/
 RC=0; OUT="$("$GATE" "$TMP/sd1" --handlers-dir "$H" 2>&1)" || RC=$?
 assert_eq "an expect without the shutdown does not match: exit 1" "$RC" "1"
 
+section "23 · A fixture with no event runs the startup reconcile"
+# No `event` file: the handler is conductor/reconcile, run with no task and no artifact, and the
+# outcome lists the stage of every card. `windows` says which tmux windows exist; a human-inbox
+# directory in the fixture is copied as it is.
+rec_fixture() { # <name>: a board with a task in 'design', whose worker window may or may not exist
+  rm -rf "${TMP:?}/${1:?}"; mkdir -p "$TMP/$1/tasks" "$TMP/$1/kanban/design" "$TMP/$1/kanban/backlog"
+  printf -- '---\nid: "0001"\n---\n' > "$TMP/$1/tasks/0001.md"
+  printf -- '---\nid: "0002"\n---\n' > "$TMP/$1/tasks/0002.md"
+  cp "$TMP/$1/tasks/0001.md" "$TMP/$1/kanban/design/0001.md"
+  cp "$TMP/$1/tasks/0002.md" "$TMP/$1/kanban/backlog/0002.md"
+}
+rec_fixture rc1
+handler reconcile << 'S'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${TASK_ID:-}${TASK_FILE:-}${ARTIFACT:-}" ]] || { echo "the reconcile has no task or artifact" >&2; exit 1; }
+tmux list-windows -t swarm -F '#{window_name}' | grep -qx 'architect-0001' || worker-spawn.sh 0001 architect
+S
+printf 'spawn 0001 architect\nstage 0001 design\nstage 0002 backlog\n' > "$TMP/rc1/expect"
+RC=0; OUT="$("$GATE" "$TMP/rc1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "no window: the worker is respawned, every card's stage is listed: exit 0" "$RC" "0"
+printf 'architect-0001\n' > "$TMP/rc1/windows"
+printf 'stage 0001 design\nstage 0002 backlog\n' > "$TMP/rc1/expect"
+RC=0; OUT="$("$GATE" "$TMP/rc1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "a window in 'windows': nothing is spawned: exit 0" "$RC" "0"
+rm -f "$TMP/rc1/windows"
+RC=0; OUT="$("$GATE" "$TMP/rc1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "the same expect without the window does not match: exit 1" "$RC" "1"
+rm -f "$H/reconcile.sh"
+RC=0; OUT="$("$GATE" "$TMP/rc1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "no reconcile script: exit 3" "$RC" "3"
+mkdir -p "$TMP/rc1/human-inbox"; touch "$TMP/rc1/human-inbox/0001-x.md"
+handler reconcile << 'S'
+#!/usr/bin/env bash
+set -euo pipefail
+compgen -G "$CONDUCTOR_DIR/human-inbox/0001-*.md" > /dev/null || task-notify.sh --task 0001 --stage design
+S
+printf 'stage 0001 design\nstage 0002 backlog\n' > "$TMP/rc1/expect"
+RC=0; OUT="$("$GATE" "$TMP/rc1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "a human-inbox dir in the fixture reaches the handler: exit 0" "$RC" "0"
+
+section "24 · Recording a fixture with no event runs the reconcile through the loop"
+cat > "$STUB_ADAPTER" << 'S'
+adapter_dispatch() {
+  if [[ "$2" == startup ]]; then echo startup >> "$STUB_STARTUPS"; task-move.sh 0002 ready; stage-start.sh 0002 ready; return 0; fi
+  echo "event $(basename "$2")" >> "$STUB_EVENTS"
+}
+S
+rec_fixture rc2
+record "$TMP/rc2"
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the reconcile was dispatched once" "$(wc -l < "$STUB_STARTUPS" | tr -d ' ')" "1"
+assert_eq "no event was handled" "$(wc -l < "$STUB_EVENTS" | tr -d ' ')" "0"
+assert_eq "expect has the move, the spawn and every card" "$(cat "$TMP/rc2/expect" 2>/dev/null)" "$(printf 'move 0002 ready\nspawn 0002 coder\nstage 0001 design\nstage 0002 ready')"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

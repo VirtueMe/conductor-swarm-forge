@@ -24,7 +24,9 @@ set -euo pipefail
 #
 # A fixture (see tests/handler-replay/README.md) is a .conductor-shaped tree plus `event` (the
 # artifact that triggers the handler), `locks` (what task-locks.sh reports as locked) and `expect`,
-# and optionally `config.md` (the project config a handler reads, test-cmd say).
+# and optionally `config.md` (the project config a handler reads, test-cmd say), `windows` (the tmux
+# windows that exist) and `human-inbox/`. A fixture with no `event` is the startup reconcile (no task,
+# no artifact); its outcome lists the stage of every card.
 # The fixture is copied first and never modified, except that --record writes `expect`.
 #
 # Both modes run against a scratch copy of scripts/. In it worker-spawn.sh, task-notify.sh and
@@ -66,9 +68,15 @@ done
 
 bad() { echo "handler-replay: $*" >&2; exit 2; }
 [[ -d "$FIXTURE" ]] || bad "no such fixture: $FIXTURE"
-for f in event tasks work; do
-  [[ -e "$FIXTURE/$f" ]] || bad "fixture $FIXTURE has no '$f'"
-done
+[[ -e "$FIXTURE/tasks" ]] || bad "fixture $FIXTURE has no 'tasks'"
+# No `event` file means the startup reconcile: it has no artifact and no task, so the fixture is
+# the board alone and `work` may be absent (a task nobody has worked on has no artifacts).
+if [[ -e "$FIXTURE/event" ]]; then
+  [[ -e "$FIXTURE/work" ]] || bad "fixture $FIXTURE has no 'work'"
+  HAS_EVENT=true
+else
+  HAS_EVENT=false
+fi
 FIXTURE="$(cd "$FIXTURE" && pwd)"
 if [[ "$MODE" == replay ]]; then
   [[ -e "$FIXTURE/expect" ]] || bad "fixture $FIXTURE has no 'expect' (record one with --record)"
@@ -121,12 +129,21 @@ echo "shutdown" >> "$REPLAY_CALLS"
 S
 chmod +x "$SCR"/worker-spawn.sh "$SCR"/task-notify.sh "$SCR"/task-locks.sh "$SCR"/conductor-shutdown.sh
 BIN="$TMP/bin"; mkdir -p "$BIN"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/tmux"; chmod +x "$BIN/tmux"   # no windows, nothing to close
+# tmux: list-windows answers the fixture's `windows` (none by default); anything else does nothing.
+cat > "$BIN/tmux" << 'S'
+#!/usr/bin/env bash
+[[ "${1:-}" == list-windows ]] && cat "$REPLAY_WINDOWS"
+exit 0
+S
+chmod +x "$BIN/tmux"
 
 # --- The scratch conductor dir ----------------------------------------------
 CD="$TMP/.conductor"
 mkdir -p "$CD"
-cp -r "$FIXTURE/tasks" "$FIXTURE/work" "$CD/"
+cp -r "$FIXTURE/tasks" "$CD/"
+mkdir -p "$CD/work"
+[[ -d "$FIXTURE/work" ]] && cp -r "$FIXTURE/work/." "$CD/work/"
+[[ -d "$FIXTURE/human-inbox" ]] && cp -r "$FIXTURE/human-inbox" "$CD/"
 [[ -d "$FIXTURE/kanban" ]] && cp -r "$FIXTURE/kanban" "$CD/"
 [[ -f "$FIXTURE/config.md" ]] && cp "$FIXTURE/config.md" "$CD/config.md"
 if [[ -f "$FIXTURE/topology.json" ]]; then
@@ -138,24 +155,36 @@ while IFS= read -r stage; do mkdir -p "$CD/kanban/$stage"; done \
   < <("$SRC_SCRIPTS/topology-load.sh" stages "$CD/topology.json")
 LOCKS="$TMP/locks"
 if [[ -f "$FIXTURE/locks" ]]; then cp "$FIXTURE/locks" "$LOCKS"; else : > "$LOCKS"; fi
+# The tmux windows that exist: what `tmux list-windows` answers (none when the fixture has no file).
+WINDOWS="$TMP/windows"
+if [[ -f "$FIXTURE/windows" ]]; then cp "$FIXTURE/windows" "$WINDOWS"; else : > "$WINDOWS"; fi
 find "$CD/work" -name '*.md' | sort > "$TMP/before"
 
 # --- The event, and which skill handles it ----------------------------------
-EVENT_REL="$(head -1 "$FIXTURE/event")"
-ARTIFACT="$CD/$EVENT_REL"
-[[ -f "$ARTIFACT" ]] || bad "the event names a file the fixture does not have: $EVENT_REL"
-TASK_ID="$(basename "$(dirname "$EVENT_REL")")"
-type="$(fm_field "$ARTIFACT" type)"
-outcome="$(fm_field "$ARTIFACT" outcome)"
-skill="$("$SRC_SCRIPTS/topology-load.sh" conductor-skill "$CD/topology.json" "$type" ${outcome:+"$outcome"})" \
-  || bad "cannot resolve a handler for $type${outcome:+/$outcome}"
-[[ -n "$skill" ]] || bad "no handler for $type${outcome:+/$outcome}: the event is ignored"
+if [[ "$HAS_EVENT" == true ]]; then
+  EVENT_REL="$(head -1 "$FIXTURE/event")"
+  ARTIFACT="$CD/$EVENT_REL"
+  [[ -f "$ARTIFACT" ]] || bad "the event names a file the fixture does not have: $EVENT_REL"
+  TASK_ID="$(basename "$(dirname "$EVENT_REL")")"
+  type="$(fm_field "$ARTIFACT" type)"
+  outcome="$(fm_field "$ARTIFACT" outcome)"
+  skill="$("$SRC_SCRIPTS/topology-load.sh" conductor-skill "$CD/topology.json" "$type" ${outcome:+"$outcome"})" \
+    || bad "cannot resolve a handler for $type${outcome:+/$outcome}"
+  [[ -n "$skill" ]] || bad "no handler for $type${outcome:+/$outcome}: the event is ignored"
+else
+  EVENT_REL="" ARTIFACT="" TASK_ID=""
+  skill="conductor/reconcile"
+fi
 
 # Run <command...> in the scratch setup, as a handler (or the loop) would see it.
 in_scratch() {
-  env CONDUCTOR_DIR="$CD" SCRIPTS_DIR="$SCR" PATH="$SCR:$BIN:$PATH" CONDUCTOR_LOOP=1 \
-      TASK_ID="$TASK_ID" TASK_FILE="$CD/tasks/$TASK_ID.md" ARTIFACT="$ARTIFACT" \
-      REPLAY_CALLS="$CALLS" REPLAY_LOCKS="$LOCKS" "$@"
+  # The reconcile has no task and no artifact: those variables are unset, as the loop leaves them.
+  local unset_args=()
+  [[ "$HAS_EVENT" == true ]] || unset_args=(-u TASK_ID -u TASK_FILE -u ARTIFACT)
+  env ${unset_args[@]+"${unset_args[@]}"} \
+      CONDUCTOR_DIR="$CD" SCRIPTS_DIR="$SCR" PATH="$SCR:$BIN:$PATH" CONDUCTOR_LOOP=1 \
+      ${TASK_ID:+TASK_ID="$TASK_ID" TASK_FILE="$CD/tasks/$TASK_ID.md" ARTIFACT="$ARTIFACT"} \
+      REPLAY_CALLS="$CALLS" REPLAY_LOCKS="$LOCKS" REPLAY_WINDOWS="$WINDOWS" "$@"
 }
 
 # What happened, as the three groups of lines, into $ACTUAL.
@@ -166,9 +195,11 @@ collect_outcome() {
       echo "move $(fm_field "$f" task-id) $(fm_field "$f" to)"
     done
     cat "$CALLS"
-    for c in "$CD"/kanban/*/"$TASK_ID".md; do
-      [[ -f "$c" ]] && echo "stage $TASK_ID $(basename "$(dirname "$c")")"
-    done
+    # One event: the card of its task. The reconcile has no task, so every card, by task.
+    # shellcheck disable=SC2231  # the glob is wanted: TASK_ID, or * when there is none
+    for c in "$CD"/kanban/*/${TASK_ID:-*}.md; do
+      [[ -f "$c" ]] && echo "stage $(basename "$c" .md) $(basename "$(dirname "$c")")"
+    done | LC_ALL=C sort -k2,2 -s
   } > "$ACTUAL"
 }
 
@@ -193,16 +224,21 @@ if [[ "$MODE" == record ]]; then
 
   # The loop handles what the ledger does not list. List everything but the event, so it handles
   # exactly the event (without a ledger it would list the whole history as already done).
+  # With no event (the reconcile is what is recorded) it lists everything: no event is left to handle.
   (cd "$CD/work" && find . -name '*.md' | sed 's|^\./||' | grep -vxF -- "${EVENT_REL#work/}" || true) > "$CD/processed.log"
 
-  # The startup reconcile would send the whole board to the model and could move cards before the
-  # event; it is not what is being recorded. Everything else goes to the real adapter.
+  # For an event, the startup reconcile would send the whole board to the model and could move
+  # cards before the event; it is not what is being recorded. Everything else goes to the real
+  # adapter. A fixture with no event records the reconcile itself, so nothing is skipped.
   WRAP="$TMP/adapter.sh"
+  # shellcheck disable=SC2016  # written into the wrapper as it is: $2 is for the wrapper
+  SKIP_STARTUP='[[ "$2" == startup ]] && return 0'
+  [[ "$HAS_EVENT" == true ]] || SKIP_STARTUP=':'
   cat > "$WRAP" << S
 source "$REAL_ADAPTER"
 eval "real_\$(declare -f adapter_dispatch)"
 adapter_dispatch() {
-  [[ "\$2" == startup ]] && return 0
+  $SKIP_STARTUP
   real_adapter_dispatch "\$@"
 }
 S

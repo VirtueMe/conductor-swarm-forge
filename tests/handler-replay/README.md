@@ -26,11 +26,18 @@ One directory per situation, shaped like a `.conductor` so the gate can copy it:
 | `tasks/<id>.md` | the task file |
 | `work/<id>/*.md` | the task's artifacts, including the one that triggers the handler |
 | `kanban/<stage>/<id>.md` | the card, in the stage it is in when the event arrives |
-| `event` | one line: the triggering artifact, relative to the conductor dir (`work/0001/review-….md`) |
+| `event` | one line: the triggering artifact, relative to the conductor dir (`work/0001/review-….md`). Leave it out for the startup reconcile (below) |
 | `locks` | the files `task-locks.sh` reports as locked, one per line; empty for none |
+| `windows` | optional; the tmux windows that exist, one name per line (`coder-0001`). It is what `tmux list-windows` answers, so a handler sees those workers as alive. Without it no window exists |
+| `human-inbox/` | optional; copied as it is, for a handler that checks whether a notification is still outstanding (`human-inbox/0001-<timestamp>.md`) |
 | `config.md` | optional; the project config a handler reads (`test-cmd`, say). Without it the scratch conductor dir has none, so nothing is configured |
 | `expect` | the outcome the skill produced (below) |
 | `topology.json` | optional; the shipped `software-dev` topology when absent |
+
+A fixture with no `event` is the **startup reconcile**: the handler is `scripts/handlers/reconcile.sh`
+(skill `conductor/reconcile`), run with no task and no artifact (`TASK_ID`, `TASK_FILE` and `ARTIFACT`
+are unset, as the loop leaves them). `work/` may be absent, since a task nobody has worked on has no
+artifacts. As there is no one task, `expect` lists a `stage` line for every card, ordered by task ID.
 
 The gate never changes a fixture. The handler is found the way the loop finds it: the event's
 type and outcome resolve to a skill (`topology-load.sh conductor-skill`), and the handler is
@@ -39,7 +46,7 @@ type and outcome resolve to a skill (`topology-load.sh conductor-skill`), and th
 ## `expect`
 
 Plain lines, compared exactly and in this order: the moves, then the worker spawns, then the
-final stage.
+final stage (of every card, when the fixture has no `event`).
 
 ```
 move 0001 merging          each move made (a `moved` artifact written), in order
@@ -55,7 +62,8 @@ Nothing else is compared: not the notes a handler writes, not timestamps, not ar
 The handler runs against a scratch copy of `scripts/`. `worker-spawn.sh`, `task-notify.sh`,
 `task-locks.sh` and `conductor-shutdown.sh` are stubs that log or answer and do nothing else
 (`stage-start.sh` calls them by absolute path, so a stub on `PATH` would not be reached), and `tmux`
-is a stub on `PATH`. The `task-locks.sh` stub answers with the fixture's `locks` and the files of
+is a stub on `PATH` that answers `list-windows` from the fixture's `windows` and does nothing else.
+The `task-locks.sh` stub answers with the fixture's `locks` and the files of
 every card in `merging`, as the real one does, so a handler that starts several merges sees each
 lock taken. The rest
 is real: `task-move.sh`, `task-replay.sh`, `stage-start.sh` and `topology-load.sh` decide the moves
@@ -81,8 +89,9 @@ this yourself (it calls a model, a few cents each time), for example with `!` in
    adapter from the default workforce (`--adapter-file <file>` picks another), in the same stubbed
    scratch setup the gate uses, and writes `expect` from the moves, spawns and final stage. The
    loop is told every other artifact is already handled, so only the fixture's event runs. The
-   startup reconcile is skipped, because it is not what is being recorded, and a script handler for
-   the event is ignored, so the skill runs even after it has been converted. It never replaces an
+   startup reconcile is skipped, because it is not what is being recorded (a fixture with no `event`
+   records the reconcile itself: nothing is skipped and no event is handled), and a script handler
+   for the event is ignored, so the skill runs even after it has been converted. It never replaces an
    existing `expect` unless you add `--force`, and refuses a run in which the skill made no move and
    started no worker (`--allow-empty` records one anyway), because that is almost always a skill
    that did not act. The loop runs from a scratch directory, not from where you started it, and the
@@ -130,3 +139,20 @@ The six `merge-success-*` fixtures cover `on-merge-success`: `unblocks-dependent
 `dependent-blocked` (it still waits on another task), `releases-pending`, `pending-still-locked`
 (`locks` holds its file), `pending-overlap` (two waiting merges that overlap, so only the first can
 start) and `project-done` (the last task: the swarm is shut down).
+
+The five `reconcile-*` fixtures have no `event`: they are the startup reconcile, so `expect` lists
+a `stage` line for every card. `untracked` (a task with no card is registered and, having no
+dependencies, started), `unblocks-ready` (the backlog cards whose dependencies are done move to
+ready and start, one that still waits stays), `worker-missing` (a card in a working stage with no
+window is respawned, one whose window is listed in `windows` is not), `manual-notify-lost` (a card
+in a manual stage with no `human-inbox` file is notified again, on the manual topology of
+`review-approved-manual-merge`) and `consistent` (everything has its window and dependencies:
+no move, no spawn; recorded with `--allow-empty`).
+
+All five were recorded from the `reconcile` skill on 2026-11-03, and the script matches them. Four
+agreed with the script on the first run. `manual-notify-lost` did not: two live runs of the skill
+said the human-inbox file was present, with no such file in the fixture (a probe around the adapter
+showed no inbox before the model ran and none after), and a third run did what the skill says and
+re-notified. So the skill is not reliable on this step; the recorded `expect` is the third run,
+which is also what the skill's text asks for. This is the case for the script, not a difference
+the gate should accept.
