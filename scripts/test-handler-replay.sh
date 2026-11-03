@@ -274,6 +274,26 @@ fresh_fixture rec10
 record "$TMP/rec10"
 if grep -qx 'poll-interval: 1' "$STUB_CONFIGS" && ! grep -q 'test-cmd' "$STUB_CONFIGS"; then ok "and with the default config when the fixture has none"; else fail "and with the default config when the fixture has none ($(cat "$STUB_CONFIGS"))"; fi
 
+section "22 · The stubbed locks follow the board, and a shutdown is recorded"
+# task-locks.sh answers from the fixture's `locks` and from the cards in merging, as the real one
+# does, so a handler that releases several tasks sees the lock each release takes. A shutdown is
+# a world-changing call like a spawn, so the gate logs it instead of closing windows.
+handler on-review-approved << 'S'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$SCRIPTS_DIR/handler-steps.sh"
+route_task "$TASK_ID" review-approved locks=free
+[[ "$(task-locks.sh)" == *src/a.txt* ]] || { echo "the task now merging holds no lock" >&2; exit 1; }
+conductor-shutdown.sh
+S
+rm -rf "$TMP/sd1"; cp -r "$FIX/review-approved-locks-free" "$TMP/sd1"
+printf 'move 0001 merging\nspawn 0001 merger\nshutdown\nstage 0001 merging\n' > "$TMP/sd1/expect"
+RC=0; OUT="$("$GATE" "$TMP/sd1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "locks include the card now in merging, and the shutdown is logged: exit 0" "$RC" "0"
+printf 'move 0001 merging\nspawn 0001 merger\nstage 0001 merging\n' > "$TMP/sd1/expect"
+RC=0; OUT="$("$GATE" "$TMP/sd1" --handlers-dir "$H" 2>&1)" || RC=$?
+assert_eq "an expect without the shutdown does not match: exit 1" "$RC" "1"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

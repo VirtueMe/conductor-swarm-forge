@@ -44,6 +44,7 @@ final stage.
 ```
 move 0001 merging          each move made (a `moved` artifact written), in order
 spawn 0001 merger          each worker started, in order; `notify <task> <stage>` for a manual stage
+shutdown                   the swarm was shut down (`conductor-shutdown.sh`), in order with the spawns
 stage 0001 merging         the stage the card ended in
 ```
 
@@ -51,9 +52,12 @@ Nothing else is compared: not the notes a handler writes, not timestamps, not ar
 
 ## What the gate stubs
 
-The handler runs against a scratch copy of `scripts/`. `worker-spawn.sh`, `task-notify.sh` and
-`task-locks.sh` are stubs that log or answer and do nothing else (`stage-start.sh` calls them by
-absolute path, so a stub on `PATH` would not be reached), and `tmux` is a stub on `PATH`. The rest
+The handler runs against a scratch copy of `scripts/`. `worker-spawn.sh`, `task-notify.sh`,
+`task-locks.sh` and `conductor-shutdown.sh` are stubs that log or answer and do nothing else
+(`stage-start.sh` calls them by absolute path, so a stub on `PATH` would not be reached), and `tmux`
+is a stub on `PATH`. The `task-locks.sh` stub answers with the fixture's `locks` and the files of
+every card in `merging`, as the real one does, so a handler that starts several merges sees each
+lock taken. The rest
 is real: `task-move.sh`, `task-replay.sh`, `stage-start.sh` and `topology-load.sh` decide the moves
 and spawns. A real spawn also writes an `assigned` artifact and moves the card to the working
 stage; the stub does not, so `expect` records the decision to spawn, not those effects.
@@ -121,3 +125,8 @@ The five `signal-complete-*` fixtures (`design`, `test-cmd`, `chore-locks-free`,
 `feature-review`) cover each branch of the `on-signal-complete` rule. The `test-cmd` one carries a
 `config.md` with `test-cmd` set; the others have it empty, which is how `swarm-start.sh` writes an
 unconfigured project.
+
+The six `merge-success-*` fixtures cover `on-merge-success`: `unblocks-dependent`,
+`dependent-blocked` (it still waits on another task), `releases-pending`, `pending-still-locked`
+(`locks` holds its file), `pending-overlap` (two waiting merges that overlap, so only the first can
+start) and `project-done` (the last task: the swarm is shut down).

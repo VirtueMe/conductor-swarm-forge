@@ -1,0 +1,4 @@
+move 0001 done
+move 0002 merging
+spawn 0002 merger
+stage 0001 done
