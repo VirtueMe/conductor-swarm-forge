@@ -106,3 +106,7 @@ or merges by `locks`, and a feature goes to review.
 `validation-failed-rework` was recorded the same way from the `on-validation-failed` skill on
 2026-11-03 (once, so far), and the script matches it. The route has no guards, so one fixture
 covers it.
+
+`review-rejected-rework` was recorded the same way from the `on-review-rejected` skill on
+2026-11-03, and the script matches it. Its note is written before the move, where the skill writes
+it between the move and the stage start; the gate does not compare notes.
