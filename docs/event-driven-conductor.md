@@ -631,24 +631,47 @@ attempt to `$CONDUCTOR_DIR/usage.jsonl` before that happens: one JSON object per
 | `attempt`, `outcome`, `rc`, `duration_s` | which attempt of the event; `finished`, `failed`, `timeout`, `unusable` or `interrupted`; the exit status; how long it took |
 | `harness`, `model` | from the record; `harness` falls back to the adapter's name when there is none |
 | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `turns` | from the record, as defined under the adapter contract |
-| `cost_source` | how `cost_usd` is known: `reported` (the harness gave a cost), `estimated` (computed from a price table; nothing writes this yet) or `unknown` (no cost: a harness that has none, such as Codex, or an attempt with no record). It is `unknown` exactly when `cost_usd` is null, today. A line from before this field existed has none, and a reader treats a null `cost_usd` as unknown |
+| `estimated_cost_usd` | the cost computed from the price table (`scripts/usage-prices.json`) and the four token counts, or null when it cannot be: the model is not in the table, is null, is a `+` joined list of models, or the attempt has no record. Never a guess, never zero. Kept next to `cost_usd`, so the two can be compared |
+| `cost_source` | how the line's cost is known: `reported` (the harness gave `cost_usd`; the estimate, if any, sits beside it), `estimated` (no reported cost, but `estimated_cost_usd` is set, as for Codex on a priced model) or `unknown` (neither: an unpriced model, or an attempt with no record). A line from before this field existed has none, and a reader treats a null `cost_usd` as unknown |
 | `usage` | `reported` if the adapter left a record, `none` if not |
 
 - **One line per attempt, not per event.** A retried event costs money each time, and so does an
   attempt that fails.
 - **Unknown is not free.** An attempt with no record (a Codex run killed by the timeout, a
   harness that returned nothing parseable) is logged with `usage: none`, `cost_source: unknown`
-  and null tokens and cost. Codex's records always have a null `cost_usd`, so their
-  `cost_source` is `unknown` while their tokens are real. Both mean "not known", never zero.
+  and null tokens, cost and estimate. Codex's records always have a null `cost_usd`; on a priced
+  model its `cost_source` is `estimated`, on any other it is `unknown` while the tokens are real.
+  Both mean "not known", never zero.
 - **Fields that can be null:** `task` (the reconcile), `model`, the four token counts and
-  `cost_usd` and `turns` (an attempt with no record), and `cost_usd` alone for a harness that has
-  no cost. `role`, `cost_source`, `usage` and the fields of the attempt itself are always there.
+  `cost_usd` and `turns` (an attempt with no record), `cost_usd` alone for a harness that has no
+  cost, and `estimated_cost_usd` whenever the price table cannot price the line. A line from before
+  `estimated_cost_usd` existed has none; read it as null. `role`, `cost_source`, `usage` and the fields of the attempt itself are always there.
 - **A stopped loop leaves a line.** If the loop is stopped with `TERM` or `INT` mid-dispatch, the
   cleanup writes an `interrupted` line for the attempt in flight, so its spend is not invisible.
   Whatever the harness had already spent is not known. A loop killed with `KILL`, or a machine
   that loses power, leaves no line, because nothing runs afterwards.
 - **The log is a convenience.** A line that cannot be written never changes what the loop does.
   The loop needs `jq` for it and exits 3 with a message if it is missing.
+
+### Price table
+
+`scripts/usage-prices.json` holds dollars per million tokens for each model: `input`, `cache_read`,
+`cache_write` and `output`, with the date (`as_of`) and `source` of every price. The estimate is
+computed on one basis, stated in the file's `basis`: the four counts of a usage record do not
+overlap, so a harness that reports input including the cached part subtracts it first (Codex does,
+in its adapter). `cache_write` is the 5-minute write price; OpenAI charges nothing extra for
+cache writes, so its `cache_write` equals `input`. Prices change: add a model or update a price
+together with its date and source, and `scripts/test-usage-price.sh` checks that every entry has
+both and that the default workforce's models are priced.
+
+- `scripts/usage-price.sh estimate` prices one record on stdin; the loop calls it for every line.
+  A missing or unreadable table gives no estimate and never stops a line from being written.
+- `scripts/usage-price.sh unknown [--file F]` lists the models in a log that the table does not
+  price, and how many attempts used each.
+- `scripts/usage-price.sh compare [--file F]` lists the attempts with both a reported and an
+  estimated cost and the difference. The estimate ignores things a harness may charge for that
+  the record does not carry (a 1-hour cache write, a long-prompt tier), so a gap is expected;
+  a large one means a price is out of date.
 
 `scripts/usage-summary.sh [--file F] [--since TIMESTAMP]` totals it: the period, the known cost,
 how many attempts had no cost, tokens, the spend on attempts that did not finish, and the same

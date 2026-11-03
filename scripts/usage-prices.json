@@ -1,0 +1,25 @@
+{
+  "basis": "US dollars per million tokens, on the four disjoint counts of a usage record: input (neither read from nor written to a cache), cache_read, cache_write and output. A harness that reports input including the cached part has to subtract it before the record is written (the Codex adapter does). A model is listed under every id a harness may report it by (claude-haiku-4-5 and its dated id are separate entries with the same prices). cache_write is the 5-minute write price; a harness that charges nothing extra for cache writes (OpenAI) has it equal to input.",
+  "models": {
+    "claude-opus-4-8": {
+      "input": 5, "cache_read": 0.5, "cache_write": 6.25, "output": 25,
+      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    "claude-sonnet-4-6": {
+      "input": 3, "cache_read": 0.3, "cache_write": 3.75, "output": 15,
+      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    "claude-haiku-4-5": {
+      "input": 1, "cache_read": 0.1, "cache_write": 1.25, "output": 5,
+      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    "claude-haiku-4-5-20251001": {
+      "input": 1, "cache_read": 0.1, "cache_write": 1.25, "output": 5,
+      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    "gpt-5": {
+      "input": 1.25, "cache_read": 0.125, "cache_write": 1.25, "output": 10,
+      "as_of": "2026-11-03", "source": "https://developers.openai.com/api/docs/pricing"
+    }
+  }
+}

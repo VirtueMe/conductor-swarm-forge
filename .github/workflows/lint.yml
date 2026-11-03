@@ -169,6 +169,9 @@ jobs:
       - name: test-usage-summary
         run: bash scripts/test-usage-summary.sh
 
+      - name: test-usage-price
+        run: bash scripts/test-usage-price.sh
+
       - name: test-claude-dispatch
         run: bash scripts/test-claude-dispatch.sh
 

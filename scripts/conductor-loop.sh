@@ -193,7 +193,11 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
     record="$(cat "$DISPATCH_USAGE_FILE")"
     usage=reported
   fi
-  jq -nc --argjson r "$record" --arg usage "$usage" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  # Priced from the table; null when it cannot be, and the line is written either way.
+  local estimate
+  estimate="$("$SCRIPTS_DIR/usage-price.sh" estimate <<< "$record" 2> /dev/null)" || estimate=null
+  jq -e 'type == "number" or . == null' <<< "$estimate" > /dev/null 2>&1 || estimate=null
+  jq -nc --argjson r "$record" --argjson est "$estimate" --arg usage "$usage" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg event "$1" --arg attempt "$2" --arg outcome "$3" --arg rc "$4" --arg duration "$5" \
     --arg handler "${SKILL_NAME:-}" --arg adapter "$(basename "$ADAPTER_FILE" .sh)" '
     { ts: $ts,
@@ -212,7 +216,8 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       cache_read_tokens: ($r.cache_read_tokens // null),
       cache_write_tokens: ($r.cache_write_tokens // null),
       cost_usd: ($r.cost_usd // null),
-      cost_source: (if ($r.cost_usd // null) != null then "reported" else "unknown" end),
+      estimated_cost_usd: $est,
+      cost_source: (if ($r.cost_usd // null) != null then "reported" elif $est != null then "estimated" else "unknown" end),
       turns: ($r.turns // null),
       usage: $usage }' >> "$USAGE_LOG" 2> /dev/null || true
 }
