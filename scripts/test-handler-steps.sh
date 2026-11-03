@@ -95,6 +95,19 @@ assert_eq "no card for the task is a failure" "$RC" "1"
 assert_eq "and prints no answer" "$OUT" ""
 assert_eq "and does not guess from the locks" "$(grep -c task-locks "$STUB_LOG" || true)" "0"
 
+section "2b · Reading a field of the card"
+reset; card review src/a.txt
+sed -i 's/^id: 0001$/id: 0001\ntype: chore/' "$CONDUCTOR_DIR"/kanban/review/0001.md
+assert_eq "the card's type" "$(card_field 0001 type)" "chore"
+RC=0; OUT="$(card_field 0001 priority 2> "$TMP/err")" || RC=$?
+assert_eq "a field the card lacks is a failure" "$RC" "1"
+assert_eq "and prints no answer" "$OUT" ""
+if grep -q 'has no priority' "$TMP/err"; then ok "and says which field"; else fail "and says which field ($(cat "$TMP/err"))"; fi
+rm -f "$CONDUCTOR_DIR"/kanban/*/0001.md
+RC=0; OUT="$(card_field 0001 type 2> "$TMP/err")" || RC=$?
+assert_eq "no card for the task is a failure" "$RC" "1"
+assert_eq "and prints no answer" "$OUT" ""
+
 section "3 · Closing the finishing worker's window"
 reset
 close_worker_window 0001

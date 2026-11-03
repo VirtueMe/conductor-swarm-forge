@@ -87,7 +87,10 @@ new_swarm() {
   cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
   printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
   : > "$STUB_LOG"; : > "$STUB_RC"; rm -f "$STUB_HOOK"
-  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG STUB_USAGE STUB_ANSWER CONDUCTOR_HEARTBEAT CONDUCTOR_HANDLERS_DIR
+  unset CONDUCTOR_MAX_ATTEMPTS CONDUCTOR_DISPATCH_DEADLINE CONDUCTOR_KILL_GRACE CONDUCTOR_TIMEOUT_CMD STUB_RECONCILE_RC STUB_ERRMSG STUB_USAGE STUB_ANSWER CONDUCTOR_HEARTBEAT
+  # No script handles an event unless a section says so: these tests are about the loop, and would
+  # otherwise change each time a real handler in scripts/handlers is converted.
+  mkdir -p "$TMP/no-handlers"; export CONDUCTOR_HANDLERS_DIR="$TMP/no-handlers"
   export CONDUCTOR_RETRY_DELAY=0
 }
 create_task() { "$SCRIPTS_DIR/task-create.sh" --title "T" --type chore --description "x" > /dev/null; }
@@ -712,6 +715,31 @@ assert_eq "the model was not dispatched" "$(dispatches)" "0"
 assert_eq "recorded as processed" "$(unprocessed)" ""
 assert_eq "no usage line: no model was called" "$(ulines 0001/signal | wc -l | tr -d ' ')" "0"
 expect_grep 'script' "$TMP/loop.err" "the window says it was a script"
+
+section "44a · With no override, the handlers are the ones next to the loop"
+# The default is handlers/ beside conductor-loop.sh. The loop runs from a scratch copy of scripts/
+# whose handlers/ holds one stub, so this checks where it looks and not which real handlers exist.
+RC_ROOT="$TMP/loop-root"; rm -rf "$RC_ROOT"; mkdir -p "$RC_ROOT"
+cp -r "$SCRIPTS_DIR" "$RC_ROOT/scripts"
+for d in adapters integrations skills prompts topologies workforces; do
+  [[ -e "$ROOT_DIR/$d" ]] && ln -s "$ROOT_DIR/$d" "$RC_ROOT/$d"
+done
+rm -rf "$RC_ROOT/scripts/handlers"; mkdir -p "$RC_ROOT/scripts/handlers"
+cat > "$RC_ROOT/scripts/handlers/on-signal-complete.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+echo "ran task=$TASK_ID" >> "$SH_LOG"
+SH_EOF
+chmod +x "$RC_ROOT/scripts/handlers/on-signal-complete.sh"
+fresh_event; unset CONDUCTOR_HANDLERS_DIR; : > "$SH_LOG"; export SH_LOG
+LOOP="$RC_ROOT/scripts/conductor-loop.sh" run_loop
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the handler beside the loop ran" "$(grep -c '^ran task=0001' "$SH_LOG" || true)" "1"
+assert_eq "the model was not dispatched" "$(dispatches)" "0"
+if [[ -x "$SCRIPTS_DIR/handlers/on-review-approved.sh" && -x "$SCRIPTS_DIR/handlers/on-validation-passed.sh" ]]; then
+  ok "and the shipped handlers are executable"
+else
+  fail "and the shipped handlers are executable"
+fi
 
 section "44b · A script that fails is retried, then succeeds"
 fresh_event
