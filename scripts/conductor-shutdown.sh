@@ -19,6 +19,10 @@ echo "Shutting down swarm."
 
 tmux kill-window -t "swarm:architect" 2>/dev/null || true
 
+# A worker whose window was closed by hand left no usage line; read what it left now, as
+# interrupted, while the swarm still knows who it was.
+"$(cd "$(dirname "$0")" && pwd)/worker-usage.sh" sweep 2>/dev/null || true
+
 pid="$(cat "$CONDUCTOR_DIR/kanban-server.pid" 2>/dev/null || true)"
 if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; fi
 

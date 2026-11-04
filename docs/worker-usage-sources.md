@@ -110,6 +110,9 @@ worktree and with the same window name. Filter by start time (the spawn time, be
 
 ## Recommendation
 
+This is what the worker slice (#135) was built from; "Worker usage" in
+`docs/event-driven-conductor.md` describes what it does.
+
 **All three can be metered now**, none of them only partly:
 
 | Harness | Tokens | Model | Cost |

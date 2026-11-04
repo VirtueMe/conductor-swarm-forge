@@ -190,4 +190,11 @@ adapter_write_briefing \
 WORKER_PARAMS=$(get_params "$WORKER_TYPE")
 adapter_launch "$SESSION" "${WORKER_TYPE}-${TASK_ID}" "$WORKTREE_PATH" "$PROJECT_DIR" "$WORKER_PARAMS"
 
+# Note who was spawned, with which harness, where and when, so the usage can be read when the
+# window closes (worker-close.sh). The usage log is a convenience: a record that cannot be
+# written must not fail a spawn that has already started the worker.
+"$SCRIPTS_DIR/worker-usage.sh" spawned "$TASK_ID" "$WORKER_TYPE" "$ADAPTER_NAME" \
+  "$PROJECT_DIR/$WORKTREE_PATH" "$WORKER_PARAMS" \
+  || echo "worker-spawn.sh: could not note the worker for the usage log" >&2
+
 echo "Spawned $WORKER_TYPE ($ADAPTER_NAME) for task $TASK_ID — skill: $SKILL_PATH"

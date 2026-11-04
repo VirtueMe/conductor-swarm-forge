@@ -14,11 +14,11 @@ Triggered when a `signal-*.md` artifact with `outcome: complete` appears in `wor
 
 ## Steps
 
-1. Close the finishing worker's tmux window. The window is named `<role>-<id>`, so
-   find it by task id rather than assuming which role just finished:
+1. Close the finishing worker's tmux window and record what the worker spent. The script
+   finds the window, named `<role>-<id>`, by task id rather than assuming which role just
+   finished:
    ```bash
-   WIN=$(tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null | grep -E -- "-$TASK_ID\$" | head -1)
-   [[ -n "$WIN" ]] && tmux kill-window -t "swarm:$WIN" 2>/dev/null || true
+   worker-close.sh "$TASK_ID"
    ```
 
 2. **Gather the routing guards** the topology may consult for this event:

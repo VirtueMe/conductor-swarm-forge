@@ -375,7 +375,7 @@ Handlers share their steps through `scripts/handler-steps.sh`, which a script so
 
 | Function | What it does |
 | --- | --- |
-| `close_worker_window <task>` | closes the finishing worker's `<role>-<task>` window; a missing window is not an error |
+| `close_worker_window <task>` | closes the finishing worker's `<role>-<task>` window and records what the worker spent (`worker-close.sh`); a missing window is not an error |
 | `locks_guard <task>` | prints `free` or `held` for the task's `files-changed` against `task-locks.sh`. **Fails closed**: with no card, or a failing `task-locks.sh`, it prints nothing, says why on stderr and returns 1, so the handler stops. A card with no `files-changed` has nothing to clash with and is `free` |
 | `route_task <task> <event> [guard=value...]` | asks the topology for the destination, moves the task and starts the stage; sets `ROUTED_DEST`. No route is a failure and moves nothing; a failed move does not start the stage |
 
@@ -622,16 +622,15 @@ before the next attempt, so only the last one survives. The loop now appends eve
 attempt to `$CONDUCTOR_DIR/usage.jsonl` before that happens: one JSON object per line, so
 `jq` reads it directly and an append is atomic.
 
-The log covers the conductor's own dispatches. Workers write no line yet; what each harness leaves
-behind for them, and where a reading would go, is in `docs/worker-usage-sources.md`.
+The log holds the conductor's own dispatches and the workers' sessions (see "Worker usage" below).
 
 | Field | Meaning |
 | --- | --- |
 | `ts` | UTC time the attempt ended |
 | `event`, `task` | the artifact path (or `startup` for the reconcile) and its task id (null for the reconcile) |
-| `handler` | the skill that ran, for example `conductor/on-review-approved` |
-| `role` | who spent it: `conductor` for every line the loop writes. Lines from other writers (workers) carry their own role. A line from before this field existed has none |
-| `attempt`, `outcome`, `rc`, `duration_s` | which attempt of the event; `finished`, `failed`, `timeout`, `unusable` or `interrupted`; the exit status; how long it took |
+| `handler` | the skill that ran, for example `conductor/on-review-approved`. Null on a worker's line |
+| `role` | who spent it: `conductor` for a line the loop writes, the worker's own role (`coder`, `reviewer`, ...) for a worker's. A line from before this field existed has none |
+| `attempt`, `outcome`, `rc`, `duration_s` | which attempt of the event; `finished`, `failed`, `timeout`, `unusable` or `interrupted`; the exit status; how long it took. A worker's line has no attempt or exit status (both null), and its outcome is `finished` or `interrupted`; its duration runs from the spawn to the close |
 | `harness`, `model` | from the record; `harness` falls back to the adapter's name when there is none |
 | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `turns` | from the record, as defined under the adapter contract |
 | `estimated_cost_usd` | the cost computed from the price table (`scripts/usage-prices.json`) and the four token counts, or null when it cannot be: the model is not in the table, is null, is a `+` joined list of models, or the attempt has no record. Never a guess, never zero. Kept next to `cost_usd`, so the two can be compared |
@@ -706,6 +705,36 @@ handler $0.07 to $0.11, a reconcile $0.09 to $0.19 (it runs on every start with 
 board), Pi about $0.08; Codex reports tokens only. One real loop start on a two-card board, a
 reconcile and one handler, logged $0.23 in total. The log exists so that these numbers come from
 a real swarm instead of from test runs.
+
+### Worker usage
+
+Coder, validator, reviewer and merger run as interactive sessions in tmux windows, so there is no
+result to read when they finish. What each harness leaves on disk, and how that was found, is in
+`docs/worker-usage-sources.md`. Workers are metered from that:
+
+- **At spawn**, `worker-spawn.sh` calls `worker-usage.sh spawned`, which writes
+  `$CONDUCTOR_DIR/workers/<role>-<task>.json`: the role, the harness, the worktree and the start time.
+  Nothing can be read yet; the record is what lets a reader pick the worker's session out of
+  everything the harness has written. The `assigned` artifact holds the role, worktree and time
+  too, but it cannot say which workers have been read, which `sweep` has to know, so the record
+  is kept and removed when the worker is read.
+- **At close**, `worker-close.sh <task>` (called by `close_worker_window` and by the skills) closes
+  the window first, then runs `worker-usage.sh read`. Claude Code writes its cost only when it
+  exits, which the closed window causes, so the read waits a few seconds (`WORKER_CLOSE_WAIT`) for
+  it. The read finds the harness's sessions in that worktree written since the spawn, adds them up
+  and appends one line to `usage.jsonl` with the worker's `role` and `task`, in the shape above.
+  The record is then removed.
+- **A worker closed by hand** leaves its record behind. The next `worker-close.sh`, and the project's
+  shutdown, read such a worker as `interrupted` (`worker-usage.sh sweep`). A swarm that crashes
+  before either leaves the record unread.
+
+Each harness gives what it gives: Pi's own cost per message, Claude Code's cost from the line it
+writes on exit, Codex tokens only. A session killed with `SIGKILL` has its tokens but no Claude Code
+cost, so `cost_usd` is null and `cost_source` is `estimated`. Unknown is never zero: a worker whose
+session cannot be found, whose harness has no reader, or that closed before the model replied gets
+a line with null tokens, `usage: none` and `cost_source: unknown`, so the gap is in the log. A
+worker with no spawn record (one spawned before this existed) gets such a line too, with the role
+from its window name.
 
 ## Startup reconcile
 

@@ -172,6 +172,9 @@ jobs:
       - name: test-usage-price
         run: bash scripts/test-usage-price.sh
 
+      - name: test-worker-usage
+        run: bash scripts/test-worker-usage.sh
+
       - name: test-worker-usage-fixtures
         run: bash scripts/test-worker-usage-fixtures.sh
 
