@@ -178,6 +178,11 @@ cmd_spawned() {
     { task: $task, role: $role, adapter: $adapter, cwd: $cwd, params: $params,
       started_at: $started, started_epoch: ($epoch | tonumber) }' > "$tmp"
   mv "$tmp" "$file"
+  # A Codex worker draws on the subscription allowance: take the reading its run is measured from.
+  if [[ "$adapter" == codex ]]; then
+    "$SCRIPTS_DIR/allowance.sh" begin "worker:$role-$task" --kind worker --window "$role-$task" \
+      || echo "worker-usage.sh: could not take the allowance reading for $role-$task" >&2
+  fi
 }
 
 cmd_read() {
@@ -216,9 +221,16 @@ cmd_read() {
   fi
   [[ -z "$epoch" ]] || duration=$(( $(date +%s) - epoch ))
 
+  # What a Codex worker used of the subscription allowance, from the readings at its spawn and now.
+  local allowance=null
+  if [[ "$adapter" == codex ]]; then
+    allowance="$("$SCRIPTS_DIR/allowance.sh" end "worker:$role-$task" 2> /dev/null)" || allowance=null
+    jq -e . <<< "$allowance" > /dev/null 2>&1 || allowance=null
+  fi
+
   local line
   line="$(jq -nc --argjson r "$reading" --arg task "$task" --arg role "$role" --arg adapter "$adapter" \
-    --arg outcome "$outcome" --argjson duration "$duration" --arg usage "$usage" '
+    --arg outcome "$outcome" --argjson duration "$duration" --arg usage "$usage" --argjson allowance "$allowance" '
     { event: ($task + "/worker-" + $role),
       task: $task,
       handler: null,
@@ -235,7 +247,8 @@ cmd_read() {
       cache_write_tokens: $r.cache_write_tokens,
       cost_usd: $r.cost_usd,
       turns: $r.turns,
-      usage: $usage }')"
+      usage: $usage,
+      allowance: $allowance }')"
   usage_append "$USAGE_LOG" "$line"
   [[ -z "$rec" ]] || rm -f "$rec"
 }

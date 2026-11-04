@@ -6,8 +6,9 @@
 #   usage_append <file> <record>
 #     Appends one line to <file> (the usage log). <record> is a JSON object with the facts the
 #     writer knows: event, task, handler, role, attempt, outcome, rc, duration_s, harness, model,
-#     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, turns and
-#     usage. Anything missing is null. This adds what is the same for every writer: ts, the cost
+#     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, turns, usage
+#     and allowance (what a Codex run used of the subscription, from allowance.sh end). Anything
+#     missing is null. This adds what is the same for every writer: ts, the cost
 #     estimated from the price table (null when it cannot be priced), and cost_source, which is
 #     reported when the record has a cost_usd, estimated when only the estimate exists and unknown
 #     when neither does. Field names and meanings are in docs/event-driven-conductor.md, "Usage
@@ -41,6 +42,7 @@ usage_append() {
       estimated_cost_usd: $est,
       cost_source: (if ($r.cost_usd // null) != null then "reported" elif $est != null then "estimated" else "unknown" end),
       turns: ($r.turns // null),
-      usage: ($r.usage // null) }' >> "$file" 2> /dev/null || true
+      usage: ($r.usage // null),
+      allowance: ($r.allowance // null) }' >> "$file" 2> /dev/null || true
   return 0
 }

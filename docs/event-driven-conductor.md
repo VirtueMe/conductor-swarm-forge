@@ -765,7 +765,37 @@ and `weekly` a `state` (`known` or `unknown`), `used_percent`, when the window `
   the output, and a shape the reader does not know turns windows unknown, not guessed.
 
 Tested against the real session taken for #132 and against the cases in `tests/codex-usage/`.
-Readings are not written to `usage.jsonl` yet.
+
+**Readings in the usage log.** `scripts/allowance.sh` writes the reader's output to `usage.jsonl` as
+a record of its own, `{"record": "allowance", "pool": "subscription:openai", "moment": ..., "ts": ...}`
+followed by the reading. A line with no `record` field is an attempt, as before; `usage-summary.sh`
+and `usage-price.sh` leave the records out of the attempts. A reading is taken when the swarm starts
+(`swarm-start.sh`, if the workforce has a member on the `codex` adapter) and around every Codex run.
+
+**What a run used.** When a Codex run starts (a dispatch by the loop, or a worker spawned by
+`worker-spawn.sh`) `allowance.sh begin` takes a reading, and when it ends `allowance.sh end` takes
+another and puts the difference in an `allowance` object on the run's usage line (null on lines
+of other harnesses): `five_hour` and `weekly` each have `points`, the percentage points the window
+rose, or null with a `reason`; `attributed_to` is `run` or `batch`. Points are null, never zero,
+when a reading was unknown, when Codex wrote nothing new in between (the reading is only as fresh as
+the last Codex event), when the window reset during the run, or when runs overlapped. Resets are
+compared with a two-minute tolerance, because Codex moves a window's `resets_at` by a few seconds
+between events in the same window.
+
+- **Overlapping runs belong to the batch.** Runs are live while their dispatch process or their tmux
+  window is. If two or more are live at once, every live run is marked, and its points are null with
+  `attributed_to: "batch"`. The batch's change is in the readings the runs appended. If tmux cannot
+  say whether a worker is live, it is taken as live: the doubt leaves a run unattributed, never
+  wrongly attributed.
+- **A run that never ended** (a crash) is forgotten at the next `begin`, and does not make later
+  runs overlap.
+- **The log reports whole percents**, so one small run often shows 0 or 1 points. The numbers mean
+  something added up over several runs.
+
+`usage-summary.sh` shows the pool in its own "Codex allowance" section, apart from tokens and dollars,
+because it is a percentage of a window and not a cost: the latest reading of each window with when
+it resets and where it stood at the first reading in the same window, and the points that runs used,
+by role, with the runs that could not be attributed counted. `--by allowance` shows only that.
 
 ## Startup reconcile
 

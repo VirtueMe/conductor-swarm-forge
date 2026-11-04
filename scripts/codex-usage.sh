@@ -5,6 +5,7 @@ set -euo pipefail
 #
 # Usage: codex-usage.sh [--sessions <dir>] [--now <epoch>] [--text]
 # Env:   CODEX_SESSIONS_DIR  the sessions directory (default: $CODEX_HOME/sessions, ~/.codex/sessions)
+#        CODEX_USAGE_NOW     the Unix time to judge staleness against, as --now (for tests)
 #
 # Prints one JSON object (--text: two readable lines instead):
 #   snapshot_at, source, codex_version, plan_type, limit_id, rate_limit_reached_type
@@ -32,7 +33,7 @@ set -euo pipefail
 # unknown, not a guess.
 
 SESSIONS="${CODEX_SESSIONS_DIR:-${CODEX_HOME:-$HOME/.codex}/sessions}"
-NOW=""
+NOW="${CODEX_USAGE_NOW:-}"   # a test seam: the clock the reading is judged against
 FORMAT=json
 
 usage() { sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }

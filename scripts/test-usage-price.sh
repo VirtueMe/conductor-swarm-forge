@@ -72,11 +72,13 @@ LOG="$TMP/usage.jsonl"
   echo '{"event":"b","model":"mystery","cost_usd":null,"estimated_cost_usd":null}'
   echo '{"event":"c","model":"mystery","cost_usd":null,"estimated_cost_usd":null}'
   echo '{"event":"d","model":null,"cost_usd":null,"estimated_cost_usd":null}'
+  echo '{"record":"allowance","pool":"subscription:openai","moment":"swarm-start","five_hour":{"state":"known"}}'
   echo 'not json'
 } > "$LOG"
 OUT="$("$PRICE" unknown --file "$LOG")"
 case "$OUT" in *"mystery"*"2"*) ok "the unknown model, counted" ;; *) fail "output: $OUT" ;; esac
 case "$OUT" in *"(no model)"*"1"*) ok "attempts with no model, counted" ;; *) fail "output: $OUT" ;; esac
+case "$OUT" in *"(no model)"*" 1"*) ok "and an allowance reading is not one of them" ;; *) fail "output: $OUT" ;; esac
 case "$OUT" in *"claude-opus-4-8"*) fail "a priced model is listed" ;; *) ok "a priced model is not listed" ;; esac
 echo '{"event":"a","model":"gpt-5"}' > "$TMP/known.jsonl"
 case "$("$PRICE" unknown --file "$TMP/known.jsonl")" in *"Every attempt"*) ok "a clean log says so" ;; *) fail "clean log" ;; esac

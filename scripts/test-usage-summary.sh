@@ -188,6 +188,58 @@ has '^0001  *3 ' "by task: the worker lines belong to their task"
 has '^Unfinished: .* 1 attempts that did not finish' "an interrupted worker counts as unfinished"
 has '^claude-sonnet-4-6  *1 ' "by model"
 
+section "5g · The Codex allowance is its own section, in percent of a window"
+AL="$TMP/allowance.jsonl"
+reading() { # ts snapshot used5 resets5 used7
+  jq -nc --arg ts "$1" --arg snap "$2" --argjson u5 "$3" --argjson r5 "$4" --argjson u7 "$5" '
+    { record: "allowance", pool: "subscription:openai", moment: "x", ts: $ts, snapshot_at: $snap, plan_type: "plus", codex_version: "0.166.0",
+      five_hour: { state: "known", reason: null, window_minutes: 300, used_percent: $u5, opened_at: ($r5 - 18000), resets_at: $r5 },
+      weekly:    { state: "known", reason: null, window_minutes: 10080, used_percent: $u7, opened_at: 1793454935, resets_at: 1794059735 } }'
+}
+arun() { # role p5 p7 attributed_to (points null when the run was part of a batch)
+  jq -nc --arg role "$1" --argjson p5 "$2" --argjson p7 "$3" --arg to "$4" '
+    { ts: "2026-11-04T05:30:00Z", event: "0001/worker-\($role)", task: "0001", handler: null, role: $role, attempt: null, outcome: "finished",
+      rc: null, duration_s: 60, harness: "codex", model: "gpt-5", input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_write_tokens: 0,
+      cost_usd: null, estimated_cost_usd: 0.01, turns: 1, usage: "reported",
+      allowance: { pool: "subscription:openai", overlap: ($to == "batch"), attributed_to: $to,
+                   five_hour: { points: $p5, reason: null }, weekly: { points: $p7, reason: null } } }'
+}
+{
+  reading 2026-11-04T05:00:00Z 2026-11-04T05:00:00.000Z 10 1793800000 20
+  arun coder 2 0.5 run
+  arun coder 1.5 0 run
+  arun conductor 1 0 run
+  arun reviewer null null batch
+  # a Claude Code line has no allowance
+  line 2026-11-04T05:35:00Z 0001/x.md 0001 conductor/h 1 finished 0 claude-code 0.05 8 310 20000 0 reported
+  reading 2026-11-04T05:40:00Z 2026-11-04T05:40:00.000Z 14.5 1793800003 21
+} > "$AL"
+run --file "$AL"
+assert_eq "exit 0" "$RC" "0"
+has '(5 attempts, ' "the two readings are not attempts"
+has '^Codex allowance (subscription:openai), read 2026-11-04T05:40:00.000Z, plan plus, Codex 0.166.0' "the latest reading, with its plan and version"
+has '^  5-hour  *14.5% used, resets 2026-11-04T13:46:43Z  (was 10% at 2026-11-04T05:00:00.000Z, first reading in this window)' "the five-hour window, and where it stood at the first reading in the same window"
+has '^  weekly  *21% used, resets 2026-11-07T13:55:35Z  (was 20% at ' "the weekly window"
+has '^  coder  *2  *+3.5  *+0.5  *0$' "by role: the coder's two runs, in percentage points"
+has '^  conductor  *1  *+1  *+0  *0$' "the conductor's own dispatch is a role like the others"
+has '^  reviewer  *1  *+0  *+0  *1 (1 in a batch)$' "a run in a batch is counted as not attributed, not as zero points"
+lacks 'claude-code.*+' "a line with no allowance is not in it"
+has 'could not be attributed' "and the section says what not attributed means"
+run --file "$AL" --by allowance
+has '^Codex allowance' "--by allowance shows it"
+lacks '^By role' "and only it"
+run --file "$AL" --by role
+lacks '^Codex allowance' "--by role does not"
+jq -c 'select(.record == "allowance")' "$AL" > "$TMP/only-readings.jsonl"
+run --file "$TMP/only-readings.jsonl"
+has 'No usage lines' "a log of readings alone has no attempts to summarise"
+has '^Codex allowance (subscription:openai), read 2026-11-04T05:40' "but still shows the allowance"
+run --file "$LOG"
+lacks 'Codex allowance' "a log with no Codex lines or readings has no such section"
+jq -c 'del(.five_hour.resets_at) | .five_hour.state = "unknown" | .five_hour.used_percent = null | .five_hour.reason = "the window reset after the last reading"' <(reading 2026-11-04T06:00:00Z 2026-11-04T06:00:00.000Z 1 1793800000 21) > "$TMP/stale.jsonl"
+run --file "$TMP/stale.jsonl"
+has '^  5-hour  *unknown (the window reset after the last reading)' "an unknown window is shown as unknown, not as a percentage"
+
 section "6 · Arguments"
 run --bogus
 assert_eq "an unknown flag: exit 1" "$RC" "1"

@@ -163,6 +163,10 @@ cp -r "$ROOT_DIR/prompts" "$CONDUCTOR_DIR/prompts"
 cp "$TOPOLOGY_FILE" "$CONDUCTOR_DIR/topology.json"
 cp "$WORKFORCE"     "$CONDUCTOR_DIR/workforce.json"
 
+# If any role runs on Codex, note how much of its subscription allowance is used as the swarm starts.
+# The log is a convenience: a reading that cannot be taken must not stop the start.
+"$SCRIPTS_DIR/allowance.sh" start "$CONDUCTOR_DIR/workforce.json" || true
+
 # Write project-level permissions: read/write the project, read/execute the scripts
 mkdir -p ".claude"
 cat > ".claude/settings.json" << EOF
