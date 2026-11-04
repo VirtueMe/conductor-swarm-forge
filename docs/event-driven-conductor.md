@@ -736,6 +736,37 @@ a line with null tokens, `usage: none` and `cost_source: unknown`, so the gap is
 worker with no spawn record (one spawned before this existed) gets such a line too, with the role
 from its window name.
 
+### Codex allowance
+
+Codex on a ChatGPT Plus account is limited by allowance, not cost: a five-hour window and a weekly
+one, each reported as a percentage. Tokens and dollars do not say how much of that a run used.
+Codex writes the allowance into its own session logs: every `token_count` event in
+`$CODEX_HOME/sessions/**/rollout-*.jsonl` (default `~/.codex/sessions`) has a `payload.rate_limits`
+with each window's `used_percent`, `window_minutes` and `resets_at`, and the `plan_type`. No model
+call and no screen scraping is involved.
+
+`scripts/codex-usage.sh [--sessions DIR] [--now EPOCH] [--text]` reads it and prints one JSON
+object: the snapshot time, the Codex version it came from, the plan, and for each of `five_hour`
+and `weekly` a `state` (`known` or `unknown`), `used_percent`, when the window `opened_at` and
+`resets_at`, and a `reason` when it is unknown.
+
+- **The newest event wins, and nothing older is read.** It takes the newest session file by
+  modification time and the newest event with a `rate_limits` in it, and stops. It never fills a
+  window from an older event.
+- **Windows are found by length**, 300 and 10080 minutes, not by the names `primary` and
+  `secondary`.
+- **A window it cannot trust is unknown, never zero and never 100 %.** That is a window missing from
+  the reading, with no `used_percent`, with no `resets_at` to tell whether it is stale, outside 0
+  to 100, or with a `resets_at` that is not in the future. The last one is the common case: the
+  reading is only as fresh as the last Codex event, and once the window has reset the stored
+  percentage no longer applies. With no `rate_limits` in any session both windows are unknown and
+  the exit status is still 0.
+- **The format is Codex's own**, not a documented interface. The `cli_version` of the session is in
+  the output, and a shape the reader does not know turns windows unknown, not guessed.
+
+Tested against the real session taken for #132 and against the cases in `tests/codex-usage/`.
+Readings are not written to `usage.jsonl` yet.
+
 ## Startup reconcile
 
 `skills/conductor/startup.md` used to be two things: steps 1 to 6 reconciled the board with

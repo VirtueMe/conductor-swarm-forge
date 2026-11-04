@@ -162,6 +162,12 @@ put claude-code "$FX/claude-code/sigkilled.jsonl" b.jsonl > /dev/null
 assert_eq "a cost is only reported if every session has one" "$(last .cost_usd)" "null"
 assert_eq "while the tokens are all counted" "$(last .output_tokens)" "101"
 
+section "7b · Codex sessions are looked for where Codex keeps them"
+reset; spawn 0016 validator codex
+mkdir -p "$TMP/home/sessions/2026/11/04"; cp "$FX/codex/rollout.jsonl" "$TMP/home/sessions/2026/11/04/rollout-a.jsonl"
+( unset CODEX_SESSIONS_DIR; CODEX_HOME="$TMP/home" "$WU" read 0016 )
+assert_eq "CODEX_HOME locates the sessions, as codex-usage.sh does" "$(last .usage)" "reported"
+
 section "8 · A harness that writes its cost on exit is given time to"
 reset; spawn 0012 coder claude-code
 f="$(put claude-code "$FX/claude-code/sigkilled.jsonl" a.jsonl)"
