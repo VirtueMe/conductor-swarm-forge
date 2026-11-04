@@ -622,6 +622,9 @@ before the next attempt, so only the last one survives. The loop now appends eve
 attempt to `$CONDUCTOR_DIR/usage.jsonl` before that happens: one JSON object per line, so
 `jq` reads it directly and an append is atomic.
 
+The log covers the conductor's own dispatches. Workers write no line yet; what each harness leaves
+behind for them, and where a reading would go, is in `docs/worker-usage-sources.md`.
+
 | Field | Meaning |
 | --- | --- |
 | `ts` | UTC time the attempt ended |
