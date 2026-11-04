@@ -172,6 +172,12 @@ jobs:
       - name: test-usage-price
         run: bash scripts/test-usage-price.sh
 
+      - name: test-codex-allowance-run
+        run: bash scripts/test-codex-allowance-run.sh
+
+      - name: test-codex-billing
+        run: bash scripts/test-codex-billing.sh
+
       - name: test-allowance
         run: bash scripts/test-allowance.sh
 

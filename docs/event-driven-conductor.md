@@ -789,13 +789,46 @@ between events in the same window.
   wrongly attributed.
 - **A run that never ended** (a crash) is forgotten at the next `begin`, and does not make later
   runs overlap.
-- **The log reports whole percents**, so one small run often shows 0 or 1 points. The numbers mean
-  something added up over several runs.
+- **The log reports whole percents**, so one small run often shows 0 or 1 points. A measured 0 is
+  "under one step", not "nothing": three small reviews in a real run moved neither window. The summary
+  writes it `+0 (<1)`, and writes `-` where no run of a role could be attributed, so an unattributed run is
+  never shown as free. The numbers mean something added up over several runs.
+- **The conductor's own dispatches are not measured while they run `--ephemeral`.** `adapters/codex.sh`
+  runs `codex exec --ephemeral`, which writes no session file ("Run without persisting session files to
+  disk"), so there is no event to read: a dispatch's `allowance` is null with the reason "Codex wrote
+  nothing new since the run began", and its `answered_model` is null. Workers are interactive and do write
+  sessions, so they are measured. The reading records still show the pool's movement over any period.
+  `scripts/codex-allowance-run.sh` runs real Codex without `--ephemeral` to check the readers.
 
 `usage-summary.sh` shows the pool in its own "Codex allowance" section, apart from tokens and dollars,
 because it is a percentage of a window and not a cost: the latest reading of each window with when
 it resets and where it stood at the first reading in the same window, and the points that runs used,
 by role, with the runs that could not be attributed counted. `--by allowance` shows only that.
+
+**Codex must be billed to the subscription.** The allowance above only means something if Codex is
+signed in with a ChatGPT account. On an API key its work is billed per token instead, outside what
+this swarm measures. `scripts/codex-billing.sh check` refuses it, with the reason on stderr, when
+`auth.json` says the sign-in is an API key (an `auth_mode` of `chatgpt` is a subscription; one that
+names an API key, or, with no `auth_mode`, a stored key, is not), or when the newest reading has no
+`plan_type`. It never prints a key. It runs in three places, each before anything is created:
+`swarm-start.sh` (any role on the `codex` adapter, so the swarm does not start), `worker-spawn.sh`
+(a Codex worker is not spawned: no artifact, worktree, window or record), and the conductor loop (a
+Codex conductor does not start, exit 3, with the reason in `conductor.log`). When it cannot tell (no
+readable `auth.json` with an auth_mode it knows, and no reading yet) it allows the run and says so:
+refusing would stop a first run that could never produce the reading that settles it. It refuses on
+evidence, not on doubt. The format of `auth.json` is Codex's own, so a shape it does not recognise is
+"cannot tell", never a guess.
+
+**The model that answered.** `codex exec --json` does not name the model, so a dispatch's record says
+the model it was asked for. The session log does say which answered (`turn_context.model`), for a
+worker and for a dispatch alike. Codex lines carry `requested_model` (the workforce's `params.model`,
+or null if none was set) and `answered_model` (from the session, or null if it named none). When both
+are known and differ, a record of its own is appended: `{"record": "model_mismatch", "role", "task",
+"event", "harness", "requested", "answered"}`, for example a fallback to a lighter model near the cap.
+The names are compared as they are, so an alias that Codex reports under another id also shows up, with
+both names in the record for a person to judge; a run with no model asked for is never a mismatch.
+The session is found by directory and time (for a worker its worktree, for a dispatch the project root), so a Codex session a person runs by hand in the same directory during a run can be read as its answer. `usage-summary.sh` lists the pairs, counted, in its Codex section. Any line with a `record` field is a
+record about the log and not an attempt, and the summary and `usage-price.sh` leave it out.
 
 ## Startup reconcile
 

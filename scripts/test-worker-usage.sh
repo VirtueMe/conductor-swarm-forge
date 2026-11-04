@@ -55,8 +55,8 @@ put() { # <adapter> <fixture> <name> : place a session file where the harness ke
 }
 reset() { rm -rf "$CONDUCTOR_DIR/workers" "$CONDUCTOR_DIR/allowance" "$LOG" "$CLAUDE_PROJECTS_DIR" "$CODEX_SESSIONS_DIR" "$PI_SESSIONS_DIR"; }
 spawn() { "$WU" spawned "$1" "$2" "$3" "$CWD" '{"model":"m"}'; }
-last() { jq -r "$1" "$LOG" | tail -1; }
-lines() { wc -l < "$LOG" 2> /dev/null | tr -d ' ' || echo 0; }
+last() { jq -r "select(.record == null) | $1" "$LOG" | tail -1; }   # the last attempt, not a record about one
+lines() { { jq -c 'select(.record == null)' "$LOG" 2> /dev/null || true; } | wc -l | tr -d ' '; }
 
 section "1 · The spawn record"
 reset
@@ -191,6 +191,38 @@ put codex <(jq -c 'if .payload.type == "token_count" then .timestamp = "2026-11-
 STUB_WINDOWS="reviewer-0042" "$WU" read 0041
 assert_eq "two Codex workers at once: the difference belongs to the batch" "$(last '.allowance | [.attributed_to, (.five_hour.points | tostring)] | join(" ")')" "batch null"
 
+section "7d · A Codex worker on another model than asked for"
+codex_worker() { # <task> <params-json>
+  reset
+  "$WU" spawned "$1" validator codex "$CWD" "$2"
+  put codex "$FX/codex/rollout.jsonl" rollout-a.jsonl > /dev/null
+  STUB_WINDOWS="" "$WU" read "$1"
+}
+mismatches() { jq -r 'select(.record == "model_mismatch") | [.role, .task, .harness, .requested, .answered] | join(" ")' "$LOG"; }
+codex_worker 0050 '{"model":"gpt-5"}'
+assert_eq "asked for gpt-5, gpt-6.1-sol answered: both on the line" "$(last '[.requested_model, .answered_model] | join(" ")')" "gpt-5 gpt-6.1-sol"
+assert_eq "and a mismatch record of its own" "$(mismatches)" "validator 0050 codex gpt-5 gpt-6.1-sol"
+codex_worker 0051 '{"model":"gpt-6.1-sol"}'
+assert_eq "the model asked for answered: no mismatch" "$(mismatches)" ""
+codex_worker 0052 '{}'
+assert_eq "no model asked for: the answer is recorded" "$(last '[(.requested_model | tostring), .answered_model] | join(" ")')" "null gpt-6.1-sol"
+assert_eq "and a default is not a mismatch" "$(mismatches)" ""
+reset; spawn 0053 coder pi
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+"$WU" read 0053
+assert_eq "another harness's line has neither field" "$(last '[(.requested_model | tostring), (.answered_model | tostring)] | join(" ")')" "null null"
+
+section "7e · Which model answered in a directory's sessions"
+reset
+old="$(put codex "$FX/codex/rollout.jsonl" rollout-old.jsonl)"; touch -d '2 days ago' "$old"
+assert_eq "a session older than the time asked about is not looked at" "$("$WU" model codex "$CWD" $(( $(date +%s) - 3600 )))" ""
+put codex "$FX/codex/rollout.jsonl" rollout-new.jsonl > /dev/null
+assert_eq "a session since then names its model" "$("$WU" model codex "$CWD" $(( $(date +%s) - 3600 )))" "gpt-6.1-sol"
+assert_eq "another directory's does not" "$("$WU" model codex /some/other/dir $(( $(date +%s) - 3600 )))" ""
+assert_eq "a harness with no reader prints nothing" "$("$WU" model mystery "$CWD" 0)" ""
+RC=0; "$WU" model codex "$CWD" abc 2> /dev/null || RC=$?
+assert_eq "a since that is not a time: exit 1" "$RC" "1"
+
 section "8 · A harness that writes its cost on exit is given time to"
 reset; spawn 0012 coder claude-code
 f="$(put claude-code "$FX/claude-code/sigkilled.jsonl" a.jsonl)"
@@ -229,7 +261,7 @@ reset
 spawn 0022 coder pi
 STUB_TMUX_FAIL=1 "$WU" sweep
 assert_eq "if tmux cannot answer, nothing is read and no record is deleted" \
-  "$(lines 2> /dev/null || echo 0)/$(find "$CONDUCTOR_DIR/workers" -type f | wc -l | tr -d ' ')" "0/1"
+  "$(lines)/$(find "$CONDUCTOR_DIR/workers" -type f | wc -l | tr -d ' ')" "0/1"
 
 section "11 · Arguments"
 RC=0; "$WU" bogus 2> /dev/null || RC=$?
@@ -255,7 +287,7 @@ assert_eq "a worker with no spawn record still leaves a line, with the role from
 reset; : > "$STUB_LOG"
 RC=0; STUB_WINDOWS="" "$CLOSE" 0032 || RC=$?
 assert_eq "no window and no record: exit 0" "$RC" "0"
-assert_eq "no line is made up for a task that never had a worker" "$(lines 2> /dev/null || echo 0)" "0"
+assert_eq "no line is made up for a task that never had a worker" "$(lines)" "0"
 assert_eq "and nothing is killed" "$(grep -c 'kill-window' "$STUB_LOG" || true)" "0"
 reset; : > "$STUB_LOG"
 spawn 0033 coder pi; spawn 0034 reviewer pi

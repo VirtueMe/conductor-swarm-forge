@@ -27,7 +27,9 @@ set -euo pipefail
 # how far each has moved since the first reading in the same window, and the percentage points
 # that runs used (the allowance on their lines), by role. A run whose points could not be
 # attributed (runs overlapped, or a reading was unknown) is counted, not guessed. The readings are
-# records of their own in the log ("record": "allowance") and are not attempts.
+# records of their own in the log ("record": "allowance") and are not attempts, and neither is any
+# other line with a "record" field. A run on a model other than the one asked for is its own record
+# ("record": "model_mismatch"); the section lists them by the pair of names, with a count.
 #
 # --since takes a UTC timestamp as written in the log (2026-11-01T12:00:00Z), or a prefix of one
 # (2026-11-01).
@@ -61,7 +63,8 @@ jq -R 'fromjson? // empty' "$FILE" \
   | jq -rs --arg since "$SINCE" --arg by "$BY" '
     map(select($since == "" or .ts >= $since)) as $inrange
     | ($inrange | map(select(.record == "allowance"))) as $readings
-    | ($inrange | map(select(.record != "allowance"))) as $all
+    | ($inrange | map(select(.record == "model_mismatch"))) as $mismatches
+    | ($inrange | map(select(.record == null))) as $all
     | def want(k): $by == "" or ($by | split(",") | index(k) != null);
       def reported: select(.cost_usd != null);
       def estimated: select(.cost_usd == null and .estimated_cost_usd != null);
@@ -93,7 +96,7 @@ jq -R 'fromjson? // empty' "$FILE" \
            (if $l[$w].state == "known" and $f != null then $f[$w].used_percent else "-" end),
            (if $l[$w].state == "known" and $f != null then ($f.snapshot_at // "-") else "-" end)] | @tsv;
       def allowance_rows:
-        if want("allowance") and (($readings | length) > 0 or ($all | map(select(.allowance != null)) | length) > 0) then
+        if want("allowance") and (($readings | length) > 0 or ($mismatches | length) > 0 or ($all | map(select(.allowance != null)) | length) > 0) then
           (if ($readings | length) > 0 then
              (($readings | last) as $l
               | (["allow_head", ($l.snapshot_at // "-"), ($l.plan_type // "-"), ($l.codex_version // "-")] | @tsv),
@@ -103,9 +106,12 @@ jq -R 'fromjson? // empty' "$FILE" \
            | map({role: (.[0].role // "-"), runs: length,
                   five: (map(.allowance.five_hour.points // 0) | add), weekly: (map(.allowance.weekly.points // 0) | add),
                   lost: (map(select(.allowance.five_hour.points == null)) | length),
-                  batch: (map(select(.allowance.attributed_to == "batch")) | length)})
+                  batch: (map(select(.allowance.attributed_to == "batch")) | length),
+                  five_n: (map(select(.allowance.five_hour.points != null)) | length),
+                  weekly_n: (map(select(.allowance.weekly.points != null)) | length)})
            | sort_by(-.five, .role) | .[]
-           | ["allow_role", .role, .runs, .five, .weekly, .lost, .batch] | @tsv)
+           | ["allow_role", .role, .runs, .five, .weekly, .lost, .batch, .five_n, .weekly_n] | @tsv),
+          ($mismatches | group_by([.requested, .answered]) | map(["allow_mismatch", .[0].requested, .[0].answered, length]) | sort_by(-.[3]) | .[] | @tsv)
         else empty end;
       (if ($all | length) == 0 then "empty"
       else
@@ -124,6 +130,9 @@ jq -R 'fromjson? // empty' "$FILE" \
       allowance_rows' \
   | awk -F'\t' -v file="$FILE" -v since="$SINCE" '
     function money(x) { return sprintf("$%.4f", x) }
+    # percentage points a window rose over the runs of a role: "-" if none of them could be attributed,
+    # "+0 (<1)" for a real measurement of less than one step of the log, otherwise "+n"
+    function points(v, n) { return (n == 0) ? "-" : ((v == 0) ? "+0 (<1)" : "+" v) }
     function section(title) { printf "\n%-28s %8s %11s %11s %8s %11s %9s\n", title, "attempts", "reported", "estimated", "unknown", "in", "out" }
     $1 == "empty" { print "No usage lines" (since != "" ? " since " since : "") " in " file "."; empty = 1; next }
     $1 == "meta"  { meta[$2] = $3; next }
@@ -161,7 +170,15 @@ jq -R 'fromjson? // empty' "$FILE" \
         printf "\n  %-38s %6s %8s %8s %16s\n", "Used by runs (percentage points)", "runs", "5-hour", "weekly", "not attributed"
         role_head = 1
       }
-      printf "  %-38s %6d %8s %8s %16s\n", $2, $3, "+" $4, "+" $5, $6 (($7 > 0) ? " (" $7 " in a batch)" : "")
+      printf "  %-38s %6d %8s %8s %16s\n", $2, $3, points($4, $8), points($5, $9), $6 (($7 > 0) ? " (" $7 " in a batch)" : "")
+      next
+    }
+    $1 == "allow_mismatch" {
+      if (!mismatch_head) {
+        printf "\n  %-38s %6s\n", "Model asked for -> model that answered", "runs"
+        mismatch_head = 1
+      }
+      printf "  %-38s %6d\n", $2 " -> " $3, $4
       next
     }
     $1 == "adapters" {
@@ -180,7 +197,7 @@ jq -R 'fromjson? // empty' "$FILE" \
       printf "%-28s %8d %11s %11s %8d %11d %9d\n", key, $3, money($4), money($5), $6, $7, $8
     }
     END {
-      if (role_head) printf "\nRuns whose points could not be attributed (overlapping runs, or a reading that was unknown) are counted, not guessed; the change over a batch is in the readings above.\n"
+      if (role_head) printf "\nRuns whose points could not be attributed (overlapping runs, or a reading that was unknown) are counted, not guessed, and a - is a column with none attributed; the change over a batch is in the readings above. A +0 (<1) is under one step of the log, which reports whole percents: not nothing.\n"
       if (empty) exit
       if (adapters_shown)
         printf "\n%d of the %d attempts have no estimate (an unpriced model, or no record). They are not counted as free.\n", unpriced_all, total

@@ -149,6 +149,13 @@ source_integration "$TOPOLOGY_JSON" || exit 1
 
 # Load adapter
 ADAPTER_NAME=$(get_adapter "$WORKER_TYPE")
+# Codex draws on a subscription allowance. On an API key it would be billed per token instead, so it
+# is refused here, before the worker's workspace, artifact or window exist. codex-billing.sh says why.
+# One line, with the reason in it: a handler's halt notice shows only the last line of what it printed.
+if [[ "$ADAPTER_NAME" == codex ]]; then
+  BILLING_REASON="$("$SCRIPTS_DIR/codex-billing.sh" check 2>&1)" \
+    || { echo "worker-spawn.sh: not spawning $WORKER_TYPE for task $TASK_ID: $BILLING_REASON" >&2; exit 1; }
+fi
 ADAPTER_FILE="$ADAPTERS_DIR/${ADAPTER_NAME}.sh"
 [[ -f "$ADAPTER_FILE" ]] || { echo "Adapter not found: $ADAPTER_FILE" >&2; exit 1; }
 # shellcheck source=/dev/null
