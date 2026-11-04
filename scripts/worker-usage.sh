@@ -8,7 +8,7 @@ set -euo pipefail
 #        worker-usage.sh sweep
 # Env:   CONDUCTOR_DIR (default: .conductor)
 #        CLAUDE_PROJECTS_DIR, CODEX_SESSIONS_DIR, PI_SESSIONS_DIR  where the harnesses keep sessions
-#        (default ~/.claude/projects, ~/.codex/sessions, ~/.pi/agent/sessions)
+#        (default ~/.claude/projects, $CODEX_HOME/sessions or ~/.codex/sessions, ~/.pi/agent/sessions)
 #
 # spawned  writes $CONDUCTOR_DIR/workers/<role>-<task>.json: who, with which harness, in which
 #          worktree, and when. Nothing can be read at spawn time; this is what lets a reader pick
@@ -41,7 +41,7 @@ die() { echo "worker-usage.sh: $*" >&2; exit 1; }
 sessions_root() { # <adapter>
   case "$1" in
     claude-code) echo "${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}" ;;
-    codex)       echo "${CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}" ;;
+    codex)       echo "${CODEX_SESSIONS_DIR:-${CODEX_HOME:-$HOME/.codex}/sessions}" ;;
     pi)          echo "${PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}" ;;
     *)           return 1 ;;
   esac
