@@ -52,7 +52,7 @@ case "$cmd" in
   unknown)
     [[ -s "$LOG" ]] || { echo "No usage recorded yet: $LOG is missing or empty."; exit 0; }
     out="$(jq -R 'fromjson? // empty' "$LOG" | jq -rs --argjson prices "$(table)" '
-      map(select(.record != "allowance")) |
+      map(select(.record == null)) |
       ( map(select(.model != null and ($prices[.model] == null))) | group_by(.model)
         | map("\(.[0].model)\t\(length)") | .[] ),
       ( (map(select(.model == null)) | length) as $n | if $n > 0 then "(no model)\t\($n)" else empty end )')"

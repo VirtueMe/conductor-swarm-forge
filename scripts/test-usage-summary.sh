@@ -221,8 +221,9 @@ has '^Codex allowance (subscription:openai), read 2026-11-04T05:40:00.000Z, plan
 has '^  5-hour  *14.5% used, resets 2026-11-04T13:46:43Z  (was 10% at 2026-11-04T05:00:00.000Z, first reading in this window)' "the five-hour window, and where it stood at the first reading in the same window"
 has '^  weekly  *21% used, resets 2026-11-07T13:55:35Z  (was 20% at ' "the weekly window"
 has '^  coder  *2  *+3.5  *+0.5  *0$' "by role: the coder's two runs, in percentage points"
-has '^  conductor  *1  *+1  *+0  *0$' "the conductor's own dispatch is a role like the others"
-has '^  reviewer  *1  *+0  *+0  *1 (1 in a batch)$' "a run in a batch is counted as not attributed, not as zero points"
+has '^  conductor  *1  *+1  *+0 (<1)  *0$' "the conductor's own dispatch is a role like the others, and a measured zero is under one step"
+has '^  reviewer  *1  *-  *-  *1 (1 in a batch)$' "a run in a batch is not attributed, shown as -, never as zero points"
+has 'A +0 (<1) is under one step' "and the section explains both"
 lacks 'claude-code.*+' "a line with no allowance is not in it"
 has 'could not be attributed' "and the section says what not attributed means"
 run --file "$AL" --by allowance
@@ -239,6 +240,21 @@ lacks 'Codex allowance' "a log with no Codex lines or readings has no such secti
 jq -c 'del(.five_hour.resets_at) | .five_hour.state = "unknown" | .five_hour.used_percent = null | .five_hour.reason = "the window reset after the last reading"' <(reading 2026-11-04T06:00:00Z 2026-11-04T06:00:00.000Z 1 1793800000 21) > "$TMP/stale.jsonl"
 run --file "$TMP/stale.jsonl"
 has '^  5-hour  *unknown (the window reset after the last reading)' "an unknown window is shown as unknown, not as a percentage"
+
+section "5h · A run on another model than the one asked for"
+cp "$AL" "$TMP/mismatch.jsonl"
+mismatch() { jq -nc --arg req "$1" --arg ans "$2" '{ record: "model_mismatch", ts: "2026-11-04T05:31:00Z", role: "coder", task: "0001", event: "0001/worker-coder", harness: "codex", requested: $req, answered: $ans }'; }
+{ mismatch gpt-5 gpt-6.1-sol; mismatch gpt-5 gpt-6.1-sol; mismatch gpt-6.1-sol gpt-5; } >> "$TMP/mismatch.jsonl"
+run --file "$TMP/mismatch.jsonl"
+has '(5 attempts, ' "a mismatch record is not an attempt"
+has '^  Model asked for -> model that answered  *runs' "the section lists them"
+has '^  gpt-5 -> gpt-6.1-sol  *2$' "by the pair of names, counted, the commonest first"
+has '^  gpt-6.1-sol -> gpt-5  *1$' "and the other direction apart"
+run --file "$TMP/mismatch.jsonl" --by role
+lacks 'Model asked for' "--by role leaves them out"
+{ mismatch gpt-5 gpt-6.1-sol; } > "$TMP/only-mismatch.jsonl"
+run --file "$TMP/only-mismatch.jsonl"
+has '^  gpt-5 -> gpt-6.1-sol  *1$' "a log of nothing but a mismatch still shows it"
 
 section "6 · Arguments"
 run --bogus

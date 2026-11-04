@@ -42,6 +42,8 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/npm"      # the default language
 chmod +x "$STUB"/*
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# What Codex has on this machine must not decide these tests: no sign-in file and no sessions, unless a section says so.
+export CODEX_AUTH_FILE="$TMP/no-auth.json" CODEX_SESSIONS_DIR="$TMP/no-codex-sessions"
 export TMUX_LOG="$TMP/tmux.log" TMUX_STATE="$TMP/tmux.state" TMUX_CMD="$TMP/tmux.cmd"
 
 # A copy of the tool with one more adapter that has no adapter_dispatch, and a workforce
@@ -268,6 +270,26 @@ if [[ -d "$MIN" ]]; then
 else
   echo "   (skipped: section 7 could not build a minimal PATH here)"
 fi
+
+section "13 · A workforce with a role on Codex needs a subscription"
+jq '(.members[] | select(.role == "conductor") | .adapter) = "codex"' "$ROOT_DIR/workforces/default.json" > "$FAKE/workforces/codex-conductor.json"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/codex"; chmod +x "$STUB/codex"
+printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test-not-real"}\n' > "$TMP/auth-apikey.json"
+printf '{"auth_mode":"chatgpt","OPENAI_API_KEY":null}\n' > "$TMP/auth-chatgpt.json"
+mkdir -p "$TMP/codex-sessions/2026/11/04" "$TMP/codex-empty"
+cp "$ROOT_DIR/tests/codex-usage/normal.jsonl" "$TMP/codex-sessions/2026/11/04/rollout-1.jsonl"
+start --tool "$FAKE" --env "CODEX_AUTH_FILE=$TMP/auth-apikey.json" --env "CODEX_SESSIONS_DIR=$TMP/codex-empty" -- --workforce codex-conductor
+assert_eq "on an API key the swarm does not start" "$RC" "1"
+case "$(cat "$TMP/err")" in *"Not starting"*"codex-conductor"*) ok "and says which workforce" ;; *) fail "message: $(cat "$TMP/err")" ;; esac
+case "$(cat "$TMP/err")" in *"API key"*) ok "and why" ;; *) fail "reason: $(cat "$TMP/err")" ;; esac
+assert_eq "nothing was created" "$([[ -e "$TARGET/.conductor" ]] && echo created || echo nothing)" "nothing"
+assert_eq "and nothing was started" "$([[ -s "$TMUX_LOG" ]] && echo started || echo nothing)" "nothing"
+start --tool "$FAKE" --env "CODEX_AUTH_FILE=$TMP/auth-chatgpt.json" --env "CODEX_SESSIONS_DIR=$TMP/codex-sessions" -- --workforce codex-conductor
+assert_eq "on a subscription it starts" "$RC" "0"
+assert_eq "with its session" "$([[ -n "$(new_session)" ]] && echo started || echo nothing)" "started"
+assert_eq "and takes a reading of the allowance as it starts" "$(jq -r 'select(.record == "allowance") | .moment' "$TARGET/.conductor/usage.jsonl" 2> /dev/null)" "swarm-start"
+start -- 
+assert_eq "a workforce with no Codex role takes no reading" "$([[ -e "$TARGET/.conductor/usage.jsonl" ]] && echo read || echo none)" "none"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

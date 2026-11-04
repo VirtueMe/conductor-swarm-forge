@@ -119,6 +119,30 @@ echo "coder-10001" >> "$WINDOWS"
 OUT=$(spawn 0004 coder)
 assert_eq "task 0004 still spawns"       "$(assigned_count 0004)" "1"
 
+echo "── a Codex worker on an API key is refused before anything is created"
+"$SCRIPTS_DIR/task-create.sh" --title "Task five" --type chore --description "x" > /dev/null
+"$SCRIPTS_DIR/task-create.sh" --title "Task six" --type chore --description "x" > /dev/null
+jq '(.members[] | select(.role == "coder") | .adapter) = "codex"' "$CONDUCTOR_DIR/workforce.json" > "$CONDUCTOR_DIR/workforce.new" \
+  && mv "$CONDUCTOR_DIR/workforce.new" "$CONDUCTOR_DIR/workforce.json"
+mkdir -p "$WORK/no-sessions"; export CODEX_SESSIONS_DIR="$WORK/no-sessions"
+export CODEX_AUTH_FILE="$WORK/auth.json"
+printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test-not-real"}\n' > "$CODEX_AUTH_FILE"
+RC=0; OUT=$(spawn 0005 coder) || RC=$?
+assert_eq "the spawn fails"              "$RC" "1"
+case "$OUT" in *"API key"*) ok "and says why" ;; *) fail "says why ($OUT)" ;; esac
+assert_eq "in one line, so a halt notice that keeps the last line keeps the reason" "$(printf '%s\n' "$OUT" | grep -c .)" "1"
+case "$OUT" in *"sk-test-not-real"*) fail "the key is not printed" ;; *) ok "the key is not printed" ;; esac
+assert_eq "no assigned artifact"         "$(assigned_count 0005)" "0"
+assert_eq "no window"                    "$(window_count 0005)"   "0"
+assert_eq "no worktree"                  "$([[ -e "$PROJECT/.worktrees/coder-0005" ]] && echo yes || echo no)" "no"
+assert_eq "no record of a worker"        "$([[ -e "$CONDUCTOR_DIR/workers/coder-0005.json" ]] && echo yes || echo no)" "no"
+printf '{"auth_mode":"chatgpt","OPENAI_API_KEY":null}\n' > "$CODEX_AUTH_FILE"
+RC=0; OUT=$(spawn 0006 coder) || RC=$?
+assert_eq "on a subscription it spawns"  "$RC" "0"
+case "$OUT" in *"Spawned coder (codex)"*) ok "reports the spawn" ;; *) fail "reports the spawn ($OUT)" ;; esac
+assert_eq "with its window"              "$(window_count 0006)" "1"
+unset CODEX_SESSIONS_DIR CODEX_AUTH_FILE
+
 echo ""
 if (( FAILS > 0 )); then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "All checks passed"

@@ -7,8 +7,9 @@
 #     Appends one line to <file> (the usage log). <record> is a JSON object with the facts the
 #     writer knows: event, task, handler, role, attempt, outcome, rc, duration_s, harness, model,
 #     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, turns, usage
-#     and allowance (what a Codex run used of the subscription, from allowance.sh end). Anything
-#     missing is null. This adds what is the same for every writer: ts, the cost
+#     allowance (what a Codex run used of the subscription, from allowance.sh end), and, for a Codex
+#     run, requested_model and answered_model (what the workforce asked for, and what Codex said it
+#     used). Anything missing is null. This adds what is the same for every writer: ts, the cost
 #     estimated from the price table (null when it cannot be priced), and cost_source, which is
 #     reported when the record has a cost_usd, estimated when only the estimate exists and unknown
 #     when neither does. Field names and meanings are in docs/event-driven-conductor.md, "Usage
@@ -43,6 +44,25 @@ usage_append() {
       cost_source: (if ($r.cost_usd // null) != null then "reported" elif $est != null then "estimated" else "unknown" end),
       turns: ($r.turns // null),
       usage: ($r.usage // null),
-      allowance: ($r.allowance // null) }' >> "$file" 2> /dev/null || true
+      allowance: ($r.allowance // null),
+      requested_model: ($r.requested_model // null),
+      answered_model: ($r.answered_model // null) }' >> "$file" 2> /dev/null || true
+  return 0
+}
+
+#   usage_model_check <file> <role> <task> <event> <harness> <requested> <answered>
+#     Appends a record of its own, {"record": "model_mismatch", ...}, if a run was asked for one model
+#     and another answered. Nothing if either is empty (no model was asked for, or the session did not
+#     name one) or if the two names are the same: a doubt is not a mismatch. The names are compared as
+#     they are, so an alias that Codex reports under another id shows up as a mismatch with both
+#     names in it, for a person to judge. Always returns 0, like usage_append.
+usage_model_check() {
+  local file="${1:?usage_model_check <file> <role> <task> <event> <harness> <requested> <answered>}"
+  local role="${2-}" task="${3-}" event="${4-}" harness="${5-}" requested="${6-}" answered="${7-}"
+  [[ -n "$requested" && -n "$answered" && "$requested" != "$answered" ]] || return 0
+  jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg role "$role" --arg task "$task" --arg event "$event" \
+    --arg harness "$harness" --arg requested "$requested" --arg answered "$answered" '
+    { record: "model_mismatch", ts: $ts, role: $role, task: (if $task == "" then null else $task end), event: $event,
+      harness: $harness, requested: $requested, answered: $answered }' >> "$file" 2> /dev/null || true
   return 0
 }

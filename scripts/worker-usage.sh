@@ -6,6 +6,7 @@ set -euo pipefail
 # Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json>]
 #        worker-usage.sh read <task> [--outcome finished|interrupted] [--wait <seconds>] [--role <role>]
 #        worker-usage.sh sweep
+#        worker-usage.sh model <adapter> <directory> <since-epoch>
 # Env:   CONDUCTOR_DIR (default: .conductor)
 #        CLAUDE_PROJECTS_DIR, CODEX_SESSIONS_DIR, PI_SESSIONS_DIR  where the harnesses keep sessions
 #        (default ~/.claude/projects, $CODEX_HOME/sessions or ~/.codex/sessions, ~/.pi/agent/sessions)
@@ -19,6 +20,10 @@ set -euo pipefail
 #          that writes its cost only when it exits (Claude Code) time to do so.
 # sweep    reads, as interrupted, every worker whose record is still there but whose tmux window
 #          is gone: closed by hand, or lost with the swarm.
+#
+# model    prints the model that answered in the harness's sessions in <directory> written since
+#          <since-epoch>, or nothing if there is none. It is how a dispatch that has no worker record
+#          learns which model Codex really used, since `codex exec --json` does not name it.
 #
 # What each harness leaves, and how this was found, is in docs/worker-usage-sources.md. In short:
 # all three keep a JSON-lines session file with the working directory in it, which is the key.
@@ -228,9 +233,17 @@ cmd_read() {
     jq -e . <<< "$allowance" > /dev/null 2>&1 || allowance=null
   fi
 
+  # A Codex worker is asked for a model by the workforce, and the session says which one answered.
+  local requested="" answered=""
+  if [[ "$adapter" == codex ]]; then
+    [[ -z "$rec" ]] || requested="$(jq -r '.params.model // empty' "$rec" 2> /dev/null || true)"
+    answered="$(jq -r '.model // empty' <<< "$reading")"
+  fi
+
   local line
   line="$(jq -nc --argjson r "$reading" --arg task "$task" --arg role "$role" --arg adapter "$adapter" \
-    --arg outcome "$outcome" --argjson duration "$duration" --arg usage "$usage" --argjson allowance "$allowance" '
+    --arg outcome "$outcome" --argjson duration "$duration" --arg usage "$usage" --argjson allowance "$allowance" \
+    --arg requested "$requested" --arg answered "$answered" '
     { event: ($task + "/worker-" + $role),
       task: $task,
       handler: null,
@@ -248,8 +261,11 @@ cmd_read() {
       cost_usd: $r.cost_usd,
       turns: $r.turns,
       usage: $usage,
-      allowance: $allowance }')"
+      allowance: $allowance,
+      requested_model: (if $requested == "" then null else $requested end),
+      answered_model: (if $answered == "" then null else $answered end) }')"
   usage_append "$USAGE_LOG" "$line"
+  usage_model_check "$USAGE_LOG" "$role" "$task" "$task/worker-$role" "$adapter" "$requested" "$answered"
   [[ -z "$rec" ]] || rm -f "$rec"
 }
 
@@ -269,6 +285,17 @@ cmd_sweep() {
   done
 }
 
+cmd_model() {
+  local adapter="${1:?Usage: worker-usage.sh model <adapter> <directory> <since-epoch>}"
+  local dir="${2:?missing directory}" since="${3:?missing since-epoch}" files=() f physical
+  [[ "$since" =~ ^[0-9]+$ ]] || die "since-epoch is a Unix time in seconds"
+  sessions_root "$adapter" > /dev/null 2>&1 || return 0
+  physical="$(cd "$dir" 2> /dev/null && pwd -P)" || physical="$dir"
+  while IFS= read -r f; do files+=("$f"); done < <(sessions_for "$adapter" "$physical" "$since")
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  read_sessions "$adapter" "${files[@]}" | jq -r '.model // empty'
+}
+
 main() {
   command -v jq > /dev/null 2>&1 || { echo "worker-usage.sh needs jq" >&2; exit 3; }
   local cmd="${1:-}"; [[ $# -eq 0 ]] || shift
@@ -276,8 +303,9 @@ main() {
     spawned) cmd_spawned "$@" ;;
     read)    cmd_read "$@" ;;
     sweep)   cmd_sweep ;;
+    model)   cmd_model "$@" ;;
     -h|--help) sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//' ;;
-    *) echo "Usage: worker-usage.sh spawned|read|sweep ..." >&2; exit 1 ;;
+    *) echo "Usage: worker-usage.sh spawned|read|sweep|model ..." >&2; exit 1 ;;
   esac
 }
 
