@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# Tests scripts/allowance.sh: the reading record, the difference a Codex run made to the two
+# windows, and above all that a difference is null, with a reason, whenever it cannot be trusted:
+# nothing new written by Codex, a window that reset, an unknown reading, or runs that overlapped.
+# Needs no Codex and no allowance: a run is played by writing the event Codex would have written.
+#
+# Usage: scripts/test-allowance.sh
+
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+AL="$SCRIPTS_DIR/allowance.sh"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+FAILS=0
+ok()   { echo "   ✓  $1"; }
+fail() { echo "   ✗  $1" >&2; FAILS=$(( FAILS + 1 )); }
+assert_eq() {
+  if [[ "$2" == "$3" ]]; then ok "$1"; else fail "$1 (expected '$3', got '$2')"; fi
+}
+section() { echo ""; echo "── $1"; }
+
+export CONDUCTOR_DIR="$TMP/c"
+export CODEX_SESSIONS_DIR="$TMP/sessions"
+export CODEX_USAGE_NOW=1793790000        # between the five-hour window opening (1793782000) and its reset
+LOG="$CONDUCTOR_DIR/usage.jsonl"
+RUNS="$CONDUCTOR_DIR/allowance"
+P5=1793800000; P7=1794059735
+
+mkdir -p "$TMP/bin" "$CONDUCTOR_DIR"
+cat > "$TMP/bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == "list-windows" ]]; then
+  [[ -z "${STUB_TMUX_FAIL:-}" ]] || exit 1
+  printf '%s\n' ${STUB_WINDOWS:-}
+fi
+STUB
+chmod +x "$TMP/bin/tmux"
+export PATH="$TMP/bin:$PATH"
+
+SEQ=0
+# codex_wrote <used 5h> <used weekly> [resets 5h] [resets weekly]: what Codex writes at the end of a
+# turn, in a new session file, so it is the newest
+codex_wrote() {
+  SEQ=$(( SEQ + 1 ))
+  local d="$CODEX_SESSIONS_DIR/2026/11/04" f ts
+  mkdir -p "$d"; f="$d/rollout-$SEQ.jsonl"
+  ts="2026-11-04T05:$(printf '%02d' "$SEQ"):00.000Z"
+  jq -nc '{timestamp: "2026-11-04T05:00:00.000Z", type: "session_meta", payload: {cwd: "/x", cli_version: "0.166.0"}}' > "$f"
+  jq -nc --arg ts "$ts" --argjson p "$1" --argjson s "$2" --argjson pr "${3:-$P5}" --argjson sr "${4:-$P7}" '
+    { timestamp: $ts, type: "event_msg", payload: { type: "token_count", info: {},
+      rate_limits: { limit_id: "codex", plan_type: "plus",
+        primary:   { used_percent: $p, window_minutes: 300,   resets_at: $pr },
+        secondary: { used_percent: $s, window_minutes: 10080, resets_at: $sr } } } }' >> "$f"
+  touch -d "@$(( 1793700000 + SEQ ))" "$f"
+}
+reset() { rm -rf "$CONDUCTOR_DIR/usage.jsonl" "$RUNS" "$CODEX_SESSIONS_DIR"; SEQ=0; }
+lines() { wc -l < "$LOG" 2> /dev/null | tr -d ' ' || echo 0; }
+j() { jq -r "$1" <<< "$OUT"; }
+end_run() { OUT="$("$AL" end "$1")"; }
+files() { find "$RUNS" -type f -name '*.json' 2> /dev/null | wc -l | tr -d ' '; }
+
+section "1 · A reading is a record, not an attempt"
+reset; codex_wrote 10 20
+OUT="$("$AL" reading swarm-start)"
+assert_eq "it prints the reading" "$(j '[.five_hour.used_percent, .weekly.used_percent] | join(" ")')" "10 20"
+assert_eq "and appends one line" "$(lines)" "1"
+L="$(tail -1 "$LOG")"
+assert_eq "the record kind, the pool and the moment" "$(jq -r '[.record, .pool, .moment] | join(" ")' <<< "$L")" "allowance subscription:openai swarm-start"
+assert_eq "when it was taken" "$(jq -r '.ts | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$")' <<< "$L")" "true"
+assert_eq "what the reader found" "$(jq -r '[.plan_type, .five_hour.used_percent, .weekly.resets_at] | join(" ")' <<< "$L")" "plus 10 $P7"
+assert_eq "without the path of the session file" "$(jq -r 'has("source")' <<< "$L")" "false"
+reset
+OUT="$("$AL" reading swarm-start)"
+assert_eq "with nothing to read, still a record, and both windows unknown" "$(jq -r '[.record, .five_hour.state, .weekly.state] | join(" ")' "$LOG")" "allowance unknown unknown"
+
+section "2 · One run, alone: its difference is its own"
+reset; codex_wrote 10 20
+"$AL" begin run1 --kind dispatch --pid $$
+assert_eq "the run is noted" "$(files)" "1"
+codex_wrote 12.5 20.5
+end_run run1
+assert_eq "the five-hour window rose by" "$(j .five_hour.points)" "2.5"
+assert_eq "the weekly window rose by" "$(j .weekly.points)" "0.5"
+assert_eq "no reason, because nothing is missing" "$(j '[.five_hour.reason, .weekly.reason] | map(tostring) | join(" ")')" "null null"
+assert_eq "attributed to the run" "$(j '[.overlap, .attributed_to] | map(tostring) | join(" ")')" "false run"
+assert_eq "the pool" "$(j .pool)" "subscription:openai"
+assert_eq "both snapshots are in it" "$(j '[.before_snapshot_at, .after_snapshot_at] | join(" ")')" "2026-11-04T05:01:00.000Z 2026-11-04T05:02:00.000Z"
+assert_eq "the run is forgotten" "$(files)" "0"
+assert_eq "both readings were appended" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG" | tr '\n' ' ')" "run-begin:run1 run-end:run1 "
+
+section "3 · A difference that cannot be trusted is null, with a reason"
+reset; codex_wrote 10 20
+"$AL" begin run2 --kind dispatch --pid $$
+end_run run2
+assert_eq "Codex wrote nothing new: null, not zero" "$(j '.five_hour.points | tostring')" "null"
+assert_eq "and says why" "$(j .five_hour.reason)" "Codex wrote nothing new since the run began"
+reset; codex_wrote 10 20
+"$AL" begin run3 --kind dispatch --pid $$
+codex_wrote 1 20.5 $(( P5 + 18000 ))
+end_run run3
+assert_eq "the five-hour window reset during the run: null" "$(j '.five_hour | [(.points | tostring), .reason] | join(" / ")')" "null / the window reset during the run"
+assert_eq "the weekly window is still worked out" "$(j .weekly.points)" "0.5"
+reset; codex_wrote 10 20
+"$AL" begin run4 --kind dispatch --pid $$
+codex_wrote 11 20 $(( P5 + 3 ))
+end_run run4
+assert_eq "resets_at moving by a few seconds is the same window" "$(j .five_hour.points)" "1"
+reset; codex_wrote 10 20
+"$AL" begin run5 --kind dispatch --pid $$
+codex_wrote 4 20
+end_run run5
+assert_eq "a percentage that fell is not a negative difference" "$(j '.five_hour | [(.points | tostring), .reason] | join(" / ")')" "null / the percentage fell"
+reset
+"$AL" begin run6 --kind dispatch --pid $$
+codex_wrote 4 20
+end_run run6
+assert_eq "no reading before the run: null" "$(j '.five_hour.points | tostring')" "null"
+case "$(j .five_hour.reason)" in "the reading before the run was unknown: "*) ok "and says it was the reading before" ;; *) fail "reason: $(j .five_hour.reason)" ;; esac
+reset; codex_wrote 10 20
+"$AL" begin run7 --kind dispatch --pid $$
+rm -rf "$CODEX_SESSIONS_DIR"
+end_run run7
+case "$(j .weekly.reason)" in "the reading after the run was unknown: "*) ok "no reading after the run says it was the one after" ;; *) fail "reason: $(j .weekly.reason)" ;; esac
+reset; codex_wrote 10 20
+OUT="$("$AL" end never-began)"
+assert_eq "an end with no begin: null" "$OUT" "null"
+assert_eq "but the reading is still taken" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG")" "run-end:never-began"
+
+section "4 · Runs that overlap: the difference belongs to the batch"
+reset; codex_wrote 10 20
+"$AL" begin dispatch-a --kind dispatch --pid $$
+STUB_WINDOWS="coder-0001" "$AL" begin worker-b --kind worker --window coder-0001
+assert_eq "two live runs" "$(files)" "2"
+assert_eq "both are marked" "$(jq -s -r 'map(.overlap) | join(" ")' "$RUNS"/*.json)" "true true"
+codex_wrote 15 22
+STUB_WINDOWS="coder-0001" end_run dispatch-a
+assert_eq "the first to end: attributed to the batch" "$(j '[.overlap, .attributed_to, (.five_hour.points | tostring)] | join(" ")')" "true batch null"
+assert_eq "and says why" "$(j .five_hour.reason)" "runs overlapped; the difference belongs to the batch"
+STUB_WINDOWS="" end_run worker-b
+assert_eq "the other too, although it is now alone and its window is gone" "$(j '[.overlap, .attributed_to] | join(" ")')" "true batch"
+assert_eq "the batch change is in the readings the runs appended" \
+  "$(jq -r 'select(.record == "allowance") | .five_hour.used_percent | tostring' "$LOG" | tr '\n' ' ')" "10 10 15 15 "
+reset; codex_wrote 10 20
+"$AL" begin run-c --kind dispatch --pid $$
+codex_wrote 11 20
+end_run run-c
+"$AL" begin run-d --kind dispatch --pid $$
+codex_wrote 12 20
+end_run run-d
+assert_eq "runs one after the other are not overlapping" "$(j '[.overlap, (.five_hour.points | tostring)] | join(" ")')" "false 1"
+
+section "5 · A run that never ended does not make the next one overlap"
+reset; codex_wrote 10 20
+mkdir -p "$RUNS"
+jq -nc '{run: "crashed", kind: "dispatch", pid: 999999, window: null, overlap: false, before: {}}' > "$RUNS/crashed.json"
+"$AL" begin run-e --kind dispatch --pid $$
+assert_eq "the dead dispatch is forgotten" "$(files)" "1"
+codex_wrote 11 20
+end_run run-e
+assert_eq "and the run is attributed" "$(j '[.overlap, (.five_hour.points | tostring)] | join(" ")')" "false 1"
+reset; codex_wrote 10 20
+"$AL" begin w-old --kind worker --window coder-0009
+STUB_WINDOWS="" "$AL" begin run-f --kind dispatch --pid $$
+assert_eq "a worker whose window is gone is forgotten too" "$(files)" "1"
+reset; codex_wrote 10 20
+"$AL" begin w-doubt --kind worker --window coder-0009
+STUB_TMUX_FAIL=1 "$AL" begin run-g --kind dispatch --pid $$
+assert_eq "if tmux cannot say, the worker is taken as live, and the run is not attributed" "$(jq -s -r 'map(.overlap) | join(" ")' "$RUNS"/*.json)" "true true"
+
+section "6 · A worker whose window has already closed can still end"
+reset; codex_wrote 10 20
+STUB_WINDOWS="coder-0002" "$AL" begin w1 --kind worker --window coder-0002
+codex_wrote 13 21
+STUB_WINDOWS="" end_run w1
+assert_eq "its difference is worked out, though its window is gone" "$(j '[.overlap, (.five_hour.points | tostring)] | join(" ")')" "false 3"
+
+section "6b · A reading at swarm start, if Codex is in the workforce"
+reset; codex_wrote 10 20
+printf '{"members":[{"role":"conductor","adapter":"claude-code"},{"role":"reviewer","adapter":"codex"}]}' > "$TMP/wf-codex.json"
+printf '{"members":[{"role":"conductor","adapter":"claude-code"},{"role":"coder","adapter":"pi"}]}' > "$TMP/wf-other.json"
+"$AL" start "$TMP/wf-other.json"
+assert_eq "no Codex member: nothing is read" "$(lines 2> /dev/null || echo 0)" "0"
+"$AL" start "$TMP/wf-codex.json"
+assert_eq "a Codex member: one reading, taken at swarm start" "$(jq -r '[.record, .moment] | join(" ")' "$LOG")" "allowance swarm-start"
+RC=0; "$AL" start "$TMP/missing.json" || RC=$?
+assert_eq "a workforce that cannot be read is not an error" "$RC" "0"
+
+section "7 · Arguments"
+RC=0; "$AL" bogus > /dev/null 2>&1 || RC=$?
+assert_eq "an unknown command: exit 1" "$RC" "1"
+RC=0; "$AL" begin r --kind nonsense > /dev/null 2>&1 || RC=$?
+assert_eq "a kind that is not dispatch or worker: exit 1" "$RC" "1"
+RC=0; "$AL" begin r --kind dispatch > /dev/null 2>&1 || RC=$?
+assert_eq "a dispatch with no pid: exit 1" "$RC" "1"
+RC=0; "$AL" begin r --kind worker > /dev/null 2>&1 || RC=$?
+assert_eq "a worker with no window: exit 1" "$RC" "1"
+RC=0; "$AL" --help > /dev/null 2>&1 || RC=$?
+assert_eq "--help: exit 0" "$RC" "0"
+
+echo ""
+if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
+echo "$FAILS check(s) failed." >&2; exit 1

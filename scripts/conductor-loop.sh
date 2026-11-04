@@ -110,6 +110,7 @@ DISPATCH_STDERR="$CONDUCTOR_DIR/dispatch-stderr.log"
 LAST_ERROR=""
 USAGE_LOG="$CONDUCTOR_DIR/usage.jsonl"
 CUR_LABEL="" CUR_ATTEMPT=0 CUR_START=0
+ALLOWANCE_RUN=""   # the Codex dispatch in flight, for allowance.sh
 export DISPATCH_ANSWER_FILE="$CONDUCTOR_DIR/dispatch-answer.txt"
 LOG_FILE="$CONDUCTOR_DIR/conductor.log"
 HEARTBEAT="${CONDUCTOR_HEARTBEAT:-600}"
@@ -190,14 +191,20 @@ SLEEP_PID=""
 # is read here, before the next attempt deletes it. The log is a convenience: a line that
 # cannot be written never changes what the loop does.
 log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
-  local record="{}" usage=none
+  local record="{}" usage=none allowance=null
   if [[ -s "$DISPATCH_USAGE_FILE" ]] && jq -e . "$DISPATCH_USAGE_FILE" > /dev/null 2>&1; then
     record="$(cat "$DISPATCH_USAGE_FILE")"
     usage=reported
   fi
+  # What a Codex dispatch used of the subscription allowance: the reading from before it, and now.
+  if [[ -n "$ALLOWANCE_RUN" ]]; then
+    allowance="$("$SCRIPTS_DIR/allowance.sh" end "$ALLOWANCE_RUN" 2> /dev/null)" || allowance=null
+    jq -e . <<< "$allowance" > /dev/null 2>&1 || allowance=null
+    ALLOWANCE_RUN=""
+  fi
   # What this writer knows; usage_append adds the timestamp, the estimate and cost_source.
   local line
-  line="$(jq -nc --argjson r "$record" --arg usage "$usage" \
+  line="$(jq -nc --argjson r "$record" --arg usage "$usage" --argjson allowance "$allowance" \
     --arg event "$1" --arg attempt "$2" --arg outcome "$3" --arg rc "$4" --arg duration "$5" \
     --arg handler "${SKILL_NAME:-}" --arg adapter "$(basename "$ADAPTER_FILE" .sh)" '
     { event: $event,
@@ -216,7 +223,8 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       cache_write_tokens: $r.cache_write_tokens,
       cost_usd: $r.cost_usd,
       turns: $r.turns,
-      usage: $usage }' 2> /dev/null)" || return 0
+      usage: $usage,
+      allowance: $allowance }' 2> /dev/null)" || return 0
   usage_append "$USAGE_LOG" "$line"
 }
 
@@ -340,6 +348,11 @@ dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "
     if [[ -n "$HANDLER_SCRIPT" ]]; then
       run_script || rc=$?
     else
+      # A Codex dispatch draws on the subscription allowance: note where it stood. log_usage reads it again.
+      if [[ "$(basename "$ADAPTER_FILE" .sh)" == codex ]]; then
+        ALLOWANCE_RUN="dispatch-$$-$attempt"
+        "$SCRIPTS_DIR/allowance.sh" begin "$ALLOWANCE_RUN" --kind dispatch --pid $$ 2> /dev/null || ALLOWANCE_RUN=""
+      fi
       run_dispatch "$skill_content" "$event" || rc=$?
     fi
     case "$rc" in

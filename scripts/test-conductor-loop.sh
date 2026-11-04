@@ -103,7 +103,7 @@ dispatches() { grep -c '^start ' "$STUB_LOG" || true; }
 unprocessed() { "$SCRIPTS_DIR/artifact-ledger.sh" unprocessed; }
 queue() { : > "$STUB_RC"; local c; for c in "$@"; do echo "$c" >> "$STUB_RC"; done; }
 # ulines <event prefix>: the usage log lines for one event, as compact JSON
-ulines() { jq -c "select(.event | startswith(\"$1\"))" "$CONDUCTOR_DIR/usage.jsonl" 2> /dev/null; }
+ulines() { jq -c "select((.event // \"\") | startswith(\"$1\"))" "$CONDUCTOR_DIR/usage.jsonl" 2> /dev/null; }
 # ufield <event prefix> <jq path>: one field of the last such line
 ufield() { ulines "$1" | tail -1 | jq -r "$2"; }
 notices() { find "$CONDUCTOR_DIR/$1" -name 'loop-halt-*.md' 2> /dev/null | wc -l | tr -d ' '; }
@@ -924,6 +924,53 @@ expect_grep 'not executable' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt sa
 assert_eq "the model was not asked instead" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "0"
 assert_eq "the script did not run" "$(wc -l < "$SH_LOG" | tr -d ' ')" "0"
 unset CONDUCTOR_HANDLERS_DIR
+
+# 45 ------------------------------------------------------------------------------
+section "45 · A Codex dispatch records what it used of the subscription allowance"
+# The adapter is named codex, so the loop notes the allowance before and after each dispatch. The stub
+# plays Codex writing a newer event, with the five-hour window 2 points further on, while it runs.
+mkdir -p "$TMP/codex-adapter"; cp "$STUB" "$TMP/codex-adapter/codex.sh"
+export CODEX_SESSIONS_DIR="$TMP/codex-sessions" CODEX_USAGE_NOW=1793790000
+codex_event() { # <used 5h> <file number>: Codex writes a session whose newest event has this reading
+  mkdir -p "$CODEX_SESSIONS_DIR/2026/11/04"
+  local f="$CODEX_SESSIONS_DIR/2026/11/04/rollout-$2.jsonl"
+  jq -nc '{timestamp: "2026-11-04T05:00:00.000Z", type: "session_meta", payload: {cwd: "/x", cli_version: "0.166.0"}}' > "$f"
+  jq -nc --argjson p "$1" --arg ts "2026-11-04T05:0$2:00.000Z" '
+    { timestamp: $ts, type: "event_msg", payload: { type: "token_count", info: {},
+      rate_limits: { plan_type: "plus", primary: { used_percent: $p, window_minutes: 300, resets_at: 1793800000 },
+                     secondary: { used_percent: 20.0, window_minutes: 10080, resets_at: 1794059735 } } } }' >> "$f"
+  touch -d "@$(( 1793700000 + $2 ))" "$f"
+}
+rm -rf "$CODEX_SESSIONS_DIR"; codex_event 10 1
+new_swarm
+create_task
+CONDUCTOR_ADAPTER_FILE="$TMP/codex-adapter/codex.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+sleep 1; signal 0001 signal complete
+printf '%s\n' 'codex_event_hook=1' > /dev/null
+cat > "$STUB_HOOK" <<'HOOK_EOF'
+n=$(( $(find "$CODEX_SESSIONS_DIR" -type f | wc -l) + 1 ))
+mkdir -p "$CODEX_SESSIONS_DIR/2026/11/04"
+f="$CODEX_SESSIONS_DIR/2026/11/04/rollout-$n.jsonl"
+printf '%s\n' '{"timestamp":"2026-11-04T05:00:00.000Z","type":"session_meta","payload":{"cwd":"/x","cli_version":"0.166.0"}}' > "$f"
+printf '%s\n' '{"timestamp":"2026-11-04T05:09:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"plan_type":"plus","primary":{"used_percent":12.0,"window_minutes":300,"resets_at":1793800000},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":1794059735}}}}' >> "$f"
+touch -d "@$(( 1793700000 + n ))" "$f"
+HOOK_EOF
+STUB_USAGE='{"harness":"codex","model":"gpt-5","input_tokens":100,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":null,"turns":1}' \
+  CONDUCTOR_ADAPTER_FILE="$TMP/codex-adapter/codex.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+assert_eq "the dispatch's line carries its allowance: five-hour points" "$(ufield 0001/signal '.allowance.five_hour.points | tostring')" "2"
+assert_eq "attributed to the run" "$(ufield 0001/signal .allowance.attributed_to)" "run"
+assert_eq "the weekly window did not move" "$(ufield 0001/signal '.allowance.weekly.points | tostring')" "0"
+assert_eq "readings were taken around it, as records and not as attempts" \
+  "$(jq -r 'select(.record == "allowance") | .moment | sub("[0-9]+-[0-9]+$"; "N")' "$CONDUCTOR_DIR/usage.jsonl" | grep -c 'run-begin:dispatch-N\|run-end:dispatch-N')" "$(jq -r 'select(.record == "allowance") | .moment' "$CONDUCTOR_DIR/usage.jsonl" | wc -l | tr -d ' ')"
+assert_eq "no run is left noted" "$(find "$CONDUCTOR_DIR/allowance" -type f 2> /dev/null | wc -l | tr -d ' ')" "0"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.01,"turns":1}' run_loop
+assert_eq "a dispatch on another adapter has no allowance" "$(ufield 0001/signal '.allowance | tostring')" "null"
+assert_eq "and takes no reading" "$(jq -r 'select(.record == "allowance") | 1' "$CONDUCTOR_DIR/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
+rm -f "$STUB_HOOK"
+unset CODEX_SESSIONS_DIR CODEX_USAGE_NOW
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

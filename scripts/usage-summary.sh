@@ -18,9 +18,16 @@ set -euo pipefail
 # include the unknown attempts, so together they are a floor, not the bill.
 #
 # --by picks the groupings to print, and can be repeated: harness, handler, task, role, model,
-# adapters. The default is all of them. "adapters" is the cross-adapter view: every attempt
+# adapters, allowance. The default is all of them. "adapters" is the cross-adapter view: every attempt
 # that has an estimate, reported cost or not, on the price table's one basis, with the number
 # of attempts that have none.
+#
+# "allowance" is the Codex subscription pool, kept apart from tokens and dollars because it is
+# a percentage of a window, not a cost: the latest reading of the five-hour and the weekly window,
+# how far each has moved since the first reading in the same window, and the percentage points
+# that runs used (the allowance on their lines), by role. A run whose points could not be
+# attributed (runs overlapped, or a reading was unknown) is counted, not guessed. The readings are
+# records of their own in the log ("record": "allowance") and are not attempts.
 #
 # --since takes a UTC timestamp as written in the log (2026-11-01T12:00:00Z), or a prefix of one
 # (2026-11-01).
@@ -34,8 +41,8 @@ while [[ $# -gt 0 ]]; do
     --since) SINCE="${2:?--since needs a timestamp}"; shift 2 ;;
     --by)
       case "${2:-}" in
-        harness|handler|task|role|model|adapters) BY="$BY${BY:+,}$2"; shift 2 ;;
-        *) echo "usage-summary.sh: --by takes harness, handler, task, role, model or adapters" >&2; exit 1 ;;
+        harness|handler|task|role|model|adapters|allowance) BY="$BY${BY:+,}$2"; shift 2 ;;
+        *) echo "usage-summary.sh: --by takes harness, handler, task, role, model, adapters or allowance" >&2; exit 1 ;;
       esac ;;
     -h|--help) sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Usage: usage-summary.sh [--file <usage.jsonl>] [--since <timestamp>] [--by <grouping>]..." >&2; exit 1 ;;
@@ -52,7 +59,9 @@ fi
 # Lines that are not JSON are skipped, so a half-written last line cannot break the summary.
 jq -R 'fromjson? // empty' "$FILE" \
   | jq -rs --arg since "$SINCE" --arg by "$BY" '
-    map(select($since == "" or .ts >= $since)) as $all
+    map(select($since == "" or .ts >= $since)) as $inrange
+    | ($inrange | map(select(.record == "allowance"))) as $readings
+    | ($inrange | map(select(.record != "allowance"))) as $all
     | def want(k): $by == "" or ($by | split(",") | index(k) != null);
       def reported: select(.cost_usd != null);
       def estimated: select(.cost_usd == null and .estimated_cost_usd != null);
@@ -74,7 +83,31 @@ jq -R 'fromjson? // empty' "$FILE" \
         cache_write: (rows | sum(.cache_write_tokens // 0)) };
       def row(section; key; a): [section, key, a.attempts, a.reported, a.estimated, a.unknown, a.input, a.output, a.cache_read, a.cache_write, a.reported_n, a.estimated_n, a.priced, a.priced_n] | @tsv;
       def groups(f): $all | group_by(f // "-") | map({key: (.[0] | f // "-"), a: agg(.)}) | sort_by(-(.a.reported + .a.estimated), .key);
-      if ($all | length) == 0 then "empty"
+      def same_window($a; $b): ($a.resets_at != null and $b.resets_at != null and (($a.resets_at - $b.resets_at) | fabs) <= 120);
+      def window_rows($w; $label):
+        ($readings | last) as $l
+        | ([$readings[] | select(.[$w].state == "known" and same_window(.[$w]; $l[$w]))] | first) as $f
+        | ["allow_win", $label, $l[$w].state, ($l[$w].used_percent // "-"),
+           (if $l[$w].resets_at != null then ($l[$w].resets_at | todate) else "-" end),
+           ($l[$w].reason // "-"),
+           (if $l[$w].state == "known" and $f != null then $f[$w].used_percent else "-" end),
+           (if $l[$w].state == "known" and $f != null then ($f.snapshot_at // "-") else "-" end)] | @tsv;
+      def allowance_rows:
+        if want("allowance") and (($readings | length) > 0 or ($all | map(select(.allowance != null)) | length) > 0) then
+          (if ($readings | length) > 0 then
+             (($readings | last) as $l
+              | (["allow_head", ($l.snapshot_at // "-"), ($l.plan_type // "-"), ($l.codex_version // "-")] | @tsv),
+                window_rows("five_hour"; "5-hour"), window_rows("weekly"; "weekly"))
+           else (["allow_head", "-", "-", "-"] | @tsv) end),
+          ($all | map(select(.allowance != null)) | group_by(.role // "-")
+           | map({role: (.[0].role // "-"), runs: length,
+                  five: (map(.allowance.five_hour.points // 0) | add), weekly: (map(.allowance.weekly.points // 0) | add),
+                  lost: (map(select(.allowance.five_hour.points == null)) | length),
+                  batch: (map(select(.allowance.attributed_to == "batch")) | length)})
+           | sort_by(-.five, .role) | .[]
+           | ["allow_role", .role, .runs, .five, .weekly, .lost, .batch] | @tsv)
+        else empty end;
+      (if ($all | length) == 0 then "empty"
       else
         ("meta\tfirst\t" + ($all | map(.ts) | min)),
         ("meta\tlast\t" + ($all | map(.ts) | max)),
@@ -87,7 +120,8 @@ jq -R 'fromjson? // empty' "$FILE" \
         (if want("role")    then (groups(.role)    | .[] | row("role";    .key; .a)) else empty end),
         (if want("model")   then (groups(.model)   | .[] | row("model";   .key; .a)) else empty end),
         (if want("adapters") then (groups(.harness) | sort_by(.key) | .[] | row("adapters"; .key; .a)) else empty end)
-      end' \
+      end),
+      allowance_rows' \
   | awk -F'\t' -v file="$FILE" -v since="$SINCE" '
     function money(x) { return sprintf("$%.4f", x) }
     function section(title) { printf "\n%-28s %8s %11s %11s %8s %11s %9s\n", title, "attempts", "reported", "estimated", "unknown", "in", "out" }
@@ -107,6 +141,29 @@ jq -R 'fromjson? // empty' "$FILE" \
       printf "Unfinished: %s reported%s over %d attempts that did not finish (%d of them with no cost)\n", money($4), ($5 > 0 ? " and " money($5) " estimated" : ""), $3, $6
       next
     }
+    $1 == "allow_head" {
+      printf "\nCodex allowance (subscription:openai)"
+      if ($2 == "-") printf ": no reading in any Codex session\n"
+      else printf ", read %s, plan %s, Codex %s\n", $2, $3, $4
+      allowed = 1
+      next
+    }
+    $1 == "allow_win" {
+      if ($3 == "known") {
+        printf "  %-8s %s%% used, resets %s", $2, $4, $5
+        if ($7 != "-") printf "  (was %s%% at %s, first reading in this window)", $7, $8
+        printf "\n"
+      } else printf "  %-8s unknown (%s)\n", $2, $6
+      next
+    }
+    $1 == "allow_role" {
+      if (!role_head) {
+        printf "\n  %-38s %6s %8s %8s %16s\n", "Used by runs (percentage points)", "runs", "5-hour", "weekly", "not attributed"
+        role_head = 1
+      }
+      printf "  %-38s %6d %8s %8s %16s\n", $2, $3, "+" $4, "+" $5, $6 (($7 > 0) ? " (" $7 " in a batch)" : "")
+      next
+    }
     $1 == "adapters" {
       if (shown != $1) {
         adapters_shown = 1
@@ -123,6 +180,7 @@ jq -R 'fromjson? // empty' "$FILE" \
       printf "%-28s %8d %11s %11s %8d %11d %9d\n", key, $3, money($4), money($5), $6, $7, $8
     }
     END {
+      if (role_head) printf "\nRuns whose points could not be attributed (overlapping runs, or a reading that was unknown) are counted, not guessed; the change over a batch is in the readings above.\n"
       if (empty) exit
       if (adapters_shown)
         printf "\n%d of the %d attempts have no estimate (an unpriced model, or no record). They are not counted as free.\n", unpriced_all, total

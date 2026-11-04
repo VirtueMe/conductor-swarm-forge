@@ -25,6 +25,7 @@ section() { echo ""; echo "── $1"; }
 
 export CONDUCTOR_DIR="$TMP/c"
 export CLAUDE_PROJECTS_DIR="$TMP/claude" CODEX_SESSIONS_DIR="$TMP/codex" PI_SESSIONS_DIR="$TMP/pi"
+export CODEX_USAGE_NOW=1793780000   # before the five-hour window of the Codex fixture resets (1793788907)
 LOG="$CONDUCTOR_DIR/usage.jsonl"
 
 # tmux is a stub that lists the windows named in $STUB_WINDOWS
@@ -52,7 +53,7 @@ put() { # <adapter> <fixture> <name> : place a session file where the harness ke
   esac
   mkdir -p "$dir"; cp "$2" "$dir/$3"; echo "$dir/$3"
 }
-reset() { rm -rf "$CONDUCTOR_DIR/workers" "$LOG" "$CLAUDE_PROJECTS_DIR" "$CODEX_SESSIONS_DIR" "$PI_SESSIONS_DIR"; }
+reset() { rm -rf "$CONDUCTOR_DIR/workers" "$CONDUCTOR_DIR/allowance" "$LOG" "$CLAUDE_PROJECTS_DIR" "$CODEX_SESSIONS_DIR" "$PI_SESSIONS_DIR"; }
 spawn() { "$WU" spawned "$1" "$2" "$3" "$CWD" '{"model":"m"}'; }
 last() { jq -r "$1" "$LOG" | tail -1; }
 lines() { wc -l < "$LOG" 2> /dev/null | tr -d ' ' || echo 0; }
@@ -88,6 +89,7 @@ assert_eq "it finished" "$(last .outcome)" "finished"
 assert_eq "a worker has no exit status or attempt" "$(last '[.rc, .attempt] | map(tostring) | join(",")')" "null,null"
 assert_eq "the time is in the line" "$(last '.duration_s | type')" "number"
 assert_eq "the record is gone once read" "$(find "$CONDUCTOR_DIR/workers" -type f | wc -l | tr -d ' ')" "0"
+assert_eq "a worker on another harness has no allowance" "$(last '.allowance | tostring')" "null"
 
 section "3 · claude-code: the cost the process wrote on exit"
 reset; spawn 0002 reviewer claude-code
@@ -167,6 +169,27 @@ reset; spawn 0016 validator codex
 mkdir -p "$TMP/home/sessions/2026/11/04"; cp "$FX/codex/rollout.jsonl" "$TMP/home/sessions/2026/11/04/rollout-a.jsonl"
 ( unset CODEX_SESSIONS_DIR; CODEX_HOME="$TMP/home" "$WU" read 0016 )
 assert_eq "CODEX_HOME locates the sessions, as codex-usage.sh does" "$(last .usage)" "reported"
+
+section "7c · A Codex worker's line carries what it used of the allowance"
+reset
+old="$(put codex "$FX/codex/rollout.jsonl" rollout-old.jsonl)"; touch -d '2 hours ago' "$old"
+spawn 0040 validator codex
+assert_eq "the spawn took the reading the run is measured from" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG")" "run-begin:worker:validator-0040"
+# Codex then writes the worker's session, with the five-hour window 3 points further on
+put codex <(jq -c 'if .payload.type == "token_count" then .timestamp = "2026-11-04T07:00:00.000Z" | .payload.rate_limits.primary.used_percent = 3.0 else . end' "$FX/codex/rollout.jsonl") rollout-new.jsonl > /dev/null
+STUB_WINDOWS="" "$WU" read 0040
+assert_eq "the tokens are read as before" "$(last '[.harness, .input_tokens, .usage] | map(tostring) | join(",")')" "codex,3317,reported"
+assert_eq "the five-hour window rose by 3 points, attributed to the run" "$(last '.allowance | [(.five_hour.points | tostring), .attributed_to] | join(" ")')" "3 run"
+assert_eq "the weekly window did not move, which is a number, not an unknown" "$(last '.allowance.weekly.points | tostring')" "0"
+assert_eq "both readings are in the log, apart from the attempt" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG" | tr '\n' ' ')" "run-begin:worker:validator-0040 run-end:worker:validator-0040 "
+assert_eq "and the run is forgotten" "$(find "$CONDUCTOR_DIR/allowance" -type f | wc -l | tr -d ' ')" "0"
+reset
+old="$(put codex "$FX/codex/rollout.jsonl" rollout-old.jsonl)"; touch -d '2 hours ago' "$old"
+STUB_WINDOWS="coder-0041 reviewer-0042" spawn 0041 coder codex
+STUB_WINDOWS="coder-0041 reviewer-0042" spawn 0042 reviewer codex
+put codex <(jq -c 'if .payload.type == "token_count" then .timestamp = "2026-11-04T07:00:00.000Z" | .payload.rate_limits.primary.used_percent = 3.0 else . end' "$FX/codex/rollout.jsonl") rollout-new.jsonl > /dev/null
+STUB_WINDOWS="reviewer-0042" "$WU" read 0041
+assert_eq "two Codex workers at once: the difference belongs to the batch" "$(last '.allowance | [.attributed_to, (.five_hour.points | tostring)] | join(" ")')" "batch null"
 
 section "8 · A harness that writes its cost on exit is given time to"
 reset; spawn 0012 coder claude-code
