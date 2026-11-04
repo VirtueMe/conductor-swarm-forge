@@ -673,10 +673,30 @@ both and that the default workforce's models are priced.
   the record does not carry (a 1-hour cache write, a long-prompt tier), so a gap is expected;
   a large one means a price is out of date.
 
-`scripts/usage-summary.sh [--file F] [--since TIMESTAMP]` totals it: the period, the known cost,
-how many attempts had no cost, tokens, the spend on attempts that did not finish, and the same
-split by harness, handler and task. The known cost it prints is a floor, not the bill, and it
+`scripts/usage-summary.sh [--file F] [--since TIMESTAMP] [--by GROUPING]...` totals it: the period,
+tokens, the spend on attempts that did not finish, and the same split by harness, handler, task,
+role and model. Cost is kept in three kinds and never merged:
+
+- **reported**: the harness gave a cost (`cost_usd`);
+- **estimated**: no reported cost, but the price table priced the tokens (`estimated_cost_usd`);
+- **unknown**: neither. These are counted, and are not in either total.
+
+The kind is read from those two fields, so lines from before `role`, `cost_source` or
+`estimated_cost_usd` existed read as they always did (a role of "(no role)", a cost that is
+reported or unknown). The reported and estimated totals are a floor, not the bill, and the summary
 says so.
+
+The last section, **Across harnesses**, compares the harnesses on estimated cost: every attempt
+that has an estimate counts, whether or not the harness also reported a cost, so Codex and Claude
+Code are priced by the same table on the same token basis. It shows the estimate, how many
+attempts were priced, how many were not, and the estimate per priced attempt, which is the number
+to compare when the harnesses ran different amounts of work. Attempts with no estimate are not
+counted as free; the summary says how many there were.
+
+`--by` limits the output to the groupings named (`harness`, `handler`, `task`, `role`, `model`,
+`adapters` for the cross-harness view), and can be repeated. With none, all are printed. Before
+#134 the summary counted an attempt as unknown whenever `cost_usd` was null, which put every
+Codex attempt there even when the table could price it.
 
 Measured so far, all single runs on `claude-opus-4-8`, so a direction and not a price list: a
 handler $0.07 to $0.11, a reconcile $0.09 to $0.19 (it runs on every start with any task on the

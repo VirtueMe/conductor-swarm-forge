@@ -49,23 +49,23 @@ section "1 · The totals"
 run --file "$LOG"
 assert_eq "exit 0" "$RC" "0"
 has 'Period    : 2026-11-01T10:00:00Z  to  2026-11-01T11:10:00Z   (5 attempts, 4 events)' "period, attempts and events (the broken line is skipped)"
-has 'Known cost: \$0.3345 over 3 attempts with a cost' "known cost adds only the attempts that have one"
-has 'Unknown   : 2 attempts reported no cost' "attempts with no cost are counted as unknown"
+has 'Known cost: \$0.3345 over 3 attempts with a reported cost' "known cost adds only the attempts that have one"
+has 'Unknown   : 2 attempt(s) with neither' "attempts with no cost are counted as unknown"
 has 'Tokens    : in 5846, out 3760, cache read 192785, cache write 15783' "tokens"
-has 'Unfinished: \$0.0900 over 2 attempts that did not finish (1 of them with no cost)' "spend on attempts that did not finish"
+has 'Unfinished: \$0.0900 reported over 2 attempts that did not finish (1 of them with no cost)' "spend on attempts that did not finish"
 has 'The known cost is a floor' "and it says the known cost is a floor"
 
 section "2 · By harness"
 run --file "$LOG"
-has '^claude-code  *3  *\$0.3345  *0 ' "claude-code: three attempts, all with a cost"
-has '^codex  *2  *\$0.0000  *2 ' "codex: its attempts are shown as unknown, not hidden behind a zero"
+has '^claude-code  *3  *\$0.3345  *\$0.0000  *0 ' "claude-code: three attempts, all with a cost"
+has '^codex  *2  *\$0.0000  *\$0.0000  *2 ' "codex: its attempts are shown as unknown, not hidden behind a zero"
 
 section "3 · By handler and by task"
 has '^conductor/reconcile  *1  *\$0.1945' "the reconcile is a handler like the others"
 has '^conductor/on-signal-complete  *2  *\$0.1400' "a retried event's attempts add up"
 has '^(no task)  *1  *\$0.1945' "the reconcile has no task"
 has '^0001  *2  *\$0.1400' "task 0001"
-has '^0002  *2  *\$0.0000  *2' "task 0002: unknown, twice"
+has '^0002  *2  *\$0.0000  *\$0.0000  *2' "task 0002: unknown, twice"
 first="$(grep -E '^conductor/' "$OUT" | head -1 | cut -d' ' -f1)"
 assert_eq "the most expensive handler comes first" "$first" "conductor/reconcile"
 
@@ -100,10 +100,65 @@ awk 'NR % 2' "$TMP/old.jsonl" > "$TMP/mixed.jsonl"
 jq -c "$add_fields" <(awk 'NR % 2 == 0' "$TMP/old.jsonl") >> "$TMP/mixed.jsonl"
 for variant in new mixed; do
   run --file "$TMP/$variant.jsonl"
-  has 'Known cost: \$0.3345 over 3 attempts with a cost' "$variant: the same known cost"
-  has 'Unknown   : 2 attempts reported no cost' "$variant: the same unknown count"
+  has 'Known cost: \$0.3345 over 3 attempts with a reported cost' "$variant: the same known cost"
+  has 'Unknown   : 2 attempt(s) with neither' "$variant: the same unknown count"
   has 'Tokens    : in 5846, out 3760, cache read 192785, cache write 15783' "$variant: the same tokens"
 done
+
+section "5c · By role and by model, with reported and estimated cost apart"
+# Three roles, two models, three harnesses. Reported cost is what a harness charged; estimated
+# is the price table's figure on a line with no reported cost; unknown has neither.
+RL="$TMP/roles.jsonl"
+rline() { # role harness model cost estimate outcome
+  jq -nc --arg role "$1" --arg harness "$2" --arg model "$3" --argjson cost "$4" --argjson est "$5" --arg outcome "$6" '
+    { ts: "2026-11-02T10:00:00Z", event: "0001/x.md", task: "0001", handler: "h", role: $role, attempt: 1,
+      outcome: $outcome, rc: 0, duration_s: 5, harness: $harness, model: (if $model == "" then null else $model end),
+      input_tokens: 100, output_tokens: 10, cache_read_tokens: 1000, cache_write_tokens: 0,
+      cost_usd: $cost, estimated_cost_usd: $est, turns: 2, usage: "reported",
+      cost_source: (if $cost != null then "reported" elif $est != null then "estimated" else "unknown" end) }'
+}
+{
+  rline conductor claude-code opus   0.50 0.40 finished
+  rline conductor claude-code opus   0.30 0.25 finished
+  rline coder     claude-code sonnet 0.20 0.15 finished
+  rline coder     codex       gpt-5  null 0.10 finished
+  rline coder     codex       gpt-5  null 0.30 interrupted
+  rline reviewer  codex       gpt-5  null 0.20 finished
+  rline reviewer  codex       ""     null null timeout
+  # an old line: no role, no estimate, no cost_source
+  echo '{"ts":"2026-11-02T10:00:00Z","event":"0001/y.md","task":"0001","handler":"h","attempt":1,"outcome":"finished","rc":0,"duration_s":5,"harness":"claude-code","model":"opus","input_tokens":100,"output_tokens":10,"cache_read_tokens":1000,"cache_write_tokens":0,"cost_usd":0.10,"turns":2,"usage":"reported"}'
+} > "$RL"
+run --file "$RL"
+has 'Known cost: \$1.1000 over 4 attempts with a reported cost' "reported cost is its own total"
+has 'Estimated : \$0.6000 over 3 attempts with only an estimate' "and estimated cost is apart from it"
+has 'Unknown   : 1 attempt(s) with neither' "unknown is the line with neither"
+has '^By role' "a role section"
+has '^conductor  *2  *\$0.8000  *\$0.0000  *0 ' "conductor: reported only"
+has '^coder  *3  *\$0.2000  *\$0.4000  *0 ' "coder: a reported line and two estimated"
+has '^reviewer  *2  *\$0.0000  *\$0.2000  *1 ' "reviewer: one estimated, one unknown"
+has '^(no role)  *1  *\$0.1000  *\$0.0000  *0 ' "a line from before roles existed"
+has '^By model' "a model section"
+has '^opus  *3  *\$0.9000 ' "opus: two lines plus the old one"
+has '^gpt-5  *3  *\$0.0000  *\$0.6000  *0 ' "gpt-5: no reported cost, all estimated"
+has '^(no model)  *1  *\$0.0000  *\$0.0000  *1 ' "a line with no model is its own row, unknown"
+
+section "5d · The cross-adapter view is on estimated cost, and unknown is not zero"
+has '^Across harnesses' "the view is there"
+has '^codex  *4  *\$0.6000  *3  *1  *\$0.2000$' "codex: four attempts, three priced, one not; the estimate over the priced ones"
+has '^claude-code  *4  *\$0.8000  *3  *1  *\$0.2667$' "claude-code: the old line has no estimate and is counted unpriced"
+has '2 of the 8 attempts have no estimate' "it says how many attempts are not in the estimate"
+
+section "5e · --by picks the groupings"
+run --file "$RL" --by role
+has '^By role' "role is shown"
+lacks '^By model' "model is not"
+lacks '^By harness' "nor the others"
+lacks '^Across harnesses' "nor the cross-adapter view"
+run --file "$RL" --by model --by adapters
+has '^By model' "--by repeats"
+has '^Across harnesses' "and takes adapters"
+run --file "$RL" --by nonsense
+assert_eq "an unknown grouping: exit 1" "$RC" "1"
 
 section "6 · Arguments"
 run --bogus
