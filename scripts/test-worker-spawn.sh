@@ -85,6 +85,10 @@ assert_eq "one window"                   "$(window_count 0001)"   "1"
 BRIEFING="$(ls "$PROJECT"/.worktrees/coder-0001/AGENTS.md)"
 SUM_BEFORE="$(cksum < "$BRIEFING")"
 case "$OUT" in *"Spawned coder"*) ok "reports the spawn" ;; *) fail "reports the spawn ($OUT)" ;; esac
+REC="$CONDUCTOR_DIR/workers/coder-0001.json"
+assert_eq "the spawn is noted for the usage log: task, role and worktree" \
+  "$(jq -r '[.task, .role, (.cwd | endswith("/.worktrees/coder-0001"))] | map(tostring) | join(" ")' "$REC" 2>/dev/null || true)" "0001 coder true"
+REC_SUM="$(cksum < "$REC")"
 
 echo "── a replayed spawn for the same task is a no-op"
 echo "marker" >> "$BRIEFING"                                # a running worker's file
@@ -94,6 +98,7 @@ case "$OUT" in *"already running"*) ok "says why" ;; *) fail "says why ($OUT)" ;
 assert_eq "still one assigned artifact"  "$(assigned_count 0001)" "1"
 assert_eq "still one window"             "$(window_count 0001)"   "1"
 assert_eq "briefing not rewritten"       "$(cksum < "$BRIEFING")" "$SUM_MARKED"
+assert_eq "the worker's record is not rewritten"  "$(cksum < "$REC")" "$REC_SUM"
 [[ "$SUM_BEFORE" != "$SUM_MARKED" ]] || fail "test sanity: marker changed the file"
 
 echo "── any role's window for the task blocks a spawn"

@@ -160,6 +160,34 @@ has '^Across harnesses' "and takes adapters"
 run --file "$RL" --by nonsense
 assert_eq "an unknown grouping: exit 1" "$RC" "1"
 
+section "5f · Worker lines read with the existing groupings"
+# What worker-usage.sh writes: a role and a task, but no handler, attempt or exit status.
+WL="$TMP/workers.jsonl"
+wline() { # role task harness model cost estimate outcome
+  jq -nc --arg role "$1" --arg task "$2" --arg harness "$3" --arg model "$4" --argjson cost "$5" --argjson est "$6" --arg outcome "$7" '
+    { ts: "2026-11-03T10:00:00Z", event: ($task + "/worker-" + $role), task: $task, handler: null, role: $role,
+      attempt: null, outcome: $outcome, rc: null, duration_s: 600, harness: $harness, model: $model,
+      input_tokens: 100, output_tokens: 10, cache_read_tokens: 1000, cache_write_tokens: 0,
+      cost_usd: $cost, estimated_cost_usd: $est, turns: 3, usage: "reported",
+      cost_source: (if $cost != null then "reported" elif $est != null then "estimated" else "unknown" end) }'
+}
+{
+  wline coder    0001 claude-code claude-sonnet-4-6 0.40 0.30 finished
+  wline reviewer 0001 pi          claude-opus-4-8   0.20 0.20 finished
+  wline coder    0002 codex       gpt-5             null 0.10 interrupted
+  # and one of the conductor's own, from the loop
+  line 2026-11-03T10:00:00Z 0001/signal-1.md 0001 conductor/on-signal-complete 1 finished 0 claude-code 0.05 8 310 20000 0 reported | jq -c '. + {role: "conductor"}'
+} > "$WL"
+run --file "$WL"
+assert_eq "exit 0" "$RC" "0"
+has '^coder  *2  *\$0.4000  *\$0.1000  *0 ' "by role: the coder's two lines, one reported and one estimated"
+has '^reviewer  *1  *\$0.2000  *\$0.0000  *0 ' "the reviewer"
+has '^conductor  *1  *\$0.0500 ' "the conductor's own line is a role like the others"
+has '^(no handler)  *3 ' "by handler: the worker lines have none"
+has '^0001  *3 ' "by task: the worker lines belong to their task"
+has '^Unfinished: .* 1 attempts that did not finish' "an interrupted worker counts as unfinished"
+has '^claude-sonnet-4-6  *1 ' "by model"
+
 section "6 · Arguments"
 run --bogus
 assert_eq "an unknown flag: exit 1" "$RC" "1"

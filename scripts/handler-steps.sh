@@ -7,8 +7,9 @@
 # Sourced (not executed) by a handler under scripts/handlers/. It needs what the loop
 # gives a handler: CONDUCTOR_DIR set, and the scripts on PATH. It defines:
 #
-#   close_worker_window <task>      close the tmux window named <role>-<task>; always
-#                                   returns 0, a missing window is not an error
+#   close_worker_window <task>      close the tmux window named <role>-<task> and record what the
+#                                   worker spent (worker-close.sh); always returns 0, a missing
+#                                   window is not an error
 #   card_field <task> <field>       print a field of the task's current card (its type, say).
 #                                   Fails closed: with no card, or an empty field, it prints
 #                                   nothing, says why on stderr and returns 1. A missing type
@@ -89,10 +90,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/frontmatter.sh"
 ROUTED_DEST=""
 
 close_worker_window() { # <task>
-  local win
-  win="$(tmux list-windows -t swarm -F '#{window_name}' 2> /dev/null | grep -E -- "-$1\$" | head -1 || true)"
-  [[ -z "$win" ]] || tmux kill-window -t "swarm:$win" 2> /dev/null || true
-  return 0
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/worker-close.sh" "$1"
 }
 
 # The path of the task's current card, or nothing (returns 1) if it has none.

@@ -86,6 +86,8 @@ source "$SCRIPTS_DIR/frontmatter.sh"
 source "$SCRIPTS_DIR/wf-read.sh"
 # shellcheck source=scripts/handler-resolve.sh
 source "$SCRIPTS_DIR/handler-resolve.sh"
+# shellcheck source=scripts/usage-log.sh
+source "$SCRIPTS_DIR/usage-log.sh"
 
 # Sets CONDUCTOR_DIR (absolute), SCRIPTS_DIR and PATH, as a dispatched run needs them.
 conductor_env "${CONDUCTOR_DIR:-.conductor}"
@@ -193,15 +195,12 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
     record="$(cat "$DISPATCH_USAGE_FILE")"
     usage=reported
   fi
-  # Priced from the table; null when it cannot be, and the line is written either way.
-  local estimate
-  estimate="$("$SCRIPTS_DIR/usage-price.sh" estimate <<< "$record" 2> /dev/null)" || estimate=null
-  jq -e 'type == "number" or . == null' <<< "$estimate" > /dev/null 2>&1 || estimate=null
-  jq -nc --argjson r "$record" --argjson est "$estimate" --arg usage "$usage" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  # What this writer knows; usage_append adds the timestamp, the estimate and cost_source.
+  local line
+  line="$(jq -nc --argjson r "$record" --arg usage "$usage" \
     --arg event "$1" --arg attempt "$2" --arg outcome "$3" --arg rc "$4" --arg duration "$5" \
     --arg handler "${SKILL_NAME:-}" --arg adapter "$(basename "$ADAPTER_FILE" .sh)" '
-    { ts: $ts,
-      event: $event,
+    { event: $event,
       task: (if ($event | contains("/")) then ($event | split("/")[0]) else null end),
       handler: $handler,
       role: "conductor",
@@ -210,16 +209,15 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       rc: ($rc | tonumber),
       duration_s: ($duration | tonumber),
       harness: ($r.harness // $adapter),
-      model: ($r.model // null),
-      input_tokens: ($r.input_tokens // null),
-      output_tokens: ($r.output_tokens // null),
-      cache_read_tokens: ($r.cache_read_tokens // null),
-      cache_write_tokens: ($r.cache_write_tokens // null),
-      cost_usd: ($r.cost_usd // null),
-      estimated_cost_usd: $est,
-      cost_source: (if ($r.cost_usd // null) != null then "reported" elif $est != null then "estimated" else "unknown" end),
-      turns: ($r.turns // null),
-      usage: $usage }' >> "$USAGE_LOG" 2> /dev/null || true
+      model: $r.model,
+      input_tokens: $r.input_tokens,
+      output_tokens: $r.output_tokens,
+      cache_read_tokens: $r.cache_read_tokens,
+      cache_write_tokens: $r.cache_write_tokens,
+      cost_usd: $r.cost_usd,
+      turns: $r.turns,
+      usage: $usage }' 2> /dev/null)" || return 0
+  usage_append "$USAGE_LOG" "$line"
 }
 
 # Killing the loop forwards TERM to timeout, which passes it to the dispatch's whole

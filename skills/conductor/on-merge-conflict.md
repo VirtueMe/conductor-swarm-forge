@@ -9,10 +9,10 @@ Triggered when a `merge-*.md` artifact with `outcome: conflict` appears in `work
 
 ## Steps
 
-1. Close the finishing worker's tmux window (named `<role>-<id>` — find it by task id):
+1. Close the finishing worker's tmux window and record what the worker spent (the script finds
+   the window, named `<role>-<id>`, by task id):
    ```bash
-   WIN=$(tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null | grep -E -- "-$TASK_ID\$" | head -1)
-   [[ -n "$WIN" ]] && tmux kill-window -t "swarm:$WIN" 2>/dev/null || true
+   worker-close.sh "$TASK_ID"
    ```
 
 2. Read the merge artifact body — it lists which files conflicted and describes the nature of the conflict.
