@@ -6,7 +6,7 @@
 #   usage_append <file> <record>
 #     Appends one line to <file> (the usage log). <record> is a JSON object with the facts the
 #     writer knows: event, task, handler, role, attempt, outcome, rc, duration_s, harness, model,
-#     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, turns, usage
+#     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens (the part of the write at the 1-hour rate), cost_usd, turns, usage
 #     allowance (what a Codex run used of the subscription, from allowance.sh end), and, for a Codex
 #     run, requested_model and answered_model (what the workforce asked for, and what Codex said it
 #     used), and declared_pool (the pool the workforce gave the member, if it did), pool (a pool the
@@ -84,6 +84,7 @@ usage_append() {
       output_tokens: ($r.output_tokens // null),
       cache_read_tokens: ($r.cache_read_tokens // null),
       cache_write_tokens: ($r.cache_write_tokens // null),
+      cache_write_1h_tokens: ($r.cache_write_1h_tokens // null),
       cost_usd: ($r.cost_usd // null),
       estimated_cost_usd: $est,
       cost_source: (if ($r.cost_usd // null) != null then "reported" elif $est != null then "estimated" else "unknown" end),

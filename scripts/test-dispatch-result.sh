@@ -25,7 +25,7 @@ export DISPATCH_USAGE_FILE="$TMP/usage.json"
 field() { jq -c ".$1" "$DISPATCH_USAGE_FILE"; }
 
 echo "── a full record"
-dispatch_write_usage claude-code claude-opus-4-8 8 701 20055 7429 0.1019 4
+dispatch_write_usage claude-code claude-opus-4-8 8 701 20055 7429 0.1019 4 7000
 assert_eq "one line" "$(wc -l < "$DISPATCH_USAGE_FILE" | tr -d ' ')" "1"
 assert_eq "harness" "$(field harness)" '"claude-code"'
 assert_eq "model" "$(field model)" '"claude-opus-4-8"'
@@ -33,9 +33,10 @@ assert_eq "input tokens are numbers" "$(field input_tokens)" "8"
 assert_eq "output tokens" "$(field output_tokens)" "701"
 assert_eq "cache read tokens" "$(field cache_read_tokens)" "20055"
 assert_eq "cache write tokens" "$(field cache_write_tokens)" "7429"
+assert_eq "cache write tokens at the 1-hour rate" "$(field cache_write_1h_tokens)" "7000"
 assert_eq "cost" "$(field cost_usd)" "0.1019"
 assert_eq "turns" "$(field turns)" "4"
-assert_eq "exactly the agreed fields" "$(jq -c 'keys' "$DISPATCH_USAGE_FILE")" '["cache_read_tokens","cache_write_tokens","cost_usd","harness","input_tokens","model","output_tokens","turns"]'
+assert_eq "exactly the agreed fields" "$(jq -c 'keys' "$DISPATCH_USAGE_FILE")" '["cache_read_tokens","cache_write_1h_tokens","cache_write_tokens","cost_usd","harness","input_tokens","model","output_tokens","turns"]'
 
 echo "── values a harness does not report"
 dispatch_write_usage codex "-" 2965 5 12288 0 "-" "-"
@@ -43,6 +44,7 @@ assert_eq "model is null" "$(field model)" "null"
 assert_eq "cost is null, not 0" "$(field cost_usd)" "null"
 assert_eq "turns is null" "$(field turns)" "null"
 assert_eq "tokens are still numbers" "$(field input_tokens)" "2965"
+assert_eq "no 1-hour write given is 0, not null" "$(field cache_write_1h_tokens)" "0"
 dispatch_write_usage pi "" "" "" "" "" "" ""
 assert_eq "empty strings behave like a dash: model" "$(field model)" "null"
 assert_eq "empty tokens become 0" "$(field output_tokens)" "0"

@@ -43,7 +43,7 @@ chmod +x "$TMP/bin/claude"
 export STUB_ARGS="$TMP/args" STUB_JSON="$TMP/fx/ok.json"
 
 ZERO='"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}'
-MU='"modelUsage":{"claude-opus-4-8":{"inputTokens":8,"outputTokens":701,"cacheReadInputTokens":20055,"cacheCreationInputTokens":7429,"costUSD":0.1019}}'
+MU='"modelUsage":{"claude-opus-4-8":{"inputTokens":8,"outputTokens":701,"cacheReadInputTokens":20055,"cacheCreationInputTokens":7429,"cacheCreationEphemeral5mInputTokens":429,"cacheCreationEphemeral1hInputTokens":7000,"costUSD":0.1019}}'
 printf '{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","num_turns":4,"total_cost_usd":0.1019,"result":"Moved 0001 to merging.","permission_denials":[],"usage":{"input_tokens":8,"output_tokens":701,"cache_read_input_tokens":20055,"cache_creation_input_tokens":7429},%s}' "$MU" > "$TMP/fx/ok.json"
 # A rejected model reports subtype "success" with is_error true
 printf '{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","api_error_status":404,"num_turns":1,"total_cost_usd":0,"result":"There is an issue with the selected model (no-such-model).","permission_denials":[],%s,"modelUsage":{}}' "$ZERO" > "$TMP/fx/badmodel.json"
@@ -96,6 +96,7 @@ assert_eq "input tokens" "$(usage_field input_tokens)" "8"
 assert_eq "output tokens" "$(usage_field output_tokens)" "701"
 assert_eq "cache read tokens" "$(usage_field cache_read_tokens)" "20055"
 assert_eq "cache write tokens" "$(usage_field cache_write_tokens)" "7429"
+assert_eq "cache write tokens billed at the 1-hour rate" "$(usage_field cache_write_1h_tokens)" "7000"
 assert_eq "cost" "$(usage_field cost_usd)" "0.1019"
 assert_eq "turns" "$(usage_field turns)" "4"
 assert_eq "one line" "$(wc -l < "$DISPATCH_USAGE_FILE" | tr -d ' ')" "1"

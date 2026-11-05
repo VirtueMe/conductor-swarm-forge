@@ -91,6 +91,7 @@ read_claude_code() { # <file>
         output_tokens: ($a | map(.message.usage.output_tokens // 0) | add // 0),
         cache_read_tokens: ($a | map(.message.usage.cache_read_input_tokens // 0) | add // 0),
         cache_write_tokens: ($a | map(.message.usage.cache_creation_input_tokens // 0) | add // 0),
+        cache_write_1h_tokens: ($a | map(.message.usage.cache_creation.ephemeral_1h_input_tokens // 0) | add // 0),
         cost: ([.[] | select(.type == "cost-state")] | last | .totalCostUSD // null
                | if . == null then null else (. * 1e8 | round) / 1e8 end),
         turns: ($a | length) }' "$1"
@@ -139,6 +140,7 @@ read_sessions() { # <adapter> <file>...
              output_tokens: ($s | map(.output_tokens) | add),
              cache_read_tokens: ($s | map(.cache_read_tokens) | add),
              cache_write_tokens: ($s | map(.cache_write_tokens) | add),
+             cache_write_1h_tokens: ($s | map(.cache_write_1h_tokens // 0) | add),
              cost_usd: (if ($s | map(.cost) | any(. == null)) then null else ($s | map(.cost) | add) end),
              turns: ($s | map(.turns) | add) } end'
 }
@@ -271,6 +273,7 @@ cmd_read() {
       output_tokens: $r.output_tokens,
       cache_read_tokens: $r.cache_read_tokens,
       cache_write_tokens: $r.cache_write_tokens,
+      cache_write_1h_tokens: $r.cache_write_1h_tokens,
       cost_usd: $r.cost_usd,
       turns: $r.turns,
       usage: $usage,

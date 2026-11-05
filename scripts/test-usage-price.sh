@@ -41,6 +41,29 @@ assert_eq "pi: claude-opus-4-8 with cache read and write apart" \
 assert_eq "zero tokens on a known model cost nothing, and that is a number" \
   "$(est "$(rec claude-sonnet-4-6 0 0 0 0)")" "0"
 
+section "1b · Claude Code's 1-hour cache write"
+# The real `claude -p` call on claude-haiku-4-5-20251001 from #149: 9581 tokens written, all of them at the
+# 1-hour rate ($2.00), and Claude Code reported 0.0208315. cache_write_1h_tokens is the part of
+# cache_write_tokens written at the 1-hour rate; the rest is the 5-minute write.
+rec1h() { rec "$@" | jq -c --argjson h "$6" '. + {cache_write_1h_tokens: $h}'; } # model input output cache_read cache_write cache_write_1h
+assert_eq "claude-code: a whole write at the 1-hour rate matches what Claude Code reported" \
+  "$(est "$(rec1h claude-haiku-4-5-20251001 10 40 14595 9581 9581)")" "0.0208315"
+assert_eq "a split write: the 1-hour part at 2.00, the rest at the 5-minute 1.25" \
+  "$(est "$(rec1h claude-haiku-4-5-20251001 10 40 14595 10000 6000)")" "0.0186695"
+assert_eq "no 1-hour write is the 5-minute price, as before" \
+  "$(est "$(rec1h claude-haiku-4-5-20251001 10 40 14595 9581 0)")" "0.01364575"
+assert_eq "a record from before the field existed is priced as before" \
+  "$(est "$(rec claude-haiku-4-5-20251001 10 40 14595 9581)")" "0.01364575"
+assert_eq "a model with no 1-hour price (OpenAI) prices the 1-hour part as a normal write" \
+  "$(est "$(rec1h gpt-5 100 5 0 1000 1000)")" "0.001425"
+assert_eq "more 1-hour than written tokens is not a number to trust" \
+  "$(est "$(rec1h claude-haiku-4-5-20251001 10 40 14595 100 9581)")" "null"
+
+section "1c · gpt-6.1-sol, Codex's default model"
+# Short context, from developers.openai.com/api/docs/pricing: input 2.00, cached input 0.10, output 10.00.
+assert_eq "codex: gpt-6.1-sol, input already minus the cached part (2 / 0.1 / 2.5 / 10)" \
+  "$(est "$(rec gpt-6.1-sol 2965 5 12288 0)")" "0.0072088"
+
 section "2 · Null, never a guess and never zero"
 assert_eq "a model the table does not know" "$(est "$(rec not-a-model 1000 1000 0 0)")" "null"
 assert_eq "no model (Codex without --model)" "$(est "$(rec '' 1000 1000 0 0)")" "null"
@@ -57,6 +80,8 @@ section "3 · The table"
 assert_eq "it is valid JSON with a basis and models" "$(jq -r '(.basis | type) + " " + (.models | type)' "$TABLE")" "string object"
 assert_eq "every price has all four rates" \
   "$(jq -r '[.models[] | select(([.input, .cache_read, .cache_write, .output] | all(type == "number")) | not)] | length' "$TABLE")" "0"
+assert_eq "every Claude price has a 1-hour cache write, above the 5-minute one" \
+  "$(jq -r '[.models | to_entries[] | select(.key | startswith("claude-")) | select((.value.cache_write_1h | type) != "number" or .value.cache_write_1h <= .value.cache_write)] | length' "$TABLE")" "0"
 assert_eq "every price has a date" \
   "$(jq -r '[.models[] | select((.as_of // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") | not)] | length' "$TABLE")" "0"
 assert_eq "and a source" "$(jq -r '[.models[] | select((.source // "") | startswith("https://") | not)] | length' "$TABLE")" "0"

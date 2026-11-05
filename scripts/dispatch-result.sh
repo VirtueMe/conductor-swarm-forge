@@ -6,12 +6,14 @@
 # stays in the adapter. What they share is the shape of the usage record and the check
 # on the model's last line, and those are defined here so they cannot drift apart.
 #
-#   dispatch_write_usage <harness> <model> <input> <output> <cache_read> <cache_write> <cost> <turns>
+#   dispatch_write_usage <harness> <model> <input> <output> <cache_read> <cache_write> <cost> <turns> [<cache_write_1h>]
 #     Writes the usage record, one JSON line, to $DISPATCH_USAGE_FILE (nothing if it is
 #     unset). The fields are harness, model, input_tokens, output_tokens,
-#     cache_read_tokens, cache_write_tokens, cost_usd and turns. Pass "-" or "" for a
+#     cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, cost_usd and turns. Pass "-" or "" for a
 #     value the harness does not report: model, cost and turns become null, token counts
-#     become 0. input_tokens counts input that was neither read from nor written to a
+#     become 0. cache_write_1h_tokens is the part of cache_write_tokens written at the 1-hour
+#     rate (Claude Code bills its writes there); the optional last argument, 0 if left out.
+#     input_tokens counts input that was neither read from nor written to a
 #     cache, so a harness that reports a total has to subtract the cached part first.
 #
 #   dispatch_finish <harness> <answer>
@@ -24,7 +26,7 @@
 dispatch_write_usage() {
   [[ -n "${DISPATCH_USAGE_FILE:-}" ]] || return 0
   jq -nc --arg harness "$1" --arg model "$2" --arg inp "$3" --arg out "$4" \
-    --arg cr "$5" --arg cw "$6" --arg cost "$7" --arg turns "$8" '
+    --arg cr "$5" --arg cw "$6" --arg cost "$7" --arg turns "$8" --arg cw1h "${9-}" '
     def num: if . == "" or . == "-" then null else (tonumber? // null) end;
     { harness: $harness,
       model: (if $model == "" or $model == "-" then null else $model end),
@@ -32,6 +34,7 @@ dispatch_write_usage() {
       output_tokens: ($out | num // 0),
       cache_read_tokens: ($cr | num // 0),
       cache_write_tokens: ($cw | num // 0),
+      cache_write_1h_tokens: ($cw1h | num // 0),
       cost_usd: ($cost | num),
       turns: ($turns | num) }' > "$DISPATCH_USAGE_FILE"
 }

@@ -1,21 +1,25 @@
 {
-  "basis": "US dollars per million tokens, on the four disjoint counts of a usage record: input (neither read from nor written to a cache), cache_read, cache_write and output. A harness that reports input including the cached part has to subtract it before the record is written (the Codex adapter does). A model is listed under every id a harness may report it by (claude-haiku-4-5 and its dated id are separate entries with the same prices). cache_write is the 5-minute write price; a harness that charges nothing extra for cache writes (OpenAI) has it equal to input.",
+  "basis": "US dollars per million tokens, on the four disjoint counts of a usage record: input (neither read from nor written to a cache), cache_read, cache_write and output. A fifth count, cache_write_1h_tokens, is not disjoint: it is part of cache_write_tokens. A harness that reports input including the cached part has to subtract it before the record is written (the Codex adapter does). A model is listed under every id a harness may report it by (claude-haiku-4-5 and its dated id are separate entries with the same prices). cache_write is the 5-minute write price; a harness that charges nothing extra for cache writes (OpenAI gpt-5) has it equal to input. cache_write_1h, where a model has one (Claude), is the price of a write at the 1-hour rate: Claude Code bills its writes there, and the part of cache_write_tokens written at that rate is cache_write_1h_tokens, priced at cache_write_1h instead of cache_write. gpt-6.1-sol is the short-context standard rate (up to 272K input tokens); its cache write is the 30-minute write price, and the long-context rate is not modelled, so a run above 272K input tokens is under-estimated.",
   "models": {
     "claude-opus-4-8": {
-      "input": 5, "cache_read": 0.5, "cache_write": 6.25, "output": 25,
-      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+      "input": 5, "cache_read": 0.5, "cache_write": 6.25, "cache_write_1h": 10, "output": 25,
+      "as_of": "2026-11-05", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
     },
     "claude-sonnet-4-6": {
-      "input": 3, "cache_read": 0.3, "cache_write": 3.75, "output": 15,
-      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+      "input": 3, "cache_read": 0.3, "cache_write": 3.75, "cache_write_1h": 6, "output": 15,
+      "as_of": "2026-11-05", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
     },
     "claude-haiku-4-5": {
-      "input": 1, "cache_read": 0.1, "cache_write": 1.25, "output": 5,
-      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+      "input": 1, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2, "output": 5,
+      "as_of": "2026-11-05", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
     },
     "claude-haiku-4-5-20251001": {
-      "input": 1, "cache_read": 0.1, "cache_write": 1.25, "output": 5,
-      "as_of": "2026-11-03", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+      "input": 1, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2, "output": 5,
+      "as_of": "2026-11-05", "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+    },
+    "gpt-6.1-sol": {
+      "input": 2, "cache_read": 0.1, "cache_write": 2.5, "output": 10,
+      "as_of": "2026-11-05", "source": "https://developers.openai.com/api/docs/pricing"
     },
     "gpt-5": {
       "input": 1.25, "cache_read": 0.125, "cache_write": 1.25, "output": 10,

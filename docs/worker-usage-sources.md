@@ -71,7 +71,7 @@ worktree and with the same window name. Filter by start time (the spawn time, be
   The model is in `turn_context.payload.model`, not in `session_meta`. This is the same basis the
   Codex adapter already uses for headless runs: subtract the cached part from `input_tokens`.
 - **The model is the account's default** when the adapter passes none, which it does not unless the
-  workforce sets `params.model`. Here it was `gpt-6.1-sol`, which the price table does not know.
+  workforce sets `params.model`. Here it was `gpt-6.1-sol`, which the price table now has (#149).
 - **Cost.** None. A cost has to come from the price table.
 - **The allowance.** Each `token_count` also carries `rate_limits`: the 5-hour and the weekly
   `used_percent` with their reset times, the plan type and credits. That is the data the Codex
@@ -102,11 +102,13 @@ worktree and with the same window name. Filter by start time (the spawn time, be
 ## Findings that change the price table
 
 - **Claude Code's cache write was billed at the 1-hour rate** (`cacheCreationEphemeral1hInputTokens`
-  was the whole write). `usage-prices.json` holds the 5-minute rate, so the estimate for this
-  session is $0.0156 against a reported $0.0231. The estimate is a lower bound for Claude Code until
-  the table has a 1-hour write price. `usage-price.sh compare` shows the gap on a real log.
-- **Codex's default model is not in the table**, so its worker lines would be `unknown` until the
-  model is priced. Add it with a date and a source; this spike did not look up a price.
+  was the whole write). The table held only the 5-minute rate, so the estimate for this
+  session was $0.0156 against a reported $0.0231. Fixed in #149: the record carries
+  `cache_write_1h_tokens` (from the session's `cache_creation.ephemeral_1h_input_tokens`, and from
+  `modelUsage.*.cacheCreationEphemeral1hInputTokens` in `claude -p`'s JSON) and the table has a
+  `cache_write_1h` price, so the estimate now equals the reported cost.
+- **Codex's default model was not in the table**, so its worker lines were `unknown`. `gpt-6.1-sol`
+  was added in #149 at its short-context standard rate, with its date and source.
 
 ## Recommendation
 

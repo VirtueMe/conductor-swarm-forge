@@ -233,6 +233,7 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       output_tokens: $r.output_tokens,
       cache_read_tokens: $r.cache_read_tokens,
       cache_write_tokens: $r.cache_write_tokens,
+      cache_write_1h_tokens: $r.cache_write_1h_tokens,
       cost_usd: $r.cost_usd,
       turns: $r.turns,
       usage: $usage,

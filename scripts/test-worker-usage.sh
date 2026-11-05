@@ -101,7 +101,8 @@ assert_eq "the duplicated message is counted once (input, output)" "$(last '[.in
 assert_eq "cache read and write" "$(last '[.cache_read_tokens, .cache_write_tokens] | join(",")')" "27430,10056"
 assert_eq "the cost the process reported" "$(last .cost_usd)" "0.023135"
 assert_eq "reported" "$(last .cost_source)" "reported"
-assert_eq "the table's estimate is lower: it prices a 5-minute cache write" "$(last '.estimated_cost_usd < .cost_usd')" "true"
+assert_eq "the write was at the 1-hour rate" "$(last .cache_write_1h_tokens)" "10056"
+assert_eq "so the table's estimate is the reported cost" "$(last '.estimated_cost_usd == .cost_usd')" "true"
 
 section "4 · claude-code killed with SIGKILL: tokens, but no cost to report"
 reset; spawn 0003 coder claude-code
@@ -121,8 +122,8 @@ assert_eq "input without the cached part" "$(last .input_tokens)" "3317"
 assert_eq "cache read" "$(last .cache_read_tokens)" "12032"
 assert_eq "output" "$(last .output_tokens)" "5"
 assert_eq "no cost" "$(last .cost_usd)" "null"
-assert_eq "an unpriced model has no estimate" "$(last .estimated_cost_usd)" "null"
-assert_eq "so the cost is unknown, and visibly so" "$(last .cost_source)" "unknown"
+assert_eq "gpt-6.1-sol is priced: 3317*2 + 12032*0.1 + 5*10 per million" "$(last .estimated_cost_usd)" "0.0078872"
+assert_eq "so the cost is estimated, not reported" "$(last .cost_source)" "estimated"
 assert_eq "but the tokens were read" "$(last .usage)" "reported"
 
 section "6 · Nothing readable is an explicit unknown, never zero"

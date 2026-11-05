@@ -82,7 +82,7 @@ assert_eq "the weekly window did not move: a number, not an unknown" "$(alines |
 assert_eq "attributed to the run" "$(alines | jq -s -r 'map(.allowance.attributed_to) | unique | join(" ")')" "run"
 assert_eq "tokens, with the cached part taken out of the input" "$(alines | head -1 | jq -r '[.input_tokens, .output_tokens, .cache_read_tokens] | join(" ")')" "800 50 200"
 assert_eq "the model that answered" "$(alines | head -1 | jq -r .answered_model)" "gpt-6.1-sol"
-assert_eq "an estimate, which the price table cannot make for that model" "$(alines | head -1 | jq -r '.estimated_cost_usd | tostring')" "null"
+assert_eq "an estimate on gpt-6.1-sol's rates: 800*2 + 200*0.1 + 50*10 per million" "$(alines | head -1 | jq -r '.estimated_cost_usd | tostring')" "0.00212"
 has '5-hour: +2 points' "it says so as it goes"
 has '^Codex allowance (subscription:openai)' "and prints the summary's allowance section"
 has '^  5-hour  *14% used' "with the window where the last run left it"

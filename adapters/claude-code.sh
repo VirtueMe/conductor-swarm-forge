@@ -194,16 +194,17 @@ adapter_dispatch() {
 
   # The usage record, written whatever the outcome because the spend happened. `usage`
   # is all zeros on an error result, so the figures come from the per-model breakdown.
-  local u_model u_in u_out u_cr u_cw u_cost u_turns
-  IFS=$'\t' read -r u_model u_in u_out u_cr u_cw u_cost u_turns < <(jq -r '(.modelUsage // {}) as $m | [
+  local u_model u_in u_out u_cr u_cw u_cw1h u_cost u_turns
+  IFS=$'\t' read -r u_model u_in u_out u_cr u_cw u_cw1h u_cost u_turns < <(jq -r '(.modelUsage // {}) as $m | [
       (if ($m | length) > 0 then ($m | keys | join("+")) else "-" end),
       ([$m[].inputTokens // 0] | add // 0),
       ([$m[].outputTokens // 0] | add // 0),
       ([$m[].cacheReadInputTokens // 0] | add // 0),
       ([$m[].cacheCreationInputTokens // 0] | add // 0),
+      ([$m[].cacheCreationEphemeral1hInputTokens // 0] | add // 0),
       (.total_cost_usd // "-"), (.num_turns // "-")
     ] | @tsv' "$out")
-  dispatch_write_usage claude-code "$u_model" "$u_in" "$u_out" "$u_cr" "$u_cw" "$u_cost" "$u_turns"
+  dispatch_write_usage claude-code "$u_model" "$u_in" "$u_out" "$u_cr" "$u_cw" "$u_cost" "$u_turns" "$u_cw1h"
 
   # "-" stands for an empty field: read would otherwise merge adjacent tabs.
   local subtype terminal status is_error denied

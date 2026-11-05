@@ -338,7 +338,7 @@ and records the event as processed only after the handler succeeds.
 | Exit 2 | the event cannot be handled; the loop does not retry |
 | Any other exit | the handler failed; the loop retries |
 | Answer | the adapter may write the model's last non-empty line to `$DISPATCH_ANSWER_FILE`; `dispatch_finish` does it for all three adapters, so the loop can show what the model said it did |
-| Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`: `harness`, `model`, `input_tokens` (input that was neither read from nor written to a cache), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` (null when the harness reports none, as Codex does) and `turns`. Write it even when the run fails, because the spend happened, unless the harness reported none (a killed Codex run) |
+| Usage | the adapter may write one JSON line to `$DISPATCH_USAGE_FILE`: `harness`, `model`, `input_tokens` (input that was neither read from nor written to a cache), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cache_write_1h_tokens` (the part of the write billed at the 1-hour rate, as Claude Code does; 0 when there is none), `cost_usd` (null when the harness reports none, as Codex does) and `turns`. Write it even when the run fails, because the spend happened, unless the harness reported none (a killed Codex run) |
 
 `turns` is each harness's own count, so compare it within one harness and not across them:
 Claude Code reports `num_turns` (model round trips), Pi the number of assistant messages,
@@ -632,7 +632,7 @@ The log holds the conductor's own dispatches and the workers' sessions (see "Wor
 | `role` | who spent it: `conductor` for a line the loop writes, the worker's own role (`coder`, `reviewer`, ...) for a worker's. A line from before this field existed has none |
 | `attempt`, `outcome`, `rc`, `duration_s` | which attempt of the event; `finished`, `failed`, `timeout`, `unusable` or `interrupted`; the exit status; how long it took. A worker's line has no attempt or exit status (both null), and its outcome is `finished` or `interrupted`; its duration runs from the spawn to the close |
 | `harness`, `model` | from the record; `harness` falls back to the adapter's name when there is none |
-| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `turns` | from the record, as defined under the adapter contract |
+| `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cache_write_1h_tokens`, `cost_usd`, `turns` | from the record, as defined under the adapter contract |
 | `estimated_cost_usd` | the cost computed from the price table (`scripts/usage-prices.json`) and the four token counts, or null when it cannot be: the model is not in the table, is null, is a `+` joined list of models, or the attempt has no record. Never a guess, never zero. Kept next to `cost_usd`, so the two can be compared |
 | `cost_source` | how the line's cost is known: `reported` (the harness gave `cost_usd`; the estimate, if any, sits beside it), `estimated` (no reported cost, but `estimated_cost_usd` is set, as for Codex on a priced model) or `unknown` (neither: an unpriced model, or an attempt with no record). A line from before this field existed has none, and a reader treats a null `cost_usd` as unknown |
 | `usage` | `reported` if the adapter left a record, `none` if not |
@@ -676,8 +676,14 @@ The log holds the conductor's own dispatches and the workers' sessions (see "Wor
 `cache_write` and `output`, with the date (`as_of`) and `source` of every price. The estimate is
 computed on one basis, stated in the file's `basis`: the four counts of a usage record do not
 overlap, so a harness that reports input including the cached part subtracts it first (Codex does,
-in its adapter). `cache_write` is the 5-minute write price; OpenAI charges nothing extra for
-cache writes, so its `cache_write` equals `input`. Prices change: add a model or update a price
+in its adapter). `cache_write` is the 5-minute write price; `gpt-5` has no charge for cache writes, so its
+`cache_write` equals `input`. A Claude model also has `cache_write_1h`: Claude Code bills its
+writes at the 1-hour rate, the record carries the part of the write billed there as
+`cache_write_1h_tokens` (a subset of `cache_write_tokens`; a record without the field counts as 0),
+and that part is priced at `cache_write_1h` instead. A record claiming more 1-hour tokens than
+it wrote is not priced. `gpt-6.1-sol` is the short-context standard rate (up to 272K input tokens)
+and its `cache_write` is OpenAI's 30-minute write price; the long-context rate is not modelled,
+so a run above 272K input tokens is under-estimated. Prices change: add a model or update a price
 together with its date and source, and `scripts/test-usage-price.sh` checks that every entry has
 both and that the default workforce's models are priced.
 
@@ -687,7 +693,7 @@ both and that the default workforce's models are priced.
   price, and how many attempts used each.
 - `scripts/usage-price.sh compare [--file F]` lists the attempts with both a reported and an
   estimated cost and the difference. The estimate ignores things a harness may charge for that
-  the record does not carry (a 1-hour cache write, a long-prompt tier), so a gap is expected;
+  the record does not carry (a long-prompt tier, a fast or batch tier), so a gap is expected;
   a large one means a price is out of date.
 
 `scripts/usage-summary.sh [--file F] [--since TIMESTAMP] [--by GROUPING]...` totals it: the period,
