@@ -119,7 +119,7 @@ echo "coder-10001" >> "$WINDOWS"
 OUT=$(spawn 0004 coder)
 assert_eq "task 0004 still spawns"       "$(assigned_count 0004)" "1"
 
-echo "── a Codex worker on an API key is refused before anything is created"
+echo "── a Codex worker on an API key spawns like any other, with no allowance to measure"
 "$SCRIPTS_DIR/task-create.sh" --title "Task five" --type chore --description "x" > /dev/null
 "$SCRIPTS_DIR/task-create.sh" --title "Task six" --type chore --description "x" > /dev/null
 jq '(.members[] | select(.role == "coder") | .adapter) = "codex"' "$CONDUCTOR_DIR/workforce.json" > "$CONDUCTOR_DIR/workforce.new" \
@@ -128,14 +128,13 @@ mkdir -p "$WORK/no-sessions"; export CODEX_SESSIONS_DIR="$WORK/no-sessions"
 export CODEX_AUTH_FILE="$WORK/auth.json"
 printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test-not-real"}\n' > "$CODEX_AUTH_FILE"
 RC=0; OUT=$(spawn 0005 coder) || RC=$?
-assert_eq "the spawn fails"              "$RC" "1"
-case "$OUT" in *"API key"*) ok "and says why" ;; *) fail "says why ($OUT)" ;; esac
-assert_eq "in one line, so a halt notice that keeps the last line keeps the reason" "$(printf '%s\n' "$OUT" | grep -c .)" "1"
+assert_eq "the spawn succeeds"           "$RC" "0"
+case "$OUT" in *"Spawned coder (codex)"*) ok "and reports it" ;; *) fail "reports the spawn ($OUT)" ;; esac
 case "$OUT" in *"sk-test-not-real"*) fail "the key is not printed" ;; *) ok "the key is not printed" ;; esac
-assert_eq "no assigned artifact"         "$(assigned_count 0005)" "0"
-assert_eq "no window"                    "$(window_count 0005)"   "0"
-assert_eq "no worktree"                  "$([[ -e "$PROJECT/.worktrees/coder-0005" ]] && echo yes || echo no)" "no"
-assert_eq "no record of a worker"        "$([[ -e "$CONDUCTOR_DIR/workers/coder-0005.json" ]] && echo yes || echo no)" "no"
+assert_eq "assigned artifact written"    "$(assigned_count 0005)" "1"
+assert_eq "window opened"                "$(window_count 0005)"   "1"
+assert_eq "a record of the worker"       "$([[ -e "$CONDUCTOR_DIR/workers/coder-0005.json" ]] && echo yes || echo no)" "yes"
+assert_eq "but no allowance run is held for it" "$(find "$CONDUCTOR_DIR/allowance" -type f -name '*.json' 2> /dev/null | wc -l | tr -d ' ')" "0"
 printf '{"auth_mode":"chatgpt","OPENAI_API_KEY":null}\n' > "$CODEX_AUTH_FILE"
 RC=0; OUT=$(spawn 0006 coder) || RC=$?
 assert_eq "on a subscription it spawns"  "$RC" "0"

@@ -256,6 +256,51 @@ lacks 'Model asked for' "--by role leaves them out"
 run --file "$TMP/only-mismatch.jsonl"
 has '^  gpt-5 -> gpt-6.1-sol  *1$' "a log of nothing but a mismatch still shows it"
 
+section "5i · Pools: real and notional dollars are never added together"
+# Two subscription lines (notional dollars), an API line with a reported cost, an API line with only an
+# estimate, and an old line from before pools existed. One of the API lines was declared against a
+# sign-in that disagreed, which is a record of its own.
+PL="$TMP/pools.jsonl"
+pline() { # harness pool billing cost estimate outcome
+  jq -nc --arg harness "$1" --arg pool "$2" --arg billing "$3" --argjson cost "$4" --argjson est "$5" --arg outcome "$6" '
+    { ts: "2026-11-02T10:00:00Z", event: "0001/x", task: "0001", handler: null, role: "coder", attempt: null, outcome: $outcome,
+      rc: null, duration_s: 5, harness: $harness, model: null, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0,
+      cache_write_tokens: 0, cost_usd: $cost, estimated_cost_usd: $est, turns: 1, usage: "reported", pool: $pool, billing: $billing }'
+}
+{
+  pline claude-code subscription:anthropic subscription 0.30 0.30 finished
+  pline claude-code subscription:anthropic subscription 0.20 0.20 interrupted
+  pline pi          api:anthropic          api          0.10 0.10 finished
+  pline codex       api:openai             api          null 0.05 finished
+  line 2026-11-02T09:00:00Z 0001/old.md 0001 conductor/old 1 finished 0 claude-code 0.40 5 5 0 0 reported
+  jq -nc '{record: "pool_mismatch", ts: "2026-11-02T10:00:00Z", role: "coder", harness: "claude-code", declared: "api:anthropic", detected: "subscription:anthropic"}'
+} > "$PL"
+run --file "$PL"
+assert_eq "exit 0" "$RC" "0"
+lacks '^Known cost: \$1' "no single known-cost figure adds real and notional dollars"
+has '^Known cost by billing' "the headline is split by billing"
+has '^  api  *\$0.1000 reported + \$0.0500 estimated over 2 attempts' "api: its reported cost and its estimate, apart"
+has '^  subscription  *\$0.5000 reported + \$0.0000 estimated over 2 attempts  *(notional)' "subscription: labelled notional"
+has '^  unknown  *\$0.4000 reported + \$0.0000 estimated over 1 attempts' "an old line with no pool is unknown billing, not api"
+has '^Unfinished: 1 attempts' "the unfinished line counts attempts"
+has '^  subscription  *\$0.2000 reported' "and splits its dollars by billing too"
+has '^By pool' "the pool section is there by default"
+has '^subscription:anthropic (notional)  *2  *\$0.5000' "a subscription pool is labelled notional"
+has '^api:anthropic  *1  *\$0.1000' "an api pool is not"
+has '^api:openai  *1  *\$0.0000  *\$0.0500' "a pool with only an estimate shows it apart from reported"
+has '^unknown  *1  *\$0.4000' "a line with no pool is in unknown"
+has 'declared api:anthropic, sign-in said subscription:anthropic  *1' "a pool mismatch is listed, with a count"
+has 'not comparable' "and the other groupings say their dollars can span billing"
+run --file "$PL" --by pool
+has '^By pool' "--by pool shows it"
+lacks '^By harness' "and only it"
+run --file "$PL" --by role
+lacks '^By pool' "--by role does not show pools"
+run --file "$RL"
+lacks '^Known cost by billing' "a log with no pool information keeps the old headline"
+has '^Known cost: ' "the old headline"
+lacks '^By pool' "and no pool section, there is nothing to show"
+
 section "6 · Arguments"
 run --bogus
 assert_eq "an unknown flag: exit 1" "$RC" "1"

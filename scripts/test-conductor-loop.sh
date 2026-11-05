@@ -529,6 +529,36 @@ CONDUCTOR_PRICES="$TMP/missing.json" STUB_USAGE='{"harness":"codex","model":"gpt
 assert_eq "a missing price table still writes the line" "$(ulines 0001/signal | wc -l | tr -d ' ')" "1"
 assert_eq "with no estimate" "$(ufield 0001/signal .estimated_cost_usd)" "null"
 
+# 29d -----------------------------------------------------------------------------
+section "29d · A line says what it was billed to: the pool, and the billing it implies"
+# The sign-in files are the test's own, so nothing reads the real ones.
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json" CODEX_AUTH_FILE="$TMP/no-codex-login.json"
+unset ANTHROPIC_API_KEY
+RECORD='{"harness":"claude-code","model":"m1","input_tokens":8,"output_tokens":701,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.1,"turns":4}'
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE="$RECORD" run_loop
+assert_eq "no sign-in found and the workforce declares nothing: pool unknown" "$(ufield 0001/signal .pool)" "unknown"
+assert_eq "and billing unknown" "$(ufield 0001/signal .billing)" "unknown"
+new_swarm
+jq '(.members[] | select(.role == "conductor")) += {pool: "api:anthropic"}' "$CONDUCTOR_DIR/workforce.json" > "$TMP/wf.json" \
+  && mv "$TMP/wf.json" "$CONDUCTOR_DIR/workforce.json"
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE="$RECORD" run_loop
+assert_eq "the conductor member's declared pool stands when nothing is detected" "$(ufield 0001/signal .pool)" "api:anthropic"
+assert_eq "and its billing" "$(ufield 0001/signal .billing)" "api"
+new_swarm
+jq '(.members[] | select(.role == "conductor")) += {pool: "api:anthropic"}' "$CONDUCTOR_DIR/workforce.json" > "$TMP/wf.json" \
+  && mv "$TMP/wf.json" "$CONDUCTOR_DIR/workforce.json"
+printf '%s\n' '{"claudeAiOauth":{"accessToken":"oauth-test-token"}}' > "$CLAUDE_CREDENTIALS_FILE"
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+STUB_USAGE="$RECORD" run_loop
+assert_eq "a login overrides what the workforce declares" "$(ufield 0001/signal .pool)" "subscription:anthropic"
+rm -f "$CLAUDE_CREDENTIALS_FILE"
+
 # 30 ------------------------------------------------------------------------------
 section "30 · An attempt with no record is logged as usage none"
 new_swarm
@@ -996,15 +1026,17 @@ assert_eq "and takes no reading" "$(jq -r 'select(.record == "allowance") | 1' "
 rm -f "$STUB_HOOK"
 
 # 46 ------------------------------------------------------------------------------
-section "46 · A Codex conductor on an API key does not start"
+section "46 · A Codex conductor on an API key starts, and measures no allowance"
 new_swarm
 create_task
 RC=0; CODEX_AUTH_FILE="$TMP/auth-apikey.json" CONDUCTOR_ADAPTER_FILE="$TMP/codex-adapter/codex.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || RC=$?
-assert_eq "exit 3, as for an adapter that cannot run" "$RC" "3"
-expect_grep 'not starting: Codex is signed in with an API key' "$CONDUCTOR_DIR/conductor.log" "the log says why"
-assert_eq "nothing was dispatched" "$(dispatches)" "0"
+assert_eq "it starts" "$RC" "0"
+assert_eq "the reconcile went to the model" "$(grep -c '^reconcile ' "$STUB_LOG" || true)" "1"
+assert_eq "nothing says it is not starting" "$(grep -c 'not starting' "$CONDUCTOR_DIR/conductor.log" || true)" "0"
 assert_eq "the key is not in the log" "$(grep -c 'sk-test-not-real' "$CONDUCTOR_DIR/conductor.log" || true)" "0"
 assert_eq "no lock is left behind" "$([[ -e "$CONDUCTOR_DIR/conductor-loop.lock" ]] && echo left || echo none)" "none"
+assert_eq "its line is api:openai" "$(ufield startup .pool)" "api:openai"
+assert_eq "it has no allowance, and takes no reading" "$(ufield startup '.allowance | tostring')|$(jq -r 'select(.record == "allowance") | 1' "$CONDUCTOR_DIR/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "null|0"
 RC=0; CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || RC=$?
 assert_eq "another adapter is not asked about Codex" "$RC" "0"
 unset CODEX_SESSIONS_DIR CODEX_USAGE_NOW CODEX_AUTH_FILE

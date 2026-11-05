@@ -70,6 +70,7 @@ yaml_body() {
 source "$SCRIPTS_DIR/wf-read.sh"
 get_adapter() { wf_field "$WORKFORCE" "$1" adapter; }
 get_params()  { wf_field "$WORKFORCE" "$1" params; }
+get_pool()    { wf_field "$WORKFORCE" "$1" pool 2> /dev/null || true; }   # optional: empty when not declared
 
 # Map a worker-type (role) to its working stage from the topology. worker-spawn
 # is invoked with a ROLE, but the topology's skill accessor is keyed by STAGE, so
@@ -149,13 +150,6 @@ source_integration "$TOPOLOGY_JSON" || exit 1
 
 # Load adapter
 ADAPTER_NAME=$(get_adapter "$WORKER_TYPE")
-# Codex draws on a subscription allowance. On an API key it would be billed per token instead, so it
-# is refused here, before the worker's workspace, artifact or window exist. codex-billing.sh says why.
-# One line, with the reason in it: a handler's halt notice shows only the last line of what it printed.
-if [[ "$ADAPTER_NAME" == codex ]]; then
-  BILLING_REASON="$("$SCRIPTS_DIR/codex-billing.sh" check 2>&1)" \
-    || { echo "worker-spawn.sh: not spawning $WORKER_TYPE for task $TASK_ID: $BILLING_REASON" >&2; exit 1; }
-fi
 ADAPTER_FILE="$ADAPTERS_DIR/${ADAPTER_NAME}.sh"
 [[ -f "$ADAPTER_FILE" ]] || { echo "Adapter not found: $ADAPTER_FILE" >&2; exit 1; }
 # shellcheck source=/dev/null
@@ -201,7 +195,7 @@ adapter_launch "$SESSION" "${WORKER_TYPE}-${TASK_ID}" "$WORKTREE_PATH" "$PROJECT
 # window closes (worker-close.sh). The usage log is a convenience: a record that cannot be
 # written must not fail a spawn that has already started the worker.
 "$SCRIPTS_DIR/worker-usage.sh" spawned "$TASK_ID" "$WORKER_TYPE" "$ADAPTER_NAME" \
-  "$PROJECT_DIR/$WORKTREE_PATH" "$WORKER_PARAMS" \
+  "$PROJECT_DIR/$WORKTREE_PATH" "$WORKER_PARAMS" "$(get_pool "$WORKER_TYPE")" \
   || echo "worker-spawn.sh: could not note the worker for the usage log" >&2
 
 echo "Spawned $WORKER_TYPE ($ADAPTER_NAME) for task $TASK_ID — skill: $SKILL_PATH"

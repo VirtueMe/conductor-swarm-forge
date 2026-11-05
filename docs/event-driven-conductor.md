@@ -636,6 +636,7 @@ The log holds the conductor's own dispatches and the workers' sessions (see "Wor
 | `estimated_cost_usd` | the cost computed from the price table (`scripts/usage-prices.json`) and the four token counts, or null when it cannot be: the model is not in the table, is null, is a `+` joined list of models, or the attempt has no record. Never a guess, never zero. Kept next to `cost_usd`, so the two can be compared |
 | `cost_source` | how the line's cost is known: `reported` (the harness gave `cost_usd`; the estimate, if any, sits beside it), `estimated` (no reported cost, but `estimated_cost_usd` is set, as for Codex on a priced model) or `unknown` (neither: an unpriced model, or an attempt with no record). A line from before this field existed has none, and a reader treats a null `cost_usd` as unknown |
 | `usage` | `reported` if the adapter left a record, `none` if not |
+| `pool`, `billing` | what the line was billed to. `pool` is `<billing>:<vendor>` (`api:anthropic`, `subscription:anthropic`, `api:openai`, `subscription:openai`) or `unknown`; `billing` is `api`, `subscription` or `unknown`. The harness's sign-in settles it (`scripts/billing-mode.sh`); with none found, the pool the workforce declared for the member stands; with neither it is `unknown`. On a `subscription` line `cost_usd` and `estimated_cost_usd` are notional, what the plan was used for rather than what was billed, and a reader must not add them to `api` dollars. A line from before these fields existed has neither, and a reader treats it as `unknown` |
 
 - **One line per attempt, not per event.** A retried event costs money each time, and so does an
   attempt that fails.
@@ -648,6 +649,20 @@ The log holds the conductor's own dispatches and the workers' sessions (see "Wor
   `cost_usd` and `turns` (an attempt with no record), `cost_usd` alone for a harness that has no
   cost, and `estimated_cost_usd` whenever the price table cannot price the line. A line from before
   `estimated_cost_usd` existed has none; read it as null. `role`, `cost_source`, `usage` and the fields of the attempt itself are always there.
+- **A sign-in beats a declaration, and says so.** If the workforce declares `api:anthropic` and Claude
+  Code is signed in with a login, the line is `subscription:anthropic`, and a record of its own,
+  `{"record": "pool_mismatch", "declared": ..., "detected": ..., "rejected": false}`, goes in the log just
+  before it. A declaration that is not a pool (or not that harness's vendor's) is set aside the same way,
+  with `rejected: true`, so a typo in a workforce is not invisible. A declaration that fills a gap (nothing
+  could be detected) is not a mismatch. The usage line itself carries only `pool` and `billing`, not the
+  declaration.
+- **A worker's pool is settled when it is spawned.** `worker-usage.sh spawned` asks
+  `billing-mode.sh pool --json` once, against the sign-in as it is then, and keeps the decision in the
+  worker's record (`pool_check`). The line written when the window closes says what the worker was billed
+  to, not what the closing process can see. The conductor's own lines are decided when they are written.
+- **A login is not always what pays.** `billing-mode.sh` reports `unknown` for Claude Code when
+  `CLAUDE_CODE_USE_BEDROCK`, `_VERTEX` or `_FOUNDRY` is set, or an `ANTHROPIC_AUTH_TOKEN` is, because the run
+  is then billed to a provider or gateway and a login on disk is not what pays for it.
 - **A stopped loop leaves a line.** If the loop is stopped with `TERM` or `INT` mid-dispatch, the
   cleanup writes an `interrupted` line for the attempt in flight, so its spend is not invisible.
   Whatever the harness had already spent is not known. A loop killed with `KILL`, or a machine
@@ -695,7 +710,17 @@ attempts were priced, how many were not, and the estimate per priced attempt, wh
 to compare when the harnesses ran different amounts of work. Attempts with no estimate are not
 counted as free; the summary says how many there were.
 
-`--by` limits the output to the groupings named (`harness`, `handler`, `task`, `role`, `model`,
+**Real and notional dollars.** Once any line has a `billing`, the headline totals are split into
+`api`, `subscription` and `unknown`, each with its reported and estimated dollars, and are never added
+across billing: a subscription line's dollars are what the plan was used for, not a bill (marked
+"notional" wherever they appear). A line from before pools existed has no billing and reads as
+`unknown`, never as `api`. A log with no billing at all prints the headline as before. The **By pool**
+section lists each pool apart (`subscription:anthropic (notional)`, `api:anthropic`, ...) with
+`unknown` for lines without one, and the `pool_mismatch` records under it: a workforce that declared
+one pool while the sign-in said another. The groupings by harness, handler, task, role and model can
+span billing within a group, and the summary says so; `--by pool` keeps them apart.
+
+`--by` limits the output to the groupings named (`harness`, `handler`, `task`, `role`, `model`, `pool`,
 `adapters` for the cross-harness view), and can be repeated. With none, all are printed. Before
 #134 the summary counted an attempt as unknown whenever `cost_usd` was null, which put every
 Codex attempt there even when the table could price it.
@@ -805,19 +830,23 @@ because it is a percentage of a window and not a cost: the latest reading of eac
 it resets and where it stood at the first reading in the same window, and the points that runs used,
 by role, with the runs that could not be attributed counted. `--by allowance` shows only that.
 
-**Codex must be billed to the subscription.** The allowance above only means something if Codex is
+**Codex on a subscription or on an API key.** The allowance above only means something if Codex is
 signed in with a ChatGPT account. On an API key its work is billed per token instead, outside what
-this swarm measures. `scripts/codex-billing.sh check` refuses it, with the reason on stderr, when
-`auth.json` says the sign-in is an API key (an `auth_mode` of `chatgpt` is a subscription; one that
-names an API key, or, with no `auth_mode`, a stored key, is not), or when the newest reading has no
-`plan_type`. It never prints a key. It runs in three places, each before anything is created:
-`swarm-start.sh` (any role on the `codex` adapter, so the swarm does not start), `worker-spawn.sh`
-(a Codex worker is not spawned: no artifact, worktree, window or record), and the conductor loop (a
-Codex conductor does not start, exit 3, with the reason in `conductor.log`). When it cannot tell (no
-readable `auth.json` with an auth_mode it knows, and no reading yet) it allows the run and says so:
-refusing would stop a first run that could never produce the reading that settles it. It refuses on
-evidence, not on doubt. The format of `auth.json` is Codex's own, so a shape it does not recognise is
-"cannot tell", never a guess.
+the allowance measures, and the swarm no longer refuses it: its estimated dollars on the usage line
+are real spend, and the line's `pool` is `api:openai` (see `pool` and `billing` in the usage log
+table). `scripts/billing-mode.sh detect codex` reads the sign-in from `auth.json` (an `auth_mode` of
+`chatgpt` is a subscription; one that names an API key, or, with no `auth_mode`, a stored key, is
+`api`) and never prints a key. On `api` there is no allowance to measure, so `allowance.sh` takes no
+readings (at swarm start, or around a dispatch or a worker) and the line's `allowance` is null. `begin`
+makes that decision once and leaves a marker for `end`, so a sign-in that changes mid-run cannot leave a run
+half-measured. When
+the sign-in cannot be read the readings are taken: doubt is not a reason to skip them, and a reading
+is what could settle it. The format of `auth.json` is Codex's own, so a shape it does not recognise
+is `unknown`, never a guess.
+
+`scripts/codex-billing.sh check` still refuses an API key, and a newest reading with no `plan_type`,
+but only `scripts/codex-allowance-run.sh` asks it: that script runs real Codex to check the
+allowance readers, which have nothing to read on an API key.
 
 **The model that answered.** `codex exec --json` does not name the model, so a dispatch's record says
 the model it was asked for. The session log does say which answered (`turn_context.model`), for a

@@ -68,13 +68,6 @@ integration_file "$TOPOLOGY_FILE" >/dev/null || exit 1
 WORKFORCE="${ROOT_DIR}/workforces/${WORKFORCE_NAME}.json"
 [[ -f "$WORKFORCE" ]] || { echo "Unknown workforce: $WORKFORCE_NAME (looked in $ROOT_DIR/workforces)" >&2; exit 1; }
 
-# A role on Codex draws on a subscription allowance. On an API key it would be billed per token, so
-# the swarm does not start with it. codex-billing.sh says why.
-if jq -e '[.members[]? | .adapter] | index("codex") != null' "$WORKFORCE" > /dev/null 2>&1; then
-  "$SCRIPTS_DIR/codex-billing.sh" check \
-    || { echo "Not starting: workforce '$WORKFORCE_NAME' has a role on Codex, and Codex is not billed to a subscription here." >&2; exit 1; }
-fi
-
 # Resolve target dir — create it if it doesn't exist
 if [[ -n "$TARGET_DIR" ]]; then
   mkdir -p "$TARGET_DIR"

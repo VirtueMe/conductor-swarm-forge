@@ -38,9 +38,32 @@ Each member binds one role to an adapter and, optionally, a tuning bag:
 | `role` | string | yes | Topology role this member runs. Must match a working-stage `role` in the active topology (`conductor` and `architect` are always present). |
 | `adapter` | enum | yes | Agent backend: `claude-code` · `codex` · `pi`. Resolves to `adapters/<adapter>.sh`; `swarm-start` fails fast if the file is missing. |
 | `params` | object | no | Launch-time tuning bag (below). Omit it to run the adapter on its defaults. |
+| `pool` | enum | no | What the member's work is billed to, as `<billing>:<vendor>`: `api:anthropic` · `subscription:anthropic` · `api:openai` · `subscription:openai`. `claude-code` takes an anthropic pool, `codex` an openai pool, `pi` any of the four. See [Pool](#pool). |
 
 No other member keys are allowed — in particular there is **no `agent` field**
 (it was never read; `params.model` carries the real intent).
+
+## Pool
+
+`pool` says what a member's usage is charged to: an API key (real dollars) or a
+subscription (an allowance, and dollars that are only notional). Claude Code and
+Codex can both run either way, so the adapter alone does not say.
+
+It is optional. `scripts/billing-mode.sh pool <adapter> --declared <pool>` settles it:
+
+- A sign-in the harness leaves behind **overrides** the declaration. Claude Code: a provider
+  override (`CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, or an `ANTHROPIC_AUTH_TOKEN`) is
+  `unknown`, since the run is billed elsewhere; else an `ANTHROPIC_API_KEY` in the environment is
+  `api`; else a `claudeAiOauth` login is `subscription`. Codex: `auth_mode` in `auth.json`. A mismatch is logged on stderr; the run
+  goes on.
+- With nothing detected, the declaration stands. `pi` has no sign-in to read, so its
+  declaration always stands.
+- With neither, the pool is `unknown`. Doubt never stops a run, and nothing is compared
+  against a budget for an `unknown` pool.
+
+The schema rejects a pool that does not belong to the adapter's vendor
+(`claude-code` on `api:openai`). `unknown` is not declared; it is what is left when
+nothing is known.
 
 ## Params
 

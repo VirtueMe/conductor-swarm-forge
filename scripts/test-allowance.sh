@@ -24,6 +24,8 @@ section() { echo ""; echo "── $1"; }
 
 export CONDUCTOR_DIR="$TMP/c"
 export CODEX_SESSIONS_DIR="$TMP/sessions"
+export CODEX_AUTH_FILE="$TMP/auth.json"   # the test's own sign-in, never ~/.codex
+printf '{"auth_mode":"chatgpt"}\n' > "$CODEX_AUTH_FILE"
 export CODEX_USAGE_NOW=1793790000        # between the five-hour window opening (1793782000) and its reset
 LOG="$CONDUCTOR_DIR/usage.jsonl"
 RUNS="$CONDUCTOR_DIR/allowance"
@@ -187,6 +189,32 @@ assert_eq "no Codex member: nothing is read" "$(lines 2> /dev/null || echo 0)" "
 assert_eq "a Codex member: one reading, taken at swarm start" "$(jq -r '[.record, .moment] | join(" ")' "$LOG")" "allowance swarm-start"
 RC=0; "$AL" start "$TMP/missing.json" || RC=$?
 assert_eq "a workforce that cannot be read is not an error" "$RC" "0"
+
+section "6c · On an API key there is no allowance to measure"
+reset; codex_wrote 10 20
+printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test-not-real"}\n' > "$CODEX_AUTH_FILE"
+"$AL" start "$TMP/wf-codex.json"
+assert_eq "start takes no reading" "$(lines 2> /dev/null || echo 0)" "0"
+"$AL" begin k1 --kind worker --window k1 > /dev/null
+assert_eq "begin holds no run" "$(files)" "0"
+end_run k1
+assert_eq "so end has nothing to match: null" "$OUT" "null"
+assert_eq "and nothing was written to the log" "$(lines 2> /dev/null || echo 0)" "0"
+printf '{"auth_mode":"chatgpt"}\n' > "$CODEX_AUTH_FILE"
+reset; codex_wrote 10 20
+printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test-not-real"}\n' > "$CODEX_AUTH_FILE"
+"$AL" begin k0 --kind worker --window k0 > /dev/null
+printf '{"auth_mode":"chatgpt"}\n' > "$CODEX_AUTH_FILE"   # the sign-in changes before the run ends
+end_run k0
+assert_eq "the decision made at begin stands: null, though the sign-in has changed" "$OUT" "null"
+assert_eq "no reading was taken for it" "$(lines 2> /dev/null || echo 0)" "0"
+assert_eq "and the decision's marker is gone" "$(find "$RUNS" -type f 2> /dev/null | wc -l | tr -d ' ')" "0"
+"$AL" begin k2 --kind worker --window k2 > /dev/null
+assert_eq "back on a subscription, begin holds a run" "$(files)" "1"
+rm -f "$CODEX_AUTH_FILE"
+"$AL" begin k3 --kind worker --window k3 > /dev/null
+assert_eq "when the sign-in cannot be read, doubt is not a reason to skip: it holds a run" "$([[ -e "$RUNS/k3.json" ]] && echo held || echo none)" "held"
+printf '{"auth_mode":"chatgpt"}\n' > "$CODEX_AUTH_FILE"
 
 section "7 · Arguments"
 RC=0; "$AL" bogus > /dev/null 2>&1 || RC=$?

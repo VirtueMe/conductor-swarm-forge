@@ -3,7 +3,7 @@ set -euo pipefail
 # Meter a worker: note when it is spawned, and when its window closes read what its harness left
 # behind and append a line to usage.jsonl.
 #
-# Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json>]
+# Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json> [<pool>]]
 #        worker-usage.sh read <task> [--outcome finished|interrupted] [--wait <seconds>] [--role <role>]
 #        worker-usage.sh sweep
 #        worker-usage.sh model <adapter> <directory> <since-epoch>
@@ -13,7 +13,10 @@ set -euo pipefail
 #
 # spawned  writes $CONDUCTOR_DIR/workers/<role>-<task>.json: who, with which harness, in which
 #          worktree, and when. Nothing can be read at spawn time; this is what lets a reader pick
-#          the worker's session out of everything the harness has written. Called by worker-spawn.sh.
+#          the worker's session out of everything the harness has written. <pool> is the pool the
+#          workforce gave the member; billing-mode.sh settles it now, against the sign-in as it is at
+#          the spawn, and the record keeps the decision (pool_check), so the line says what the worker
+#          was billed to and not what the closing process can see. Called by worker-spawn.sh.
 # read     finds the sessions of that worktree written since the spawn, adds them up, appends one
 #          line to $CONDUCTOR_DIR/usage.jsonl with the worker's role and task, and removes the
 #          record. Called by worker-close.sh after the window is closed. --wait gives a harness
@@ -168,9 +171,9 @@ find_record() { # <task>
 }
 
 cmd_spawned() {
-  local task="${1:?Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json>]}"
+  local task="${1:?Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json> [<pool>]]}"
   local role="${2:?missing role}" adapter="${3:?missing adapter}" worktree="${4:?missing worktree-dir}"
-  local params="${5:-}"
+  local params="${5:-}" pool="${6:-}"
   [[ -n "$params" ]] || params="{}"
   local physical
   physical="$(cd "$worktree" 2> /dev/null && pwd -P)" || physical="$worktree"
@@ -178,9 +181,15 @@ cmd_spawned() {
   local file tmp
   file="$(record_file "$role" "$task")"
   tmp="$file.new.$$"
+  local check
+  check="$("$SCRIPTS_DIR/billing-mode.sh" pool "$adapter" ${pool:+--declared "$pool"} --json 2> /dev/null)" || check=null
+  jq -e . <<< "$check" > /dev/null 2>&1 || check=null
   jq -nc --arg task "$task" --arg role "$role" --arg adapter "$adapter" --arg cwd "$physical" \
-    --argjson params "$params" --arg started "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg epoch "$(date +%s)" '
+    --argjson params "$params" --arg started "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg epoch "$(date +%s)" \
+    --arg pool "$pool" --argjson check "$check" '
     { task: $task, role: $role, adapter: $adapter, cwd: $cwd, params: $params,
+      declared_pool: (if $pool == "" then null else $pool end),
+      pool_check: $check,
       started_at: $started, started_epoch: ($epoch | tonumber) }' > "$tmp"
   mv "$tmp" "$file"
   # A Codex worker draws on the subscription allowance: take the reading its run is measured from.
@@ -203,11 +212,13 @@ cmd_read() {
   done
   case "$outcome" in finished|interrupted) ;; *) die "--outcome is finished or interrupted" ;; esac
 
-  local rec role adapter="" cwd="" epoch=""
+  local rec role adapter="" cwd="" epoch="" declared_pool="" pool_check=null
   rec="$(find_record "$task")"
   if [[ -n "$rec" ]]; then
     role="$(jq -r .role "$rec")"; adapter="$(jq -r .adapter "$rec")"
     cwd="$(jq -r .cwd "$rec")"; epoch="$(jq -r .started_epoch "$rec")"
+    declared_pool="$(jq -r '.declared_pool // empty' "$rec" 2> /dev/null || true)"
+    pool_check="$(jq -c '.pool_check // null' "$rec" 2> /dev/null || echo null)"
   else
     # No spawn record (a worker from before this existed, or a spawn that could not write it): the
     # window name gave the role, and nothing else is known. The line says so.
@@ -243,7 +254,7 @@ cmd_read() {
   local line
   line="$(jq -nc --argjson r "$reading" --arg task "$task" --arg role "$role" --arg adapter "$adapter" \
     --arg outcome "$outcome" --argjson duration "$duration" --arg usage "$usage" --argjson allowance "$allowance" \
-    --arg requested "$requested" --arg answered "$answered" '
+    --arg requested "$requested" --arg answered "$answered" --arg declared "$declared_pool" --argjson pool_check "$pool_check" '
     { event: ($task + "/worker-" + $role),
       task: $task,
       handler: null,
@@ -253,6 +264,8 @@ cmd_read() {
       rc: null,
       duration_s: $duration,
       harness: (if $adapter == "" then null else $adapter end),
+      declared_pool: (if $declared == "" then null else $declared end),
+      pool_check: $pool_check,
       model: $r.model,
       input_tokens: $r.input_tokens,
       output_tokens: $r.output_tokens,
