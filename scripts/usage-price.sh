@@ -13,7 +13,8 @@ set -euo pipefail
 #           (Codex without --model), the model is a "+" joined list (Claude Code run on several
 #           models) or the record has no token counts. Prices are per million tokens on the
 #           basis in the table's header: input, cache_read, cache_write and output tokens, which
-#           do not overlap.
+#           do not overlap. cache_write_1h_tokens, if the record has it, is part of cache_write_tokens
+#           (the part written at the 1-hour rate) and is priced at cache_write_1h instead.
 # unknown   lists the models in a log that the table does not price, and how many attempts used
 #           each, so a gap shows up before it is a hole in the totals.
 # compare   lists the attempts that have both a reported and an estimated cost, with the
@@ -36,9 +37,12 @@ done
 ESTIMATE='
   def estimate($prices):
     ($prices[.model // ""]) as $p
-    | if $p == null or ([.input_tokens, .output_tokens, .cache_read_tokens, .cache_write_tokens] | any(. == null)) then null
+    | (.cache_write_1h_tokens // 0) as $h
+    | if $p == null or ([.input_tokens, .output_tokens, .cache_read_tokens, .cache_write_tokens] | any(. == null))
+         or $h < 0 or $h > .cache_write_tokens then null
       else ((.input_tokens * $p.input + .cache_read_tokens * $p.cache_read
-             + .cache_write_tokens * $p.cache_write + .output_tokens * $p.output) / 1e6
+             + (.cache_write_tokens - $h) * $p.cache_write + $h * ($p.cache_write_1h // $p.cache_write)
+             + .output_tokens * $p.output) / 1e6
             | . * 1e8 | round / 1e8)
       end;'
 

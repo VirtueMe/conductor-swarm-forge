@@ -35,6 +35,14 @@ no_login() { rm -f "$CLAUDE_CREDENTIALS_FILE" "$CODEX_AUTH_FILE"; }
 append() { : > "$LOG"; usage_append "$LOG" "$1"; }
 field() { jq -r "$1" "$LOG" | tail -1; }
 
+section "0 · The 1-hour cache write is kept on the line and priced"
+no_login; login
+append '{"harness":"claude-code","model":"claude-haiku-4-5-20251001","input_tokens":10,"output_tokens":40,"cache_read_tokens":14595,"cache_write_tokens":9581,"cache_write_1h_tokens":9581,"cost_usd":0.0208315}'
+assert_eq "the line carries it" "$(field .cache_write_1h_tokens)" "9581"
+assert_eq "and the estimate is the reported cost" "$(field .estimated_cost_usd)" "0.0208315"
+append '{"harness":"claude-code","model":"claude-haiku-4-5-20251001","input_tokens":10,"output_tokens":40,"cache_read_tokens":14595,"cache_write_tokens":9581}'
+assert_eq "a record without it has null, not 0" "$(field .cache_write_1h_tokens)" "null"
+
 section "1 · The pool comes from the sign-in"
 no_login; login
 append '{"harness":"claude-code","role":"coder"}'

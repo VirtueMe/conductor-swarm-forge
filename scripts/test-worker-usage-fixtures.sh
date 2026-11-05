@@ -105,7 +105,10 @@ assert_eq "pi: the table agrees with pi's own cost" "$(price "$(pi_record "$FX/p
 CLAUDE="$(claude_record "$FX/claude-code/exited.jsonl")"
 assert_eq "claude-code: the estimate is below the reported cost (1-hour cache write)" \
   "$(jq -n --argjson e "$(price "$CLAUDE")" --argjson r "$(field "$CLAUDE" cost_usd)" '$e < $r')" "true"
-assert_eq "codex: the model is not in the table, so no estimate" "$(price "$(codex_record "$FX/codex/rollout.jsonl")")" "null"
+CODEX="$(codex_record "$FX/codex/rollout.jsonl")"
+# gpt-6.1-sol, short context: $2.00 input, $0.10 cached input, $10.00 output, per million tokens.
+assert_eq "codex: gpt-6.1-sol is in the table, and the estimate is on its published rates" \
+  "$(price "$CODEX")" "$(jq -r '((.input_tokens * 2 + .cache_read_tokens * 0.1 + .cache_write_tokens * 2.5 + .output_tokens * 10) / 1e6) | . * 1e8 | round / 1e8' <<< "$CODEX")"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
