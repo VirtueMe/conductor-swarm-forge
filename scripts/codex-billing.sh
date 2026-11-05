@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Check that Codex is billed to a subscription, not to an API key, before the swarm uses it.
+# Check that Codex is billed to a subscription, not to an API key. The swarm no longer asks: Codex
+# may run on either, and billing-mode.sh says which (pool and billing on every usage line). What
+# still needs a subscription is a check of the allowance readers against real Codex
+# (codex-allowance-run.sh), because on an API key there is no allowance to read.
 #
 # Usage: codex-billing.sh check
 # Env:   CODEX_HOME (default ~/.codex), CODEX_AUTH_FILE (default $CODEX_HOME/auth.json)
@@ -25,15 +28,11 @@ SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
 AUTH_FILE="${CODEX_AUTH_FILE:-$CODEX_DIR/auth.json}"
 
-# subscription, apikey or unknown
+# subscription, apikey or unknown: billing-mode.sh reads the sign-in, so there is one reading of it
 sign_in() {
-  [[ -r "$AUTH_FILE" ]] || { echo unknown; return; }
-  jq -r '
-    (.auth_mode // "") as $m
-    | if ($m | ascii_downcase) == "chatgpt" then "subscription"
-      elif ($m | ascii_downcase | test("api")) then "apikey"
-      elif $m == "" and ((.OPENAI_API_KEY // "") | type == "string") and ((.OPENAI_API_KEY // "") != "") then "apikey"
-      else "unknown" end' "$AUTH_FILE" 2> /dev/null || echo unknown
+  local mode
+  mode="$(CODEX_AUTH_FILE="$AUTH_FILE" "$SCRIPTS_DIR/billing-mode.sh" detect codex 2> /dev/null)" || mode=unknown
+  case "$mode" in api) echo apikey ;; subscription) echo subscription ;; *) echo unknown ;; esac
 }
 
 main() {

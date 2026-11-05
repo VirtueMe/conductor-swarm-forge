@@ -302,6 +302,39 @@ RC=0; CONDUCTOR_DIR="$TMP/ro/none" STUB_WINDOWS="coder-0035" "$CLOSE" 0035 2> /d
 chmod 755 "$TMP/ro"
 assert_eq "a log that cannot be written never fails the close" "$RC" "0"
 
+section "9 · A line says what the worker was billed to"
+# The sign-in files are the test's own, so nothing reads the real ones.
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json" CODEX_AUTH_FILE="$TMP/no-codex-login.json"
+unset ANTHROPIC_API_KEY
+reset
+"$WU" spawned 0040 coder pi "$CWD" '{"model":"m"}'
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+"$WU" read 0040
+assert_eq "nothing declared and nothing to detect: pool unknown" "$(last .pool)" "unknown"
+assert_eq "and billing unknown" "$(last .billing)" "unknown"
+reset
+"$WU" spawned 0041 coder pi "$CWD" '{"model":"m"}' api:anthropic
+assert_eq "the spawn record keeps the declared pool" "$(jq -r .declared_pool "$CONDUCTOR_DIR/workers/coder-0041.json")" "api:anthropic"
+assert_eq "and the pool it settled on" "$(jq -r .pool_check.pool "$CONDUCTOR_DIR/workers/coder-0041.json")" "api:anthropic"
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+"$WU" read 0041
+assert_eq "a declared pool stands for pi, which has no sign-in to read" "$(last .pool)" "api:anthropic"
+assert_eq "and its billing" "$(last .billing)" "api"
+reset
+printf '%s\n' '{"claudeAiOauth":{"accessToken":"oauth-test-token"}}' > "$CLAUDE_CREDENTIALS_FILE"
+"$WU" spawned 0042 reviewer claude-code "$CWD" '{"model":"m"}' api:anthropic
+put claude-code "$FX/claude-code/exited.jsonl" a.jsonl > /dev/null
+assert_eq "the pool is settled when the worker is spawned: the sign-in wins" "$(jq -r .pool_check.pool "$CONDUCTOR_DIR/workers/reviewer-0042.json")" "subscription:anthropic"
+assert_eq "and the mismatch is noted in the record" "$(jq -r '.pool_check.mismatch | tostring' "$CONDUCTOR_DIR/workers/reviewer-0042.json")" "true"
+rm -f "$CLAUDE_CREDENTIALS_FILE"   # the login is gone by the time the window closes
+"$WU" read 0042
+assert_eq "so the line is what the worker was billed to, not what the closing process can see" "$(last .pool)" "subscription:anthropic"
+assert_eq "and the mismatch is in the log" "$(jq -r 'select(.record == "pool_mismatch") | [.declared, .detected] | join(",")' "$LOG")" "api:anthropic,subscription:anthropic"
+reset
+"$WU" spawned 0043 coder claude-code "$CWD" '{"model":"m"}'
+assert_eq "a spawn with no declared pool records none" "$(jq -r '.declared_pool | tostring' "$CONDUCTOR_DIR/workers/coder-0043.json")" "null"
+assert_eq "and with no sign-in either, settles on unknown" "$(jq -r .pool_check.pool "$CONDUCTOR_DIR/workers/coder-0043.json")" "unknown"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

@@ -165,11 +165,6 @@ if ! bash -c 'source "$1"; declare -F adapter_dispatch >/dev/null' _ "$ADAPTER_F
   log "adapter has no adapter_dispatch: $ADAPTER_FILE"
   exit 3
 fi
-# A conductor on Codex draws on a subscription allowance, and on an API key it would be billed per
-# token. It does not start then; codex-billing.sh gives the reason.
-if [[ "$(basename "$ADAPTER_FILE" .sh)" == codex ]]; then
-  billing_reason="$("$SCRIPTS_DIR/codex-billing.sh" check 2>&1)" || { log "not starting: $billing_reason"; exit 3; }
-fi
 
 # --- One loop per conductor dir ---------------------------------------------
 
@@ -189,6 +184,13 @@ acquire_lock || exit 4
 
 DISPATCH_PID=""
 SLEEP_PID=""
+
+# The pool the workforce gives the conductor member, or nothing: the usage line settles what the
+# sign-in makes of it (billing-mode.sh).
+conductor_pool() {
+  [[ -f "$CONDUCTOR_DIR/workforce.json" ]] || return 0
+  wf_field "$CONDUCTOR_DIR/workforce.json" conductor pool 2> /dev/null || true
+}
 
 # One line per dispatch attempt in $USAGE_LOG, whatever the outcome: a retried event costs money
 # each time, and an attempt that left no record (a killed or failed run) is logged with
@@ -215,7 +217,7 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
   line="$(jq -nc --argjson r "$record" --arg usage "$usage" --argjson allowance "$allowance" \
     --arg requested "$requested" --arg answered "$answered" \
     --arg event "$1" --arg attempt "$2" --arg outcome "$3" --arg rc "$4" --arg duration "$5" \
-    --arg handler "${SKILL_NAME:-}" --arg adapter "$(basename "$ADAPTER_FILE" .sh)" '
+    --arg handler "${SKILL_NAME:-}" --arg adapter "$(basename "$ADAPTER_FILE" .sh)" --arg declared "$(conductor_pool)" '
     { event: $event,
       task: (if ($event | contains("/")) then ($event | split("/")[0]) else null end),
       handler: $handler,
@@ -225,6 +227,7 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       rc: ($rc | tonumber),
       duration_s: ($duration | tonumber),
       harness: ($r.harness // $adapter),
+      declared_pool: (if $declared == "" then null else $declared end),
       model: $r.model,
       input_tokens: $r.input_tokens,
       output_tokens: $r.output_tokens,

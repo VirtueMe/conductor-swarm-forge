@@ -106,9 +106,15 @@ cmd_reading() {
   printf '%s\n' "$reading"
 }
 
+# Codex on an API key has no subscription allowance to measure: its work is billed per token and its
+# dollars are on the usage line. Only evidence of an API key skips a reading; when the sign-in cannot
+# be read the reading is taken, because a reading is what could settle it.
+on_api_key() { [[ "$("$SCRIPTS_DIR/billing-mode.sh" detect codex 2> /dev/null || true)" == api ]]; }
+
 cmd_start() {
   local workforce="${1:?Usage: allowance.sh start <workforce.json>}"
   jq -e '[.members[]? | .adapter] | index("codex") != null' "$workforce" > /dev/null 2>&1 || return 0
+  ! on_api_key || return 0
   cmd_reading swarm-start > /dev/null
 }
 
@@ -129,6 +135,10 @@ cmd_begin() {
     *) die "--kind is dispatch or worker" ;;
   esac
   mkdir -p "$RUNS_DIR"
+  # Nothing to measure on an API key. The decision is made here, once, and left as a marker for end to
+  # read, so a sign-in that changes mid-run cannot half-measure the run. The marker is not a run
+  # (*.json), so it takes no part in overlap.
+  if on_api_key; then : > "$(run_file "$run").skipped"; return 0; fi
   prune
   local reading file
   reading="$(take_reading)"
@@ -144,6 +154,8 @@ cmd_begin() {
 cmd_end() {
   local run="${1:?Usage: allowance.sh end <run>}" file after
   file="$(run_file "$run")"
+  # begin decided there was nothing to measure (an API key): no reading, no difference.
+  if [[ -f "$file.skipped" ]]; then rm -f "$file.skipped"; echo null; return 0; fi
   after="$(take_reading)"
   append_reading "run-end:$run" "$after"
   if [[ ! -f "$file" ]]; then echo null; return 0; fi

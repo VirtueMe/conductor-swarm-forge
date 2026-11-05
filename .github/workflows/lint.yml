@@ -93,6 +93,9 @@ jobs:
           sys.exit(1 if fail else 0)
           EOF
 
+      - name: test-workforce-schema
+        run: bash scripts/test-workforce-schema.sh
+
   tests:
     name: test scripts
     runs-on: ubuntu-latest
@@ -177,6 +180,12 @@ jobs:
 
       - name: test-codex-billing
         run: bash scripts/test-codex-billing.sh
+
+      - name: test-billing-mode
+        run: bash scripts/test-billing-mode.sh
+
+      - name: test-usage-log
+        run: bash scripts/test-usage-log.sh
 
       - name: test-allowance
         run: bash scripts/test-allowance.sh
