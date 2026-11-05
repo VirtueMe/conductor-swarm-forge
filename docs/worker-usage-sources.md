@@ -99,6 +99,92 @@ worktree and with the same window name. Filter by start time (the spawn time, be
   (3 here). A newer Pi (1.5.0 was available) could change it, so read the version.
 - **Time.** `ts` on the session line and on each message, and a `timestamp` inside the message.
 
+## The Claude Code allowance (`/usage`)
+
+A spike for #144, run on 2026-11-05 against Claude Code 2.1.318 on a subscription plan. Question:
+can a script read the figures `/usage` shows (five-hour window, week, week per model class, usage
+credits) without driving the TUI? **Verdict: readable by script, from two sources, neither
+documented as a stable interface.** Nothing needed scraping, so a tmux read of the screen was not
+tried.
+
+| Figure | Status line payload | `/api/oauth/usage` |
+| --- | --- | --- |
+| Five-hour window | `rate_limits.five_hour` | `five_hour`, and `limits[kind=session]` |
+| Week, all models | `rate_limits.seven_day` | `seven_day`, and `limits[kind=weekly_all]` |
+| Week per model class | no | `limits[kind=weekly_scoped]`, `scope.model.display_name` (here `Fable`) |
+| Usage credits | no | `extra_usage` and `spend` |
+| Needs a model call | no, but only present after the first API response of a session | no |
+| Needs | a running session with a status line command | the OAuth token in `~/.claude/.credentials.json` |
+
+### Source 1: the status line payload
+
+- **Where.** Claude Code runs the configured `statusLine` command and writes a JSON object to its
+  stdin. The binary's own help text documents `rate_limits`; `claude --help` does not.
+- **Shape.** `rate_limits.five_hour` and `rate_limits.seven_day`, each `{used_percentage, resets_at}`
+  with `resets_at` in epoch seconds. A window is left out once its `resets_at` has passed. For
+  gateways there is an optional `spend_limit`. No per-model figure, no credits.
+- **Not in the first payload.** The first of two payloads in the capture had `rate_limits: null`; the
+  second, after the first API response, had it. A reader has to keep the last non-null one.
+- **Example** (one Haiku session, one-word prompt):
+
+  ```json
+  {"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":1793869800},
+                  "seven_day":{"used_percentage":19,"resets_at":1794024000}}}
+  ```
+
+- **Not in the session file.** `~/.claude/projects/**/*.jsonl` holds no rate-limit fields, so unlike
+  Codex the figures cannot be read after the fact. A reader has to be the status line command (or sit
+  behind it) and write them somewhere.
+- **Only for sessions with a status line.** `claude -p` was not tried; a headless run probably has no
+  status line.
+
+### Source 2: `GET https://api.anthropic.com/api/oauth/usage`
+
+- **How.** `Authorization: Bearer <claudeAiOauth.accessToken>` and `anthropic-beta: oauth-2025-04-20`.
+  Returned 200. This is the call the binary makes to draw `/usage` (it logs `fetchUtilization`). It
+  is not a model call, so it costs no tokens and does not move the allowance.
+- **Not documented, and it uses the user's subscription token.** Treat the shape as unstable and
+  pin the version it was checked on. The token expires (`expiresAt`); Claude Code refreshes it, a
+  script that only reads would have to be handled when it is stale (the binary re-sends once on a 401).
+- **Shape (trimmed).**
+
+  ```json
+  {"five_hour":{"utilization":10.0,"resets_at":"2026-11-05T09:10:00.240293+00:00"},
+   "seven_day":{"utilization":20.0,"resets_at":"2026-11-07T04:00:00.240316+00:00"},
+   "limits":[{"kind":"session","percent":10},{"kind":"weekly_all","percent":20},
+             {"kind":"weekly_scoped","percent":0,"scope":{"model":{"display_name":"Fable"}}}],
+   "extra_usage":{"is_enabled":true,"monthly_limit":10000,"used_credits":0.0,"currency":"USD","decimal_places":2},
+   "spend":{"used":{"amount_minor":0},"limit":{"amount_minor":10000},"percent":0},
+   "seven_day_breakdown":{"rows":[{"key":"claude_code","percent":69},{"key":"chat","percent":19},{"key":"cowork","percent":12}]}}
+  ```
+
+  `monthly_limit` and `amount_minor` are in minor units: 10000 is $100.00. The old `seven_day_opus`
+  and `seven_day_sonnet` keys were null; the per-model figure is in `limits`.
+
+### Answers to the questions in #144
+
+- **Whole numbers?** The payload gave integers (10, 19). The endpoint gave 10.0 and 20.0 and `limits`
+  integers. Fractions were not seen, so assume whole points: one small run moves the figure by 0 or 1.
+- **Account-wide or this machine?** Account-wide. `seven_day_breakdown` splits the week into Claude
+  Code, Chats and Cowork, so claude.ai chats count against the same window.
+- **Fresh?** Not exact. In the capture the payload said `seven_day` 19 while the endpoint, read before
+  and after the same run, said 20.0; `five_hour` agreed (10) and so did the reset times. The payload is
+  either taken at the time of the last API response or rounds down, and this was not separated. The
+  one Haiku prompt did not move the endpoint figures at all, so a run smaller than a point is not seen.
+- **Is credits what is used once the windows run out?** Not tested. `extra_usage` (`used_credits`,
+  `monthly_limit`) is the pool, and the page's own text says credits "cover you when you hit your plan
+  limits", but no run was made that hit a limit here.
+- **What does a read cost?** The endpoint: nothing. The status line: it is already running.
+
+### Recommendation
+
+A Claude reader in the shape of `codex-usage.sh` (windows `five_hour`, `weekly`, `weekly_by_model`,
+`credits`) can be built on the endpoint, since it is the only source with all four. The status line
+payload is the fallback for the first two when no token is available. The reader should take the
+version it was checked on, tolerate unknown keys, and report "unavailable" rather than a guess on
+a 401 or a changed shape. Real figures from the capture are in `tests/` once the follow-up adds
+fixtures.
+
 ## Findings that change the price table
 
 - **Claude Code's cache write was billed at the 1-hour rate** (`cacheCreationEphemeral1hInputTokens`
@@ -146,6 +232,9 @@ exit wait, Codex needs a priced model.
 
 ## Not tested
 
+- The Claude allowance: credits being drawn once a window is full; a status line payload with a
+  `spend_limit` (gateway); `claude -p` with a status line; fractional percentages; whether the payload
+  lags the endpoint or rounds down (#144).
 - A Claude Code session that used tools, subagents (sidechains), `/compact` or `--resume`: the
   message duplication, and whether subagent usage is in the same file, are unknown.
 - A Codex or Pi kill in the middle of a turn.
