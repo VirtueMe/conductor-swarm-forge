@@ -103,18 +103,19 @@ worktree and with the same window name. Filter by start time (the spawn time, be
 
 A spike for #144, run on 2026-11-05 against Claude Code 2.1.318 on a subscription plan. Question:
 can a script read the figures `/usage` shows (five-hour window, week, week per model class, usage
-credits) without driving the TUI? **Verdict: readable by script, from two sources, neither
+credits) without driving the TUI? **Verdict: readable by script, from three sources, none
 documented as a stable interface.** Nothing needed scraping, so a tmux read of the screen was not
 tried.
 
-| Figure | Status line payload | `/api/oauth/usage` |
-| --- | --- | --- |
-| Five-hour window | `rate_limits.five_hour` | `five_hour`, and `limits[kind=session]` |
-| Week, all models | `rate_limits.seven_day` | `seven_day`, and `limits[kind=weekly_all]` |
-| Week per model class | no | `limits[kind=weekly_scoped]`, `scope.model.display_name` (here `Fable`) |
-| Usage credits | no | `extra_usage` and `spend` |
-| Needs a model call | no, but only present after the first API response of a session | no |
-| Needs | a running session with a status line command | the OAuth token in `~/.claude/.credentials.json` |
+| Figure | Status line payload | `/api/oauth/usage` | `cachedUsageUtilization` |
+| --- | --- | --- | --- |
+| Five-hour window | `rate_limits.five_hour` | `five_hour`, and `limits[kind=session]` | the same as the endpoint |
+| Week, all models | `rate_limits.seven_day` | `seven_day`, and `limits[kind=weekly_all]` | the same |
+| Week per model class | no | `limits[kind=weekly_scoped]`, `scope.model.display_name` (here `Fable`) | the same |
+| Usage credits | no | `extra_usage` and `spend` | the same |
+| Needs a model call | no, but only present after the first API response of a session | no | no |
+| Needs | a running session with a status line command | the OAuth token in `~/.claude/.credentials.json` | read access to `~/.claude.json` |
+| Fresh | at the last API response | at the call | **no**: a copy from whenever Claude Code last fetched |
 
 ### Source 1: the status line payload
 
@@ -161,6 +162,21 @@ tried.
   `monthly_limit` and `amount_minor` are in minor units: 10000 is $100.00. The old `seven_day_opus`
   and `seven_day_sonnet` keys were null; the per-model figure is in `limits`.
 
+### Source 3: `cachedUsageUtilization` in `~/.claude.json`
+
+- **Where.** A top-level key in `~/.claude.json`: `{fetchedAtMs, accountUuid, utilization}`.
+  `utilization` is the `/api/oauth/usage` response, stored as it came back, with the same keys and
+  the same shape as Source 2, so one parser reads both. It needs no token and no network.
+- **Stale.** `fetchedAtMs` is when Claude Code last fetched, not now. On this machine it read
+  2026-11-04 14:26 UTC, about 18 hours older than the capture, and it still did after a whole
+  session had been run and the endpoint called twice. It showed 17 % for the week where the
+  endpoint said 20.0, and its five-hour window had already reset. A session that ran did not
+  refresh it. What does refresh it (opening `/usage` is the guess) was not found out.
+- **Use.** Only as a last resort with its age shown, and the reader must compare `fetchedAtMs` with
+  the window's `resets_at` and drop a window that has reset since.
+- **Other content.** The file also holds `accountUuid` and much else; a reader should
+  take only `cachedUsageUtilization.utilization` and not copy the rest.
+
 ### Answers to the questions in #144
 
 - **Whole numbers?** The payload gave integers (10, 19). The endpoint gave 10.0 and 20.0 and `limits`
@@ -180,7 +196,8 @@ tried.
 
 A Claude reader in the shape of `codex-usage.sh` (windows `five_hour`, `weekly`, `weekly_by_model`,
 `credits`) can be built on the endpoint, since it is the only source with all four. The status line
-payload is the fallback for the first two when no token is available. The reader should take the
+payload is the fallback for the first two when no token is available, and `cachedUsageUtilization`
+a last resort that can be days old. The reader should take the
 version it was checked on, tolerate unknown keys, and report "unavailable" rather than a guess on
 a 401 or a changed shape. Real figures from the capture are in `tests/` once the follow-up adds
 fixtures.
@@ -232,7 +249,7 @@ exit wait, Codex needs a priced model.
 
 ## Not tested
 
-- The Claude allowance: credits being drawn once a window is full; a status line payload with a
+- The Claude allowance: what refreshes `cachedUsageUtilization`; credits being drawn once a window is full; a status line payload with a
   `spend_limit` (gateway); `claude -p` with a status line; fractional percentages; whether the payload
   lags the endpoint or rounds down (#144).
 - A Claude Code session that used tools, subagents (sidechains), `/compact` or `--resume`: the
