@@ -66,7 +66,23 @@ rejects "a pool that does not exist" "$(wf claude-code bananas)"
 rejects "unknown is not something to declare, it is what is left when nothing is" "$(wf claude-code unknown)"
 rejects "a pool that is not a string" '{"name":"t","members":[{"role":"coder","adapter":"codex","pool":7}]}'
 
-section "5 · The shipped workforces"
+section "5 · Budgets"
+wfb() { printf '{"name":"t","members":[{"role":"coder","adapter":"codex"}],"budgets":%s}' "$1"; }
+accepts "no budgets: still valid" "$(wf codex)"
+accepts "a dollar budget on an api pool" "$(wfb '[{"pool":"api:openai","usd":50}]')"
+accepts "a percent budget on a subscription pool, with period, warn_at and caps" "$(wfb '[{"pool":"subscription:openai","percent":60,"period":"week","warn_at":70,"caps":[{"role":"coder","percent":30},{"adapter":"codex","model":"gpt-6.1-sol","percent":20}]}]')"
+rejects "usd on a subscription pool (the unit follows the pool)" "$(wfb '[{"pool":"subscription:openai","usd":5}]')"
+rejects "percent on an api pool" "$(wfb '[{"pool":"api:openai","percent":5}]')"
+rejects "both units" "$(wfb '[{"pool":"api:openai","usd":5,"percent":5}]')"
+rejects "no amount" "$(wfb '[{"pool":"api:openai"}]')"
+rejects "a pool that does not exist" "$(wfb '[{"pool":"bananas","usd":5}]')"
+rejects "a period that is not run or week" "$(wfb '[{"pool":"api:openai","usd":5,"period":"month"}]')"
+rejects "a negative amount" "$(wfb '[{"pool":"api:openai","usd":-1}]')"
+rejects "a cap with no role, adapter or model" "$(wfb '[{"pool":"api:openai","usd":5,"caps":[{"usd":1}]}]')"
+rejects "a cap in the wrong unit" "$(wfb '[{"pool":"api:openai","usd":5,"caps":[{"role":"coder","percent":1}]}]')"
+rejects "an unknown key on a budget" "$(wfb '[{"pool":"api:openai","usd":5,"enforce":true}]')"
+
+section "6 · The shipped workforces"
 for f in "$WORKFORCES"/*.json; do
   [[ "$f" == *workforce.schema.json ]] && continue
   accepts "$(basename "$f") is valid" "$(cat "$f")"

@@ -167,6 +167,11 @@ cp "$WORKFORCE"     "$CONDUCTOR_DIR/workforce.json"
 # The log is a convenience: a reading that cannot be taken must not stop the start.
 "$SCRIPTS_DIR/allowance.sh" start "$CONDUCTOR_DIR/workforce.json" || true
 
+# The budgets in effect: the workforce's, tightened by the brief if it says so (budget.sh merge). Report
+# only; the loop warns against them and usage-summary.sh shows spent against them. Nothing when there are none.
+BUDGETS_IN_EFFECT="$("$SCRIPTS_DIR/budget.sh" merge "$WORKFORCE" ${BRIEF_FILE:+"$BRIEF_FILE"} || echo '[]')"
+if [[ "$BUDGETS_IN_EFFECT" != "[]" ]]; then printf '%s\n' "$BUDGETS_IN_EFFECT" > "$CONDUCTOR_DIR/budgets.json"; fi
+
 # Write project-level permissions: read/write the project, read/execute the scripts
 mkdir -p ".claude"
 cat > ".claude/settings.json" << EOF

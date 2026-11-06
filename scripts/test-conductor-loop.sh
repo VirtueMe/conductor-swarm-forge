@@ -1087,6 +1087,29 @@ rm -f "$STUB_HOOK"
 unset STUB_CLAUDE_BODY CLAUDE_USAGE_NOW
 export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json"
 
+# 48 ------------------------------------------------------------------------------
+section "48 · A budget that is reached is said once in the conductor log, and nothing stops"
+new_swarm
+printf '[{"pool":"api:anthropic","usd":1.00,"warn_at":80}]\n' > "$CONDUCTOR_DIR/budgets.json"
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+ANTHROPIC_API_KEY=sk-test-not-real STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.45,"turns":1}' run_loop
+assert_eq "the signal was dispatched" "$(dispatches)" "1"
+assert_eq "90 percent of the budget after the second dispatch (each run also does the startup reconcile): one warning, naming the pool" "$(grep -c "budget api:anthropic: [\$]0.90 of [\$]1.00" "$CONDUCTOR_DIR/conductor.log")" "1"
+assert_eq "one record of it in the usage log" "$(jq -r 'select(.record == "budget_warning") | .state' "$CONDUCTOR_DIR/usage.jsonl")" "warn"
+sleep 1; signal 0001 signal complete
+ANTHROPIC_API_KEY=sk-test-not-real STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.001,"turns":1}' run_loop
+assert_eq "the same state on the next dispatch: not said again" "$(grep -c 'budget api:anthropic' "$CONDUCTOR_DIR/conductor.log")" "1"
+sleep 1; signal 0001 signal complete
+ANTHROPIC_API_KEY=sk-test-not-real STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.05,"turns":1}' run_loop
+assert_eq "going over is said, and the loop carried on" "$(grep -c 'over budget api:anthropic' "$CONDUCTOR_DIR/conductor.log")" "1"
+assert_eq "exit 0: report only, nothing refused" "$RC" "0"
+new_swarm
+create_task; run_loop
+sleep 1; signal 0001 signal complete
+ANTHROPIC_API_KEY=sk-test-not-real STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.45,"turns":1}' run_loop
+assert_eq "no budgets file: no warning" "$(grep -c 'budget' "$CONDUCTOR_DIR/conductor.log" || true)" "0"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

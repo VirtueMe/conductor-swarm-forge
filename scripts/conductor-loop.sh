@@ -243,6 +243,13 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
       requested_model: (if $requested == "" then null else $requested end),
       answered_model: (if $answered == "" then null else $answered end) }' 2> /dev/null)" || return 0
   usage_append "$USAGE_LOG" "$line"
+  # A budget that is now at its warning level or over: said once in the log (budget.sh warn). Report only.
+  if [[ -s "$CONDUCTOR_DIR/budgets.json" ]]; then
+    local warning
+    while IFS= read -r warning; do
+      [[ -n "$warning" ]] && log "$warning"
+    done < <("$SCRIPTS_DIR/budget.sh" warn --file "$USAGE_LOG" --budgets "$CONDUCTOR_DIR/budgets.json" 2> /dev/null || true)
+  fi
   usage_model_check "$USAGE_LOG" conductor "$(jq -r '.task // empty' <<< "$line")" "$1" codex "$requested" "$answered"
 }
 
