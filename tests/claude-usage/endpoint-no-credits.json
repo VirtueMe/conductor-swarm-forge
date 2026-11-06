@@ -1,0 +1,5 @@
+{"five_hour":{"utilization":10,"resets_at":"2026-11-05T09:10:00+00:00"},
+ "seven_day":{"utilization":20,"resets_at":"2026-11-07T04:00:00+00:00"},
+ "limits":[],
+ "extra_usage":{"is_enabled":false,"monthly_limit":null,"used_credits":0.0,"currency":"USD","decimal_places":2},
+ "spend":{"used":{"amount_minor":0},"limit":{"amount_minor":0}}}

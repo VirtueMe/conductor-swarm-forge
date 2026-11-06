@@ -1,0 +1,3 @@
+{"five_hour":{"utilization":88,"resets_at":"2026-11-05T07:00:00+00:00"},
+ "seven_day":{"utilization":20,"resets_at":"2026-11-07T04:00:00+00:00"},
+ "limits":[], "spend":{"used":{"amount_minor":0},"limit":{"amount_minor":10000}}}

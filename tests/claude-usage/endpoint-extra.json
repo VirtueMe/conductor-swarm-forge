@@ -1,0 +1,8 @@
+{"five_hour":{"utilization":37.5,"resets_at":"2026-11-05T09:10:00+00:00","something_new":true},
+ "seven_day":{"utilization":61,"resets_at":"2026-11-07T04:00:00+00:00"},
+ "limits":[{"kind":"weekly_scoped","percent":12,"scope":{"model":{"display_name":"Fable"}}},
+           {"kind":"weekly_scoped","percent":3,"scope":{"model":{"display_name":"Sonnet"}}},
+           {"kind":"brand_new_kind","percent":99}],
+ "extra_usage":{"is_enabled":true,"monthly_limit":10000,"used_credits":4.25,"currency":"USD","decimal_places":2},
+ "spend":{"used":{"amount_minor":425},"limit":{"amount_minor":10000},"percent":4},
+ "a_whole_new_section":{"x":1}}
