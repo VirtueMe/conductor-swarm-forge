@@ -1,0 +1,9 @@
+{"five_hour":{"utilization":10.0,"resets_at":"2026-11-05T09:10:00.240293+00:00"},
+ "seven_day":{"utilization":20.0,"resets_at":"2026-11-07T04:00:00.240316+00:00"},
+ "seven_day_opus":null,
+ "seven_day_sonnet":null,
+ "limits":[{"kind":"session","percent":10},{"kind":"weekly_all","percent":20},
+           {"kind":"weekly_scoped","percent":0,"scope":{"model":{"display_name":"Fable"}}}],
+ "extra_usage":{"is_enabled":true,"monthly_limit":10000,"used_credits":0.0,"currency":"USD","decimal_places":2},
+ "spend":{"used":{"amount_minor":0},"limit":{"amount_minor":10000},"percent":0},
+ "seven_day_breakdown":{"rows":[{"key":"claude_code","percent":69},{"key":"chat","percent":19},{"key":"cowork","percent":12}]}}
