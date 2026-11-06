@@ -29,10 +29,13 @@ set -euo pipefail
 # that has an estimate, reported cost or not, on the price table's one basis, with the number
 # of attempts that have none.
 #
-# "allowance" is the Codex subscription pool, kept apart from tokens and dollars because it is
-# a percentage of a window, not a cost: the latest reading of the five-hour and the weekly window,
-# how far each has moved since the first reading in the same window, and the percentage points
-# that runs used (the allowance on their lines), by role. A run whose points could not be
+# "allowance" is the subscription pools (Codex, subscription:openai, and Claude Code,
+# subscription:anthropic), kept apart from tokens and dollars because it is a percentage of a window,
+# not a cost. With more than one pool it starts with the runs metered in each (a count: points are
+# per pool and never added across pools). Each pool then has its own block: the latest reading of the
+# five-hour and the weekly window, how far each has moved since the first reading in the same window,
+# for Claude the week per model and the credits (dollars), and the percentage points that runs used
+# (the allowance on their lines), by role. A run whose points could not be
 # attributed (runs overlapped, or a reading was unknown) is counted, not guessed. The readings are
 # records of their own in the log ("record": "allowance") and are not attempts, and neither is any
 # other line with a "record" field. A run on a model other than the one asked for is its own record
@@ -100,31 +103,66 @@ jq -R 'fromjson? // empty' "$FILE" \
       def by_billing(rows): ["api", "subscription", "unknown"] | map(. as $m | {mode: $m, a: agg(rows | map(select(billing_of == $m)))}) | map(select(.a.attempts > 0));
       def groups(f): $all | group_by(f // "-") | map({key: (.[0] | f // "-"), a: agg(.)}) | sort_by(-(.a.reported + .a.estimated), .key);
       def same_window($a; $b): ($a.resets_at != null and $b.resets_at != null and (($a.resets_at - $b.resets_at) | fabs) <= 120);
-      def window_rows($w; $label):
-        ($readings | last) as $l
-        | ([$readings[] | select(.[$w].state == "known" and same_window(.[$w]; $l[$w]))] | first) as $f
+      def pool_of: .pool // "subscription:openai";
+      def claude_pool: "subscription:anthropic";
+      def label_of($p): if $p == claude_pool then "Claude" else "Codex" end;
+      def window_rows($rs; $w; $label):
+        ($rs | last) as $l
+        | ([$rs[] | select(.[$w].state == "known" and same_window(.[$w]; $l[$w]))] | first) as $f
         | ["allow_win", $label, $l[$w].state, ($l[$w].used_percent // "-"),
            (if $l[$w].resets_at != null then ($l[$w].resets_at | todate) else "-" end),
            ($l[$w].reason // "-"),
            (if $l[$w].state == "known" and $f != null then $f[$w].used_percent else "-" end),
            (if $l[$w].state == "known" and $f != null then ($f.snapshot_at // "-") else "-" end)] | @tsv;
-      def allowance_rows:
-        if want("allowance") and (($readings | length) > 0 or ($mismatches | length) > 0 or ($all | map(select(.allowance != null)) | length) > 0) then
-          (if ($readings | length) > 0 then
-             (($readings | last) as $l
-              | (["allow_head", ($l.snapshot_at // "-"), ($l.plan_type // "-"), ($l.codex_version // "-")] | @tsv),
-                window_rows("five_hour"; "5-hour"), window_rows("weekly"; "weekly"))
-           else (["allow_head", "-", "-", "-"] | @tsv) end),
-          ($all | map(select(.allowance != null)) | group_by(.role // "-")
+      def run_counts($runs):
+        { runs: ($runs | length),
+          attributed: ($runs | map(select(.allowance.attributed_to == "run" and .allowance.five_hour.points != null)) | length),
+          batch: ($runs | map(select(.allowance.attributed_to == "batch")) | length),
+          unknown: ($runs | map(select(.allowance.attributed_to != "batch" and .allowance.five_hour.points == null)) | length) };
+      def pool_rows($p):
+        ([$readings[] | select(pool_of == $p)]) as $rs
+        | ($all | map(select(.allowance != null and (.allowance | pool_of) == $p))) as $runs
+        | ($rs | last) as $l
+        | (if ($rs | length) > 0 then
+             (["allow_head", label_of($p), $p, ($l.snapshot_at // "-"),
+               (if $p == claude_pool
+                then "from " + ($l.source // "unknown") + (if $l.source == "cache" then ", " + ((($l.age_seconds // 0) / 3600) | floor | tostring) + " h old" else "" end)
+                else "plan " + ($l.plan_type // "-") + ", Codex " + ($l.codex_version // "-") end)] | @tsv),
+             window_rows($rs; "five_hour"; "5-hour"), window_rows($rs; "weekly"; "weekly"),
+             (if $p == claude_pool then
+                (if $l.weekly_by_model.state == "known"
+                 then ($l.weekly_by_model.models[] | ["allow_model", .model, "known", .used_percent, "-", "-"] | @tsv)
+                 else (["allow_model", "per model", "unknown", "-", "-", ($l.weekly_by_model.reason // "-")] | @tsv) end),
+                (["allow_credits", $l.credits.state, ($l.credits.used // "-"), ($l.credits.limit // "-"), ($l.credits.currency // "-"), ($l.credits.reason // "-")] | @tsv)
+              else empty end)
+           else (["allow_head", label_of($p), $p, "-", "-"] | @tsv) end),
+          ($runs | group_by(.role // "-")
            | map({role: (.[0].role // "-"), runs: length,
                   five: (map(.allowance.five_hour.points // 0) | add), weekly: (map(.allowance.weekly.points // 0) | add),
                   lost: (map(select(.allowance.five_hour.points == null)) | length),
                   batch: (map(select(.allowance.attributed_to == "batch")) | length),
                   five_n: (map(select(.allowance.five_hour.points != null)) | length),
-                  weekly_n: (map(select(.allowance.weekly.points != null)) | length)})
+                  weekly_n: (map(select(.allowance.weekly.points != null)) | length),
+                  credits: (map(.allowance.credits.dollars // 0) | add),
+                  credits_n: (map(select(.allowance.credits.dollars != null)) | length)})
            | sort_by(-.five, .role) | .[]
-           | ["allow_role", .role, .runs, .five, .weekly, .lost, .batch, .five_n, .weekly_n] | @tsv),
-          ($mismatches | group_by([.requested, .answered]) | map(["allow_mismatch", .[0].requested, .[0].answered, length]) | sort_by(-.[3]) | .[] | @tsv)
+           | ["allow_role", .role, .runs, .five, .weekly, .lost, .batch, .five_n, .weekly_n, .credits, .credits_n] | @tsv),
+          (if $p == claude_pool then
+             ($runs | map(.allowance.weekly_by_model.models // []) | flatten | map(select(.points != null)) | group_by(.model)
+              | map(["allow_use_model", .[0].model, length, (map(.points) | add)] | @tsv) | .[])
+           else empty end);
+      def allowance_rows:
+        if want("allowance") and (($readings | length) > 0 or ($mismatches | length) > 0 or ($all | map(select(.allowance != null)) | length) > 0) then
+          ([claude_pool, "subscription:openai"] | map(. as $p
+             | select(($readings | map(select(pool_of == $p)) | length) > 0 or ($all | map(select(.allowance != null and (.allowance | pool_of) == $p)) | length) > 0))) as $pools
+          | (if ($pools | length) == 0 then ["subscription:openai"] else ($pools | reverse) end) as $order
+          | (if ($order | length) > 1 then
+               (["allow_total", ($all | map(select(.allowance != null)) | length)] | @tsv),
+               ($order[] | . as $p | run_counts($all | map(select(.allowance != null and (.allowance | pool_of) == $p))) as $c
+                | ["allow_total_pool", label_of($p), $p, $c.runs, $c.attributed, $c.batch, $c.unknown] | @tsv)
+             else empty end),
+            ($order[] | pool_rows(.)),
+            ($mismatches | group_by([.requested, .answered]) | map(["allow_mismatch", .[0].requested, .[0].answered, length]) | sort_by(-.[3]) | .[] | @tsv)
         else empty end;
       (if ($all | length) == 0 then "empty"
       else
@@ -188,10 +226,20 @@ jq -R 'fromjson? // empty' "$FILE" \
       printf "  declared %s, sign-in said %s  %d\n", $2, $3, $4
       next
     }
+    $1 == "allow_total" {
+      printf "\nAllowance, all subscription pools: %d runs metered (runs only: points are per pool, and are not added across pools)\n", $2
+      printf "  %-34s %6s %11s %10s %8s\n", "Pool", "runs", "attributed", "in a batch", "unknown"
+      next
+    }
+    $1 == "allow_total_pool" {
+      printf "  %-34s %6d %11d %10d %8d\n", $2 " (" $3 ")", $4, $5, $6, $7
+      next
+    }
     $1 == "allow_head" {
-      printf "\nCodex allowance (subscription:openai)"
-      if ($2 == "-") printf ": no reading in any Codex session\n"
-      else printf ", read %s, plan %s, Codex %s\n", $2, $3, $4
+      cur_label = $2; role_head = 0; use_head = 0
+      printf "\n%s allowance (%s)", $2, $3
+      if ($4 == "-") printf ": %s\n", ($2 == "Codex" ? "no reading in any Codex session" : "no reading")
+      else printf ", read %s, %s\n", $4, $5
       allowed = 1
       next
     }
@@ -203,12 +251,28 @@ jq -R 'fromjson? // empty' "$FILE" \
       } else printf "  %-8s unknown (%s)\n", $2, $6
       next
     }
+    $1 == "allow_model" {
+      if ($3 == "known") printf "  %-8s %s%% used (this week)\n", $2, $4
+      else printf "  %-8s unknown (%s)\n", $2, $6
+      next
+    }
+    $1 == "allow_credits" {
+      if ($2 == "known") printf "  %-8s $%.2f of $%.2f %s\n", "credits", $3, $4, $5
+      else printf "  %-8s unknown (%s)\n", "credits", $6
+      next
+    }
     $1 == "allow_role" {
+      claude = (cur_label == "Claude")
       if (!role_head) {
-        printf "\n  %-38s %6s %8s %8s %16s\n", "Used by runs (percentage points)", "runs", "5-hour", "weekly", "not attributed"
-        role_head = 1
+        printf "\n  %-38s %6s %8s %8s %s%16s\n", "Used by runs (percentage points)", "runs", "5-hour", "weekly", (claude ? sprintf("%9s ", "credits") : ""), "not attributed"
+        role_head = 1; any_role_head = 1
       }
-      printf "  %-38s %6d %8s %8s %16s\n", $2, $3, points($4, $8), points($5, $9), $6 (($7 > 0) ? " (" $7 " in a batch)" : "")
+      printf "  %-38s %6d %8s %8s %s%16s\n", $2, $3, points($4, $8), points($5, $9), (claude ? sprintf("%9s ", ($11 == 0 ? "-" : sprintf("+$%.2f", $10))) : ""), $6 (($7 > 0) ? " (" $7 " in a batch)" : "")
+      next
+    }
+    $1 == "allow_use_model" {
+      if (!use_head) { printf "\n  %-38s %6s %8s\n", "Used by runs, per model (points)", "runs", "week"; use_head = 1 }
+      printf "  %-38s %6d %8s\n", $2, $3, points($4, $3)
       next
     }
     $1 == "allow_mismatch" {
@@ -235,7 +299,7 @@ jq -R 'fromjson? // empty' "$FILE" \
       printf "%-34s %8d %11s %11s %8d %11d %9d\n", key, $3, money($4), money($5), $6, $7, $8
     }
     END {
-      if (role_head) printf "\nRuns whose points could not be attributed (overlapping runs, or a reading that was unknown) are counted, not guessed, and a - is a column with none attributed; the change over a batch is in the readings above. A +0 (<1) is under one step of the log, which reports whole percents: not nothing.\n"
+      if (any_role_head) printf "\nRuns whose points could not be attributed (overlapping runs, or a reading that was unknown) are counted, not guessed, and a - is a column with none attributed; the change over a batch is in the readings above. A +0 (<1) is under one step of the log, which reports whole percents: not nothing. Credits are dollars drawn, shown only for Claude, and are never added to points.\n"
       if (empty) exit
       if (adapters_shown)
         printf "\n%d of the %d attempts have no estimate (an unpriced model, or no record). They are not counted as free.\n", unpriced_all, total

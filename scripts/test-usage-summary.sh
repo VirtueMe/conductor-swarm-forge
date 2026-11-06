@@ -241,6 +241,60 @@ jq -c 'del(.five_hour.resets_at) | .five_hour.state = "unknown" | .five_hour.use
 run --file "$TMP/stale.jsonl"
 has '^  5-hour  *unknown (the window reset after the last reading)' "an unknown window is shown as unknown, not as a percentage"
 
+section "5g2 · The Claude allowance sits beside the Codex one, with a total of runs"
+creading() { # ts used5 usedweek usedFable spent
+  jq -nc --arg ts "$1" --argjson f "$2" --argjson w "$3" --argjson m "$4" --argjson spent "$5" '
+    { record: "allowance", pool: "subscription:anthropic", moment: "x", ts: $ts, snapshot_at: $ts, source: "endpoint", age_seconds: 0, checked_version: "2.1.318",
+      five_hour: { state: "known", reason: null, window_minutes: 300, used_percent: $f, opened_at: 1793851800, resets_at: 1793869800 },
+      weekly:    { state: "known", reason: null, window_minutes: 10080, used_percent: $w, opened_at: 1793419200, resets_at: 1794024000 },
+      weekly_by_model: { state: "known", reason: null, models: [ { model: "Fable", used_percent: $m, opened_at: 1793419200, resets_at: 1794024000 } ] },
+      credits: { state: "known", reason: null, currency: "USD", used: $spent, limit: 100 } }'
+}
+crun() { # role p5 p7 pFable dollars attributed_to
+  jq -nc --arg role "$1" --argjson p5 "$2" --argjson p7 "$3" --argjson pm "$4" --argjson d "$5" --arg to "$6" '
+    { ts: "2026-11-05T08:30:00Z", event: "0002/worker-\($role)", task: "0002", handler: null, role: $role, attempt: null, outcome: "finished", rc: null,
+      duration_s: 60, harness: "claude-code", model: "claude-opus-4-8", input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_write_tokens: 0,
+      cost_usd: 0.05, turns: 1, usage: "reported",
+      allowance: { pool: "subscription:anthropic", overlap: ($to == "batch"), attributed_to: $to,
+                   five_hour: { points: $p5, reason: null }, weekly: { points: $p7, reason: null },
+                   weekly_by_model: { reason: null, models: (if $pm == null then [] else [ { model: "Fable", points: $pm, reason: null } ] end) },
+                   credits: { dollars: $d, reason: null } } }'
+}
+CL="$TMP/claude-allowance.jsonl"
+{ creading 2026-11-05T08:00:00Z 10 20 0 0
+  crun coder 2.5 0.5 2 0.25 run
+  crun coder 1 0 0 0 run
+  crun reviewer null null null null batch
+  creading 2026-11-05T09:00:00Z 14 21 2 0.25; } > "$CL"
+run --file "$CL"
+assert_eq "exit 0" "$RC" "0"
+lacks '^Allowance, all subscription pools' "one pool needs no total"
+has '^Claude allowance (subscription:anthropic), read 2026-11-05T09:00:00Z, from endpoint' "the Claude block, with where the reading came from"
+lacks '^Codex allowance' "and no Codex block when there is nothing from Codex"
+has '^  5-hour  *14% used, resets 2026-11-05T09:10:00Z  (was 10% at 2026-11-05T08:00:00Z, first reading in this window)' "its windows, as for Codex"
+has '^  Fable  *2% used' "the week per model"
+has '^  credits  *\$0.25 of \$100.00 USD' "the credits, in dollars"
+has '^  coder  *2  *+3.5  *+0.5  *+\$0.25  *0$' "by role: points, and the credits as dollars in a column of their own"
+has '^  reviewer  *1  *-  *-  *-  *1 (1 in a batch)$' "a run in a batch is not attributed, in every column"
+has '^  Fable  *2  *+2$' "points per model across the runs"
+# both pools: a total of runs on top, points kept per pool
+{ cat "$CL"; cat "$AL"; } > "$TMP/both.jsonl"
+run --file "$TMP/both.jsonl"
+has '^Allowance, all subscription pools: 7 runs metered' "with both pools a total of runs comes first"
+has 'points are per pool, and are not added across pools' "and says points are not added across pools"
+has '^  Codex (subscription:openai)  *4  *3  *1  *0$' "the Codex line of it: runs, attributed, in a batch, unknown"
+has '^  Claude (subscription:anthropic)  *3  *2  *1  *0$' "and the Claude line"
+has '^Codex allowance (subscription:openai), read ' "each pool keeps its own block"
+has '^Claude allowance (subscription:anthropic), read ' "so does Claude"
+has '^  coder  *2  *+3.5  *+0.5  *0$' "Codex points are not mixed with Claude's"
+assert_eq "the total is one section, ahead of both blocks" "$(grep '^Allowance, all\|^Codex allowance\|^Claude allowance' "$OUT" | cut -c1-9 | tr '\n' ' ')" "Allowance Codex all Claude al "
+run --file "$TMP/both.jsonl" --by role
+lacks 'allowance' "--by role leaves the allowance out"
+jq -c 'select(.record == "allowance" and .pool == "subscription:anthropic") | .weekly_by_model.state = "unknown" | .weekly_by_model.reason = "the weekly window is unknown" | .credits.state = "unknown" | .credits.reason = "extra usage is not enabled"' "$CL" > "$TMP/claude-unknown.jsonl"
+run --file "$TMP/claude-unknown.jsonl"
+has '^  per model  *unknown (the weekly window is unknown)' "a per-model figure that is unknown says so"
+has '^  credits  *unknown (extra usage is not enabled)' "so do the credits"
+
 section "5h · A run on another model than the one asked for"
 cp "$AL" "$TMP/mismatch.jsonl"
 mismatch() { jq -nc --arg req "$1" --arg ans "$2" '{ record: "model_mismatch", ts: "2026-11-04T05:31:00Z", role: "coder", task: "0001", event: "0001/worker-coder", harness: "codex", requested: $req, answered: $ans }'; }
