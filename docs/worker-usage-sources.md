@@ -136,8 +136,9 @@ tried.
 - **Not in the session file.** `~/.claude/projects/**/*.jsonl` holds no rate-limit fields, so unlike
   Codex the figures cannot be read after the fact. A reader has to be the status line command (or sit
   behind it) and write them somewhere.
-- **Only for sessions with a status line.** `claude -p` was not tried; a headless run probably has no
-  status line.
+- **Only for sessions with a status line.** Checked on 2026-11-06 (Claude Code 2.1.318): `claude -p`
+  with a `statusLine` in `--settings` exits 0 but never runs the command, so a headless dispatch or
+  worker produces no payload. Only an interactive session does.
 
 ### Source 2: `GET https://api.anthropic.com/api/oauth/usage`
 
@@ -205,10 +206,13 @@ a 401 or a changed shape.
 capture's real figures as `tests/claude-usage/endpoint.json`. The status line payload was left out of
 #147: it needs a status line command that saves it, and the endpoint already covers all four windows.
 **#155 added it** as the second source (`scripts/claude-statusline-save.sh` saves it, `claude-usage.sh`
-reads it, five-hour and weekly only), tested on fixtures made from the capture's payload shape. Still
-unverified: whether its whole-point percentage lags or rounds down against the endpoint (19 against
-20.0 at one moment), whether `claude -p` has a status line payload at all, and the gateway
-`spend_limit`, never seen. What the reader settled, and what it assumed:
+reads it, five-hour and weekly only), tested on fixtures made from the capture's payload shape and, on 2026-11-06, in a real interactive
+session: the wrapper saved the payload (keys `rate_limits` and `taken_at`, mode 600) and the reader
+gave 0 % and 22 %, the same as the endpoint a moment later. `claude -p` runs no status line command, so
+this source never covers a headless dispatch. Still unverified: whether the payload's whole-point
+percentage lags or rounds down against the endpoint (19 against 20.0 in the first capture; equal in
+the second, but that endpoint value was a whole number), and the gateway `spend_limit`, never seen.
+What the reader settled, and what it assumed:
 
 - **Token handling.** The reader skips an expired token, does not refresh it, and on a 401 falls back to
   the cached copy; the token goes to curl on stdin only. A real call returned 200 with the figures

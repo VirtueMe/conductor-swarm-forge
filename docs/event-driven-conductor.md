@@ -899,7 +899,8 @@ the Codex reader: `snapshot_at`, `source`, `age_seconds`, `checked_version`, `no
   `"statusLine": {"type": "command", "command": "/path/to/scripts/claude-statusline-save.sh"}`. Reading it
   gives `five_hour` and `weekly` only; per model and credits are unknown from it, with a reason, and a
   window that has reset since it was saved is unknown; with every window reset it knows nothing, and the cached copy is used instead. It needs no token and no network, so it covers a
-  machine with no OAuth login. `age_seconds` says how old it is. Its percentages are whole points, so
+  machine with no OAuth login. Only an interactive session runs a status line command: `claude -p`
+  (a dispatch or a worker) does not, so it saves nothing. `age_seconds` says how old it is. Its percentages are whole points, so
   `allowance.sh` does not take a before/after difference from it (that needs two endpoint readings).
 - **Unknown is never zero.** A window that is missing, has no `utilization` or `resets_at`, is outside
   0 to 100, or has reset since the reading (the cached copy's usual case) is unknown with a reason.
