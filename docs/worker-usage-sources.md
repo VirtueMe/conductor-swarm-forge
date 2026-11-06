@@ -202,9 +202,13 @@ version it was checked on, tolerate unknown keys, and report "unavailable" rathe
 a 401 or a changed shape.
 
 **Built in #147** as `scripts/claude-usage.sh` (the endpoint, then the cached copy), with the
-capture's real figures as `tests/claude-usage/endpoint.json`. The status line payload was left out: it
-needs a status line command that saves it, and the endpoint already covers all four windows. What the
-reader settled, and what it assumed:
+capture's real figures as `tests/claude-usage/endpoint.json`. The status line payload was left out of
+#147: it needs a status line command that saves it, and the endpoint already covers all four windows.
+**#155 added it** as the second source (`scripts/claude-statusline-save.sh` saves it, `claude-usage.sh`
+reads it, five-hour and weekly only), tested on fixtures made from the capture's payload shape. Still
+unverified: whether its whole-point percentage lags or rounds down against the endpoint (19 against
+20.0 at one moment), whether `claude -p` has a status line payload at all, and the gateway
+`spend_limit`, never seen. What the reader settled, and what it assumed:
 
 - **Token handling.** The reader skips an expired token, does not refresh it, and on a 401 falls back to
   the cached copy; the token goes to curl on stdin only. A real call returned 200 with the figures

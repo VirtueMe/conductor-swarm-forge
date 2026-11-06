@@ -31,6 +31,7 @@ export CODEX_USAGE_NOW=1793790000        # between the five-hour window opening 
 # Claude's own sign-in and state are the test's, never ~/.claude, and no API key is in the environment.
 export CLAUDE_CREDENTIALS_FILE="$SCRIPTS_DIR/../tests/claude-usage/credentials.json"
 export CLAUDE_JSON_FILE="$TMP/no-claude.json"
+export CLAUDE_STATUSLINE_FILE="$TMP/no-claude-statusline.json"
 export CLAUDE_USAGE_NOW=1793865600       # 2026-11-05 08:00 UTC, before the Claude windows reset (09:10, and 11-07 04:00)
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
 LOG="$CONDUCTOR_DIR/usage.jsonl"

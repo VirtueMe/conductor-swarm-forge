@@ -193,6 +193,12 @@ jobs:
       - name: test-codex-usage
         run: bash scripts/test-codex-usage.sh
 
+      - name: test-claude-usage
+        run: bash scripts/test-claude-usage.sh
+
+      - name: test-claude-statusline-save
+        run: bash scripts/test-claude-statusline-save.sh
+
       - name: test-worker-usage
         run: bash scripts/test-worker-usage.sh
 

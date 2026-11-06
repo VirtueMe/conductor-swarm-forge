@@ -14,7 +14,7 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 # Claude Code's sign-in and state are the test's own, never ~/.claude: no test reaches the usage endpoint.
-export CLAUDE_CREDENTIALS_FILE="$WORK/no-claude-login.json" CLAUDE_JSON_FILE="$WORK/no-claude.json"
+export CLAUDE_CREDENTIALS_FILE="$WORK/no-claude-login.json" CLAUDE_JSON_FILE="$WORK/no-claude.json" CLAUDE_STATUSLINE_FILE="$WORK/no-claude-statusline.json"
 
 FAILS=0
 ok()   { echo "   ✓  $1"; }
