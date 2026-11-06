@@ -16,6 +16,11 @@
       "description": "One entry per role the active topology spawns.",
       "minItems": 1,
       "items": { "$ref": "#/definitions/member" }
+    },
+    "budgets": {
+      "type": "array",
+      "description": "Optional budgets, one per pool, reported against spend (scripts/budget.sh, usage-summary.sh). Report only: nothing pauses or refuses a dispatch. A brief may lower a budget and never raise it. See docs/workforce-schema.md.",
+      "items": { "$ref": "#/definitions/budget" }
     }
   },
   "definitions": {
@@ -56,6 +61,155 @@
           "then": { "properties": { "pool": { "enum": ["api:anthropic", "api:openai", "subscription:openai"] } } }
         }
       ]
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pool"
+      ],
+      "properties": {
+        "pool": {
+          "type": "string",
+          "description": "The pool the budget is for, as in a member's pool.",
+          "enum": [
+            "api:anthropic",
+            "subscription:anthropic",
+            "api:openai",
+            "subscription:openai"
+          ]
+        },
+        "usd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Dollar budget, for an api pool."
+        },
+        "percent": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Budget in percentage points of the weekly allowance, for a subscription pool: what the runs' own lines used of it."
+        },
+        "period": {
+          "type": "string",
+          "enum": [
+            "run",
+            "week"
+          ],
+          "description": "run: everything in the usage log (the default). week: the last seven days."
+        },
+        "warn_at": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Percent of the budget at which the conductor log warns. Default 80."
+        },
+        "caps": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Narrower budgets inside the pool, for the lines of a role, adapter or model, or a combination.",
+          "items": {
+            "$ref": "#/definitions/cap"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "pool": {
+                "enum": [
+                  "api:anthropic",
+                  "api:openai"
+                ]
+              }
+            },
+            "required": [
+              "pool"
+            ]
+          },
+          "then": {
+            "required": [
+              "usd"
+            ],
+            "properties": {
+              "percent": false,
+              "caps": {
+                "items": {
+                  "required": [
+                    "usd"
+                  ],
+                  "properties": {
+                    "percent": false
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "percent"
+            ],
+            "properties": {
+              "usd": false,
+              "caps": {
+                "items": {
+                  "required": [
+                    "percent"
+                  ],
+                  "properties": {
+                    "usd": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "cap": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "required": [
+            "adapter"
+          ]
+        },
+        {
+          "required": [
+            "model"
+          ]
+        }
+      ],
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "codex",
+            "pi"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "usd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "percent": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
     },
     "params": {
       "type": "object",

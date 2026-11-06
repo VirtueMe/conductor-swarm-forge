@@ -172,6 +172,9 @@ jobs:
       - name: test-usage-summary
         run: bash scripts/test-usage-summary.sh
 
+      - name: test-budget
+        run: bash scripts/test-budget.sh
+
       - name: test-usage-price
         run: bash scripts/test-usage-price.sh
 

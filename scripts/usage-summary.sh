@@ -4,7 +4,7 @@ set -euo pipefail
 # handler, by task, by role and by model, how the harnesses compare on estimated cost, and how
 # much is not known or was spent on attempts that did not finish.
 #
-# Usage: usage-summary.sh [--file <usage.jsonl>] [--since <timestamp>] [--by <grouping>]...
+# Usage: usage-summary.sh [--file <usage.jsonl>] [--since <timestamp>] [--budgets <budgets.json>] [--by <grouping>]...
 # Env:   CONDUCTOR_DIR (default: .conductor)
 #
 # The log has one JSON line per dispatch attempt (see conductor-loop.sh; the fields are listed in
@@ -25,7 +25,7 @@ set -euo pipefail
 # within a group, and say so.
 #
 # --by picks the groupings to print, and can be repeated: harness, handler, task, role, model, pool,
-# adapters, allowance. The default is all of them. "adapters" is the cross-adapter view: every attempt
+# adapters, allowance, budget. The default is all of them. "adapters" is the cross-adapter view: every attempt
 # that has an estimate, reported cost or not, on the price table's one basis, with the number
 # of attempts that have none.
 #
@@ -41,23 +41,30 @@ set -euo pipefail
 # other line with a "record" field. A run on a model other than the one asked for is its own record
 # ("record": "model_mismatch"); the section lists them by the pair of names, with a count.
 #
+# "budget" is spent against the budgets in $CONDUCTOR_DIR/budgets.json (or --budgets), one row per pool
+# and per cap, with the state (ok, warn, over). Report only. The budget's own period decides what
+# counts (the whole log, or the last seven days), so --since does not change it; see budget.sh.
+#
 # --since takes a UTC timestamp as written in the log (2026-11-01T12:00:00Z), or a prefix of one
 # (2026-11-01).
 
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 FILE="${CONDUCTOR_DIR:-.conductor}/usage.jsonl"
 SINCE=""
 BY=""
+BUDGETS="${CONDUCTOR_DIR:-.conductor}/budgets.json"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --file)  FILE="${2:?--file needs a path}";  shift 2 ;;
     --since) SINCE="${2:?--since needs a timestamp}"; shift 2 ;;
+    --budgets) BUDGETS="${2:?--budgets needs a path}"; shift 2 ;;
     --by)
       case "${2:-}" in
-        harness|handler|task|role|model|pool|adapters|allowance) BY="$BY${BY:+,}$2"; shift 2 ;;
-        *) echo "usage-summary.sh: --by takes harness, handler, task, role, model, pool, adapters or allowance" >&2; exit 1 ;;
+        harness|handler|task|role|model|pool|adapters|allowance|budget) BY="$BY${BY:+,}$2"; shift 2 ;;
+        *) echo "usage-summary.sh: --by takes harness, handler, task, role, model, pool, adapters, allowance or budget" >&2; exit 1 ;;
       esac ;;
     -h|--help) sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "Usage: usage-summary.sh [--file <usage.jsonl>] [--since <timestamp>] [--by <grouping>]..." >&2; exit 1 ;;
+    *) echo "Usage: usage-summary.sh [--file <usage.jsonl>] [--since <timestamp>] [--budgets <budgets.json>] [--by <grouping>]..." >&2; exit 1 ;;
   esac
 done
 
@@ -308,3 +315,17 @@ jq -R 'fromjson? // empty' "$FILE" \
         printf "\nDollars in a harness, handler, task, role or model group can span api and subscription lines, so they are not comparable with each other; --by pool keeps them apart.\n"
       print "\nThe known cost is a floor: attempts with unknown cost are not in it, and estimated cost is shown apart from reported."
     }'
+
+# Spent against budget, from the budgets in effect (budget.sh). Report only.
+if [[ -s "$BUDGETS" && ( -z "$BY" || ",$BY," == *,budget,* ) ]]; then
+  "$SCRIPTS_DIR/budget.sh" status --file "$FILE" --budgets "$BUDGETS" \
+    | jq -r '.[] | [.pool, .scope, .period, .unit, .spent, .budget, .percent, .state, .unmeasured] | @tsv' \
+    | awk -F'\t' '
+      NR == 1 { printf "\nBudgets (spent against budget; report only. Spent is a floor: a line with no cost, or no allowance points, is counted below and not in it)\n" }
+      {
+        usd = ($4 == "usd")
+        amount = usd ? sprintf("$%.2f of $%.2f", $5, $6) : sprintf("%s%% of %s%%", $5, $6)
+        name = ($2 == "pool") ? $1 : "  " $2
+        printf "  %-34s %-5s %-22s %5.0f%%  %s%s\n", name, $3, amount, $7, $8, ($9 > 0 ? "  [" $9 " with no " (usd ? "cost" : "points") "]" : "")
+      }'
+fi

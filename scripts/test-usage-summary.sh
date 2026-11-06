@@ -355,7 +355,30 @@ lacks '^Known cost by billing' "a log with no pool information keeps the old hea
 has '^Known cost: ' "the old headline"
 lacks '^By pool' "and no pool section, there is nothing to show"
 
-section "6 · Arguments"
+section "6 · Budgets, spent against budget"
+BL="$TMP/budget-usage.jsonl"
+{
+  jq -nc '{ts:"2026-11-06T09:00:00Z",event:"e",role:"coder",harness:"claude-code",model:"m",pool:"api:anthropic",billing:"api",cost_usd:6.0,outcome:"finished"}'
+  jq -nc '{ts:"2026-11-06T09:30:00Z",event:"e",role:"reviewer",harness:"claude-code",model:"m",pool:"api:anthropic",billing:"api",cost_usd:null,estimated_cost_usd:null,outcome:"finished"}'
+  jq -nc '{ts:"2026-11-06T10:00:00Z",event:"e",role:"coder",harness:"claude-code",model:"m",pool:"subscription:anthropic",billing:"subscription",cost_usd:1.0,allowance:{pool:"subscription:anthropic",weekly:{points:12}},outcome:"finished"}'
+} > "$BL"
+BB="$TMP/budgets.json"
+printf '[{"pool":"api:anthropic","usd":10,"period":"run","caps":[{"role":"coder","usd":5}]},{"pool":"subscription:anthropic","percent":40,"period":"week"}]\n' > "$BB"
+run --file "$BL" --budgets "$BB" --by budget
+has '^Budgets ' "a budgets section"
+has 'api:anthropic  *run  *\$6.00 of \$10.00  *60%  *ok' "the dollar pool: spent of budget, percent, state"
+has '  role=coder  *run  *\$6.00 of \$5.00  *120%  *over' "a cap under its pool, over"
+has 'subscription:anthropic  *week  *12% of 40%  *30%  *ok' "the subscription pool is in allowance percent"
+has '1 with no cost' "lines with no cost are counted, not called free"
+lacks '^By ' "--by budget shows nothing else"
+run --file "$BL"
+lacks '^Budgets ' "no budgets file: no section"
+export CONDUCTOR_DIR="$TMP/cd"; mkdir -p "$CONDUCTOR_DIR"; cp "$BB" "$CONDUCTOR_DIR/budgets.json"
+run --file "$BL"
+has '^Budgets ' "the conductor dir's budgets.json is found, and shown with everything else"
+unset CONDUCTOR_DIR
+
+section "7 · Arguments"
 run --bogus
 assert_eq "an unknown flag: exit 1" "$RC" "1"
 run --help

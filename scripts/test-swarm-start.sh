@@ -299,6 +299,16 @@ start --env ANTHROPIC_API_KEY=sk-test-not-real --
 assert_eq "on an API key it starts" "$RC" "0"
 assert_eq "and takes no reading of an allowance that does not apply" "$(jq -r 'select(.record == "allowance") | 1' "$TARGET/.conductor/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
 
+section "15 · Budgets: the workforce's, tightened by the brief, reach the conductor dir"
+jq '.budgets = [{"pool":"api:anthropic","usd":50,"period":"week"},{"pool":"subscription:anthropic","percent":40}]' "$ROOT_DIR/workforces/default.json" > "$FAKE/workforces/budgeted.json"
+printf -- '---\nbudget:\n  - api:anthropic 20\n  - subscription:anthropic 90\n---\n# Brief\n' > "$TMP/budget-brief.md"
+start --tool "$FAKE" -- --workforce budgeted
+assert_eq "a workforce with budgets and no brief: the budgets as declared" "$(jq -r 'map(.pool + "=" + ((.usd // .percent) | tostring)) | join(" ")' "$TARGET/.conductor/budgets.json")" "api:anthropic=50 subscription:anthropic=40"
+start --tool "$FAKE" -- --workforce budgeted --brief "$TMP/budget-brief.md"
+assert_eq "a brief lowers one and cannot raise the other" "$(jq -r 'map(.pool + "=" + ((.usd // .percent) | tostring)) | join(" ")' "$TARGET/.conductor/budgets.json")" "api:anthropic=20 subscription:anthropic=40"
+start --
+assert_eq "a workforce with no budgets leaves no budgets file" "$([[ -e "$TARGET/.conductor/budgets.json" ]] && echo yes || echo no)" "no"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

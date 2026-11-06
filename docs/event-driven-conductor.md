@@ -727,7 +727,7 @@ one pool while the sign-in said another. The groupings by harness, handler, task
 span billing within a group, and the summary says so; `--by pool` keeps them apart.
 
 `--by` limits the output to the groupings named (`harness`, `handler`, `task`, `role`, `model`, `pool`,
-`adapters` for the cross-harness view), and can be repeated. With none, all are printed. Before
+`adapters` for the cross-harness view, `allowance`, `budget`), and can be repeated. With none, all are printed. Before
 #134 the summary counted an attempt as unknown whenever `cost_usd` was null, which put every
 Codex attempt there even when the table could price it.
 
@@ -736,6 +736,40 @@ handler $0.07 to $0.11, a reconcile $0.09 to $0.19 (it runs on every start with 
 board), Pi about $0.08; Codex reports tokens only. One real loop start on a two-card board, a
 reconcile and one handler, logged $0.23 in total. The log exists so that these numbers come from
 a real swarm instead of from test runs.
+
+### Budgets
+
+A budget is a number a pool is measured against, so that "what did it cost" reads as "how much of what I
+allowed". It is **report only**: nothing pauses a run or refuses a dispatch (enforcement stays out of
+scope, see #111).
+
+- **Declared in the workforce** (`budgets`, see [workforce-schema.md](workforce-schema.md#budgets)): per
+  pool, with an optional cap per role, adapter or model inside it. The unit follows the pool: `usd` for an
+  `api:` pool, `percent` for a `subscription:` pool. `period` is `run` (everything in the usage log, the
+  default) or `week` (the last seven days).
+- **A brief can tighten, never raise.** Its frontmatter lists `budget:` entries as `<pool> <amount>`.
+  `swarm-start.sh` merges them with the workforce's (`scripts/budget.sh merge`) into
+  `$CONDUCTOR_DIR/budgets.json`, the budgets in effect. A brief entry that is higher than the workforce's,
+  or for a pool the workforce has no budget for, is ignored and said on stderr: the workforce is the ceiling.
+  A brief that requires an adapter does not exist yet (a brief is free text), so there is nothing that
+  names a pool that way.
+- **What counts as spent.** On an api pool, the cost of the pool's lines (reported, else estimated). On a
+  subscription pool, the weekly points that the lines' own `allowance` carries: what the swarm's runs
+  used, not what the account used. Both are floors. A line with no cost, or with no points (runs overlapped, a
+  reading was unknown), is counted as `unmeasured` and never as free. Five-hour points are not budgeted:
+  that window resets many times in a run. A line whose pool is `unknown` (no declaration, no sign-in) is in
+  no budget: it is in the totals, and `--by pool` shows it.
+- **Where it shows.** `usage-summary.sh` prints **Budgets**: one row per pool and per cap, with spent, budget,
+  percent and state. After each dispatch the loop runs `budget.sh warn`, which writes a line to
+  `conductor.log` for a budget at its `warn_at` percent (default 80) or over (100), once: it appends
+  `{"record": "budget_warning", "pool", "scope", "state", ...}` to the usage log, and does not warn again
+  for the same pool, scope and state in the same period. The log is the memory; a `warn` and later an
+  `over` are two warnings. Workers write their lines outside the loop, so a worker's spend is counted in
+  the next dispatch's check, not at the moment it is written.
+
+Open: a budget in notional dollars on a subscription (the user would calibrate it) is not offered. The
+Claude allowance is readable now (#147, #155), so percent is the unit, and a dollar figure for a plan
+would be a number nothing checks.
 
 ### Worker usage
 

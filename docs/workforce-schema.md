@@ -73,6 +73,28 @@ The schema rejects a pool that does not belong to the adapter's vendor
 (`claude-code` on `api:openai`) and `pi` on `subscription:anthropic`. `unknown` is not declared; it is what is left when
 nothing is known.
 
+## Budgets
+
+`budgets` (top level, optional) sets what a pool is measured against. It reports and does nothing else:
+no run is paused and no dispatch refused. The behaviour, and how a brief tightens it, is in
+[event-driven-conductor.md](event-driven-conductor.md#budgets).
+
+```json
+"budgets": [
+  { "pool": "api:anthropic", "usd": 50, "period": "week", "warn_at": 80,
+    "caps": [ { "role": "coder", "usd": 20 } ] },
+  { "pool": "subscription:anthropic", "percent": 40, "period": "week" }
+]
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `pool` | enum | yes | One of the four pools. |
+| `usd` / `percent` | number > 0 | one of them | The unit follows the pool: `usd` on `api:*`, `percent` (of the weekly allowance, what the runs' own lines used) on `subscription:*`. The schema rejects the wrong one. |
+| `period` | `run` · `week` | no | `run` (the default): everything in the usage log. `week`: the last seven days. |
+| `warn_at` | number 1–100 | no | Percent of the budget at which the conductor log warns. Default 80. |
+| `caps` | object[] | no | Narrower budgets inside the pool. Each names a `role`, an `adapter`, a `model`, or a combination, and an amount in the pool's unit. |
+
 ## Params
 
 `params` is a tuning bag the **adapter** translates into its own CLI flags. Only

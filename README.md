@@ -227,6 +227,16 @@ complete worked example. Good briefs state the goal, key constraints
 (e.g. "terminal-only, pure functions"), and acceptance criteria the reviewer can
 check against.
 
+A brief may start with frontmatter that tightens a budget the workforce declares (it can lower an
+amount, never raise it; see [Budgets](docs/event-driven-conductor.md#budgets)):
+
+```markdown
+---
+budget:
+  - api:anthropic 20
+---
+```
+
 You can also skip the brief and create tasks by hand:
 
 ```bash
