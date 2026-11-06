@@ -60,6 +60,8 @@ It is optional. `scripts/billing-mode.sh pool <adapter> --declared <pool>` settl
   declaration always stands.
 - With neither, the pool is `unknown`. Doubt never stops a run, and nothing is compared
   against a budget for an `unknown` pool.
+- Only `codex` and `claude-code` are measured against a subscription allowance
+  (`scripts/allowance.sh vendor <adapter>`). A `pi` member's usage is not, whatever pool it declares.
 
 The schema rejects a pool that does not belong to the adapter's vendor
 (`claude-code` on `api:openai`). `unknown` is not declared; it is what is left when

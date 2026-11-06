@@ -802,6 +802,8 @@ a record of its own, `{"record": "allowance", "pool": "subscription:openai", "mo
 followed by the reading. A line with no `record` field is an attempt, as before; `usage-summary.sh`
 and `usage-price.sh` leave the records out of the attempts. A reading is taken when the swarm starts
 (`swarm-start.sh`, if the workforce has a member on the `codex` adapter) and around every Codex run.
+`allowance.sh` takes a `--vendor codex|claude`; Claude Code is the second vendor, see
+[Claude allowance](#claude-allowance).
 
 **What a run used.** When a Codex run starts (a dispatch by the loop, or a worker spawned by
 `worker-spawn.sh`) `allowance.sh begin` takes a reading, and when it ends `allowance.sh end` takes
@@ -831,10 +833,13 @@ between events in the same window.
   sessions, so they are measured. The reading records still show the pool's movement over any period.
   `scripts/codex-allowance-run.sh` runs real Codex without `--ephemeral` to check the readers.
 
-`usage-summary.sh` shows the pool in its own "Codex allowance" section, apart from tokens and dollars,
-because it is a percentage of a window and not a cost: the latest reading of each window with when
-it resets and where it stood at the first reading in the same window, and the points that runs used,
-by role, with the runs that could not be attributed counted. `--by allowance` shows only that.
+`usage-summary.sh` shows each subscription pool in its own allowance section ("Codex allowance",
+"Claude allowance"), apart from tokens and dollars, because it is a percentage of a window and not a
+cost: the latest reading of each window with when it resets and where it stood at the first reading
+in the same window, and the points that runs used, by role, with the runs that could not be
+attributed counted. With more than one pool a total of runs comes first (attributed, in a batch,
+unknown): a count, because points of different pools are not the same budget and are never added.
+`--by allowance` shows only that.
 
 **Codex on a subscription or on an API key.** The allowance above only means something if Codex is
 signed in with a ChatGPT account. On an API key its work is billed per token instead, outside what
@@ -864,6 +869,60 @@ The names are compared as they are, so an alias that Codex reports under another
 both names in the record for a person to judge; a run with no model asked for is never a mismatch.
 The session is found by directory and time (for a worker its worktree, for a dispatch the project root), so a Codex session a person runs by hand in the same directory during a run can be read as its answer. `usage-summary.sh` lists the pairs, counted, in its Codex section. Any line with a `record` field is a
 record about the log and not an attempt, and the summary and `usage-price.sh` leave it out.
+
+### Claude allowance
+
+Claude Code on a Claude subscription is limited the same way: a five-hour window, a week, a week per
+model class, and usage credits (dollars drawn once a plan window is used up). The spike behind it,
+with the capture and what was and was not tested, is `docs/worker-usage-sources.md`, "The Claude Code
+allowance". None of it is a documented interface; it was checked on Claude Code 2.1.318.
+
+`scripts/claude-usage.sh [--now EPOCH] [--text]` reads it and prints one JSON object in the shape of
+the Codex reader: `snapshot_at`, `source`, `age_seconds`, `checked_version`, `note`, then `five_hour` and
+`weekly` (a `state`, `used_percent`, `opened_at`, `resets_at`, `reason`), `weekly_by_model`
+(`{state, reason, models: [{model, used_percent, resets_at, resets_at_source}]}`) and `credits`
+(`{state, reason, currency, used, limit}`, dollars).
+
+- **Two sources, the first that answers wins, never mixed.** First `GET /api/oauth/usage` with the
+  OAuth token from `~/.claude/.credentials.json`: not a model call, so it costs no tokens and does not
+  move the allowance, and it is read live. Failing that, `cachedUsageUtilization` in `~/.claude.json`:
+  the same shape, no token and no network, but a copy from whenever Claude Code last fetched, with its
+  age in `age_seconds`. `note` says why the endpoint was not used (no login, an expired token, a 401,
+  unreachable, a shape it does not know).
+- **The status line payload is not read.** It carries only `five_hour` and `weekly`, and only for a
+  session with a status line command that saves it. Left for a follow-up.
+- **Unknown is never zero.** A window that is missing, has no `utilization` or `resets_at`, is outside
+  0 to 100, or has reset since the reading (the cached copy's usual case) is unknown with a reason.
+  With no usable source every figure is unknown and the exit status is still 0.
+- **The token never leaves curl's stdin.** It is not on a command line, in the output or in any log,
+  and a token with a quote or a control character is refused. An expired token is not sent, and the
+  reader does not refresh it: Claude Code does that when it runs.
+- **Credits** are read from `spend.*.amount_minor` (minor units, converted to dollars), because the unit
+  of `extra_usage.used_credits` is not documented. Whether credits are drawn only once a window is full
+  is untested.
+- **A model's reset time is the week's**, because the endpoint gives a model's percentage but no reset of
+  its own. `resets_at_source: "weekly"` says it is an assumption, not a reading.
+
+`allowance.sh begin/end --vendor claude` works as for Codex, with the pool `subscription:anthropic`.
+`end` puts `five_hour` and `weekly` (points), `weekly_by_model` (`{reason, models: [{model, points,
+reason}]}`) and `credits` (`{dollars, reason}`) on the run's usage line. Differences:
+
+- **A difference needs two endpoint readings.** The cached copy can be days old, so a run is never
+  measured against it; its difference is null with the reason. An unchanged endpoint is a real
+  measured 0, since the endpoint is read live and not only when Claude Code writes something.
+- **Overlap is judged within a vendor.** A Codex run and a Claude run draw on different pools and never
+  mark each other; two Claude runs at once do.
+- **Which adapters are measured** is `allowance.sh vendor <adapter>`: `codex` and `claude-code`. `pi` has
+  no allowance of its own to measure, and it is not metered. A Claude Code dispatch or worker is measured
+  by `conductor-loop.sh` and `worker-usage.sh` like a Codex one, and `swarm-start.sh` takes a reading at
+  start for each vendor the workforce uses. On an API key (`billing-mode.sh detect claude-code` says
+  `api`) there is no allowance to measure and nothing is read.
+
+**What a difference is.** The window belongs to the account, not to the swarm: `seven_day_breakdown`
+shows chats and cowork counting against the same week. So a run's points are the account's rise during
+that run. Overlap is only detected between the swarm's own runs; a person using Claude by hand while a
+run is live moves the window too, and the swarm cannot see it. The numbers mean something added up
+over several runs, and a run under one point does not show.
 
 ## Startup reconcile
 
