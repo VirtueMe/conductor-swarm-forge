@@ -228,8 +228,10 @@ What the reader settled, and what it assumed:
 - **A run's difference needs two endpoint readings**, never the cached copy.
 - **Pi is not metered.** `pi` runs on whatever provider its model needs and has no allowance of its
   own to read; a Pi run that spent a Claude or ChatGPT subscription would move the account's window
-  unseen. Whether Pi may declare a `subscription:*` pool at all (a third-party harness using a
-  subscription login may not be allowed) is a separate question for the workforce schema.
+  unseen. Settled in #156: Pi may not declare `subscription:anthropic` (Anthropic does not permit a
+  subscription login in a third-party harness) and the schema rejects it. `subscription:openai` is
+  allowed (OpenAI lists Pi for ChatGPT plan usage), so a Pi run on a ChatGPT plan still moves the
+  account's window unseen; metering it is a separate piece of work.
 - **The window is the account's.** A person using Claude by hand moves it during a run too.
 
 ## Findings that change the price table

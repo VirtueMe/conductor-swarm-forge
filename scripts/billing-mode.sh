@@ -26,7 +26,9 @@ set -euo pipefail
 #         detected mode wins over it, and when they disagree a "mismatch" note goes to stderr (exit
 #         stays 0). When nothing is detected the declaration stands; with neither the pool is
 #         unknown. A declared pool must be a known one, and for claude-code or codex it must belong
-#         to that adapter's vendor, or the exit is 1. pi may declare any known pool.
+#         to that adapter's vendor, or the exit is 1. pi may declare any known pool but subscription:anthropic:
+#         Anthropic does not permit a Claude subscription login in a third-party harness (OpenAI lists pi
+#         for ChatGPT plan usage, so subscription:openai stands).
 #         With --json it prints what was decided as one object instead of a word, so a caller never
 #         has to read a sentence: {"pool", "declared", "mismatch", "rejected"}. mismatch is true when a
 #         detected mode overrode a different declared pool. rejected is true when the declared pool
@@ -91,6 +93,7 @@ pool() {
     local problem=""
     if [[ " $POOLS " != *" $declared "* ]]; then problem="unknown pool '$declared' (known: $POOLS)"
     elif [[ "$vendor" != any && "${declared#*:}" != "$vendor" ]]; then problem="pool '$declared' does not belong to $adapter, which bills to $vendor"
+    elif [[ "$adapter" == pi && "$declared" == subscription:anthropic ]]; then problem="pool '$declared' is not allowed for pi: a Claude subscription login is for Claude Code and Anthropic's own apps, not a third-party harness"
     fi
     if [[ -n "$problem" ]]; then
       [[ "$json" == true ]] || die "$problem"

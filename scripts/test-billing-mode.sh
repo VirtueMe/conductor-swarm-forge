@@ -145,6 +145,13 @@ run pool claude-code --declared subscription:anthropic
 assert_eq "a login and the same declared: no note" "$(err)" ""
 run pool pi --declared api:anthropic
 assert_eq "pi has no detection, so its declaration stands" "$(out)" "api:anthropic"
+run pool pi --declared subscription:openai
+assert_eq "pi on a ChatGPT plan is allowed (OpenAI lists pi for plan usage)" "$(out)" "subscription:openai"
+run pool pi --declared subscription:anthropic
+assert_eq "pi on a Claude subscription: exit 1 (Anthropic does not permit it)" "$RC" "1"
+case "$(err)" in *subscription:anthropic*not\ allowed*pi*) ok "and says why" ;; *) fail "reason: $(err)" ;; esac
+run pool pi --declared subscription:anthropic --json
+assert_eq "as json: rejected, set aside, exit 0, no pool guessed" "$(jq -c . "$TMP/out")" '{"pool":"unknown","declared":"subscription:anthropic","mismatch":false,"rejected":true}'
 
 section "8 · A declaration must be a known pool"
 run pool claude-code --declared bananas
