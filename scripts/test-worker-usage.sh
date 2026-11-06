@@ -14,6 +14,8 @@ FX="$SCRIPTS_DIR/../tests/worker-usage"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# Claude Code's sign-in and state are the test's own, never ~/.claude: no test reaches the usage endpoint.
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json" CLAUDE_JSON_FILE="$TMP/no-claude.json"
 
 FAILS=0
 ok()   { echo "   ✓  $1"; }
@@ -191,6 +193,36 @@ STUB_WINDOWS="coder-0041 reviewer-0042" spawn 0042 reviewer codex
 put codex <(jq -c 'if .payload.type == "token_count" then .timestamp = "2026-11-04T07:00:00.000Z" | .payload.rate_limits.primary.used_percent = 3.0 else . end' "$FX/codex/rollout.jsonl") rollout-new.jsonl > /dev/null
 STUB_WINDOWS="reviewer-0042" "$WU" read 0041
 assert_eq "two Codex workers at once: the difference belongs to the batch" "$(last '.allowance | [.attributed_to, (.five_hour.points | tostring)] | join(" ")')" "batch null"
+
+section "7f · A Claude Code worker's line carries what it used of the Claude allowance"
+# The usage endpoint is a stub curl that answers with $STUB_CLAUDE_BODY; the account uses more while the worker runs.
+cat > "$TMP/bin/curl" <<'CURL_EOF'
+#!/usr/bin/env bash
+out=""
+while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+cat > /dev/null
+[[ -z "$out" ]] || cp "$STUB_CLAUDE_BODY" "$out"
+printf '200'
+CURL_EOF
+chmod +x "$TMP/bin/curl"
+export STUB_CLAUDE_BODY="$TMP/claude-body.json" CLAUDE_USAGE_NOW=1793865600
+export CLAUDE_CREDENTIALS_FILE="$FX/../claude-usage/credentials.json"
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+reset
+cp "$FX/../claude-usage/endpoint.json" "$STUB_CLAUDE_BODY"
+spawn 0044 reviewer claude-code
+assert_eq "the spawn took the reading, in the Anthropic pool" "$(jq -r 'select(.record == "allowance") | [.pool, .moment] | join(" ")' "$LOG")" "subscription:anthropic run-begin:worker:reviewer-0044"
+put claude-code "$FX/claude-code/exited.jsonl" a.jsonl > /dev/null
+cp "$FX/../claude-usage/endpoint-extra.json" "$STUB_CLAUDE_BODY"
+STUB_WINDOWS="" "$WU" read 0044
+assert_eq "the tokens are read as before" "$(last '[.harness, .model, .usage] | map(tostring) | join(",")')" "claude-code,claude-haiku-4-5-20251001,reported"
+assert_eq "the five-hour window and the week, attributed to the run" "$(last '.allowance | [(.five_hour.points | tostring), (.weekly.points | tostring), .attributed_to] | join(" ")')" "27.5 41 run"
+assert_eq "a model, and the credits in dollars" "$(last '.allowance | [(.weekly_by_model.models[0].points | tostring), (.credits.dollars | tostring)] | join(" ")')" "12 4.25"
+assert_eq "both readings are in the log" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG" | tr '\n' ' ')" "run-begin:worker:reviewer-0044 run-end:worker:reviewer-0044 "
+assert_eq "and the run is forgotten" "$(find "$CONDUCTOR_DIR/allowance" -type f | wc -l | tr -d ' ')" "0"
+rm -f "$TMP/bin/curl"
+unset STUB_CLAUDE_BODY CLAUDE_USAGE_NOW
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json"
 
 section "7d · A Codex worker on another model than asked for"
 codex_worker() { # <task> <params-json>

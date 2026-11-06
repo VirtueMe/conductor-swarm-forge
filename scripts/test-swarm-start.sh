@@ -13,6 +13,8 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# Claude Code's sign-in and state are the test's own, never ~/.claude: no test reaches the usage endpoint.
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json" CLAUDE_JSON_FILE="$TMP/no-claude.json"
 
 FAILS=0
 ok()   { echo "   ✓  $1"; }
@@ -282,13 +284,20 @@ start --tool "$FAKE" --env "CODEX_AUTH_FILE=$TMP/auth-apikey.json" --env "CODEX_
 assert_eq "on an API key the swarm starts: its dollars are real spend, billed outside the allowance" "$RC" "0"
 assert_eq "with its session" "$([[ -n "$(new_session)" ]] && echo started || echo nothing)" "started"
 case "$(cat "$TMP/err")" in *"Not starting"*) fail "no refusal: $(cat "$TMP/err")" ;; *) ok "and nothing refuses it" ;; esac
-assert_eq "it takes no reading of an allowance that does not apply" "$(jq -r 'select(.record == "allowance") | 1' "$TARGET/.conductor/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
+assert_eq "it takes no reading of an allowance that does not apply" "$(jq -r 'select(.record == "allowance" and .pool == "subscription:openai") | 1' "$TARGET/.conductor/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
 start --tool "$FAKE" --env "CODEX_AUTH_FILE=$TMP/auth-chatgpt.json" --env "CODEX_SESSIONS_DIR=$TMP/codex-sessions" -- --workforce codex-conductor
 assert_eq "on a subscription it starts" "$RC" "0"
 assert_eq "with its session" "$([[ -n "$(new_session)" ]] && echo started || echo nothing)" "started"
-assert_eq "and takes a reading of the allowance as it starts" "$(jq -r 'select(.record == "allowance") | .moment' "$TARGET/.conductor/usage.jsonl" 2> /dev/null)" "swarm-start"
+assert_eq "and takes a reading of the allowance as it starts" "$(jq -r 'select(.record == "allowance" and .pool == "subscription:openai") | .moment' "$TARGET/.conductor/usage.jsonl" 2> /dev/null)" "swarm-start"
 start -- 
-assert_eq "a workforce with no Codex role takes no reading" "$([[ -e "$TARGET/.conductor/usage.jsonl" ]] && echo read || echo none)" "none"
+assert_eq "a workforce with no Codex role takes no Codex reading" "$(jq -r 'select(.pool == "subscription:openai") | 1' "$TARGET/.conductor/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
+
+section "14 · A workforce with a role on Claude Code takes a Claude reading at start, unless it is on an API key"
+start --
+assert_eq "the default workforce runs on Claude Code: one reading, in the Anthropic pool" "$(jq -r 'select(.record == "allowance") | [.pool, .moment] | join(" ")' "$TARGET/.conductor/usage.jsonl" 2> /dev/null)" "subscription:anthropic swarm-start"
+start --env ANTHROPIC_API_KEY=sk-test-not-real --
+assert_eq "on an API key it starts" "$RC" "0"
+assert_eq "and takes no reading of an allowance that does not apply" "$(jq -r 'select(.record == "allowance") | 1' "$TARGET/.conductor/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
