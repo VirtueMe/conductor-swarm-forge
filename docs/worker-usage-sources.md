@@ -199,8 +199,30 @@ A Claude reader in the shape of `codex-usage.sh` (windows `five_hour`, `weekly`,
 payload is the fallback for the first two when no token is available, and `cachedUsageUtilization`
 a last resort that can be days old. The reader should take the
 version it was checked on, tolerate unknown keys, and report "unavailable" rather than a guess on
-a 401 or a changed shape. Real figures from the capture are in `tests/` once the follow-up adds
-fixtures.
+a 401 or a changed shape.
+
+**Built in #147** as `scripts/claude-usage.sh` (the endpoint, then the cached copy), with the
+capture's real figures as `tests/claude-usage/endpoint.json`. The status line payload was left out: it
+needs a status line command that saves it, and the endpoint already covers all four windows. What the
+reader settled, and what it assumed:
+
+- **Token handling.** The reader skips an expired token, does not refresh it, and on a 401 falls back to
+  the cached copy; the token goes to curl on stdin only. A real call returned 200 with the figures
+  `/usage` shows.
+- **Stability.** The version checked (2.1.318) is in every reading; unknown keys are ignored and an
+  unknown shape turns figures unknown.
+- **Per-model windows.** The endpoint gives a model's percentage but no reset time of its own, so the
+  reader uses the week's and marks it `resets_at_source: "weekly"`. Only Fable showed on this plan.
+- **Credits** are read from `spend.*.amount_minor` (minor units), not `extra_usage.used_credits`, whose
+  unit is not documented.
+- **Fractions and the payload-versus-endpoint gap** stay open. The reader keeps a fraction if one
+  comes (the endpoint sent `10.0`) but one has not been seen.
+- **A run's difference needs two endpoint readings**, never the cached copy.
+- **Pi is not metered.** `pi` runs on whatever provider its model needs and has no allowance of its
+  own to read; a Pi run that spent a Claude or ChatGPT subscription would move the account's window
+  unseen. Whether Pi may declare a `subscription:*` pool at all (a third-party harness using a
+  subscription login may not be allowed) is a separate question for the workforce schema.
+- **The window is the account's.** A person using Claude by hand moves it during a run too.
 
 ## Findings that change the price table
 
@@ -251,7 +273,9 @@ exit wait, Codex needs a priced model.
 
 - The Claude allowance: what refreshes `cachedUsageUtilization`; credits being drawn once a window is full; a status line payload with a
   `spend_limit` (gateway); `claude -p` with a status line; fractional percentages; whether the payload
-  lags the endpoint or rounds down (#144).
+  lags the endpoint or rounds down (#144). Still untested after the reader (#147): a Claude Code
+  dispatch or worker run against the real account (`claude-usage.sh` was only called live once, for a
+  reading), the credits during a full window, and a plan with other per-model windows than Fable.
 - A Claude Code session that used tools, subagents (sidechains), `/compact` or `--resume`: the
   message duplication, and whether subagent usage is in the same file, are unknown.
 - A Codex or Pi kill in the middle of a turn.
