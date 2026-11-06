@@ -126,7 +126,8 @@ jq -R 'fromjson? // empty' "$FILE" \
         | (if ($rs | length) > 0 then
              (["allow_head", label_of($p), $p, ($l.snapshot_at // "-"),
                (if $p == claude_pool
-                then "from " + ($l.source // "unknown") + (if $l.source == "cache" then ", " + ((($l.age_seconds // 0) / 3600) | floor | tostring) + " h old" else "" end)
+                then "from " + ($l.source // "unknown") + (if $l.source == "cache" then ", " + ((($l.age_seconds // 0) / 3600) | floor | tostring) + " h old"
+                                           elif $l.source == "statusline" then ", " + ((($l.age_seconds // 0) / 60) | floor | tostring) + " min old" else "" end)
                 else "plan " + ($l.plan_type // "-") + ", Codex " + ($l.codex_version // "-") end)] | @tsv),
              window_rows($rs; "five_hour"; "5-hour"), window_rows($rs; "weekly"; "weekly"),
              (if $p == claude_pool then

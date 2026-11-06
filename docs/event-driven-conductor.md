@@ -883,14 +883,24 @@ the Codex reader: `snapshot_at`, `source`, `age_seconds`, `checked_version`, `no
 (`{state, reason, models: [{model, used_percent, resets_at, resets_at_source}]}`) and `credits`
 (`{state, reason, currency, used, limit}`, dollars).
 
-- **Two sources, the first that answers wins, never mixed.** First `GET /api/oauth/usage` with the
+- **Three sources, the first that answers wins, never mixed.** First `GET /api/oauth/usage` with the
   OAuth token from `~/.claude/.credentials.json`: not a model call, so it costs no tokens and does not
-  move the allowance, and it is read live. Failing that, `cachedUsageUtilization` in `~/.claude.json`:
-  the same shape, no token and no network, but a copy from whenever Claude Code last fetched, with its
-  age in `age_seconds`. `note` says why the endpoint was not used (no login, an expired token, a 401,
-  unreachable, a shape it does not know).
-- **The status line payload is not read.** It carries only `five_hour` and `weekly`, and only for a
-  session with a status line command that saves it. Left for a follow-up.
+  move the allowance, and it is read live. Failing that, the status line payload (below). Failing that,
+  `cachedUsageUtilization` in `~/.claude.json`: the same shape, no token and no network, but a copy from
+  whenever Claude Code last fetched, with its age in `age_seconds`. `note` says why the endpoint was not
+  used (no login, an expired token, a 401, unreachable, a shape it does not know).
+- **The status line payload** is the second source, `source: "statusline"`. Claude Code hands the
+  configured `statusLine` command a JSON object with `rate_limits` (`five_hour` and `seven_day`, each
+  `used_percentage` and `resets_at`), but only a command that saves it makes it readable later.
+  `scripts/claude-statusline-save.sh [your-own-status-line-command]` is that command: it keeps the last
+  non-null `rate_limits` and the time it was taken in `~/.claude/statusline-rate-limits.json`
+  (`CLAUDE_STATUSLINE_FILE`, mode 600; nothing else from the payload is copied; a null payload never
+  overwrites it), then runs your own command with the same payload on stdin. Set it as
+  `"statusLine": {"type": "command", "command": "/path/to/scripts/claude-statusline-save.sh"}`. Reading it
+  gives `five_hour` and `weekly` only; per model and credits are unknown from it, with a reason, and a
+  window that has reset since it was saved is unknown; with every window reset it knows nothing, and the cached copy is used instead. It needs no token and no network, so it covers a
+  machine with no OAuth login. `age_seconds` says how old it is. Its percentages are whole points, so
+  `allowance.sh` does not take a before/after difference from it (that needs two endpoint readings).
 - **Unknown is never zero.** A window that is missing, has no `utilization` or `resets_at`, is outside
   0 to 100, or has reset since the reading (the cached copy's usual case) is unknown with a reason.
   With no usable source every figure is unknown and the exit status is still 0.

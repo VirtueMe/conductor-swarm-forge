@@ -1,0 +1,2 @@
+{"session_id":"do-not-copy","cwd":"/secret/path","transcript_path":"/secret/t.jsonl","model":{"display_name":"Haiku"},
+ "rate_limits":{"five_hour":{"used_percentage":10,"resets_at":1793869800},"seven_day":{"used_percentage":19,"resets_at":1794024000}}}

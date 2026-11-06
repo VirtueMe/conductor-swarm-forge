@@ -6,11 +6,13 @@ set -euo pipefail
 # Usage: claude-usage.sh [--now <epoch>] [--text]
 # Env:   CLAUDE_CREDENTIALS_FILE  the OAuth login (default ~/.claude/.credentials.json)
 #        CLAUDE_JSON_FILE         Claude Code's state file (default ~/.claude.json)
+#        CLAUDE_STATUSLINE_FILE   the status line payload saved by claude-statusline-save.sh
+#                                 (default ~/.claude/statusline-rate-limits.json)
 #        CLAUDE_USAGE_URL         the usage endpoint (default https://api.anthropic.com/api/oauth/usage)
 #        CLAUDE_USAGE_NOW         the Unix time to judge staleness against, as --now (for tests)
 #
 # Prints one JSON object (--text: readable lines instead):
-#   snapshot_at, source ("endpoint", "cache" or null), age_seconds, checked_version, note
+#   snapshot_at, source ("endpoint", "statusline", "cache" or null), age_seconds, checked_version, note
 #   five_hour, weekly: { state, reason, window_minutes, used_percent, opened_at, resets_at }
 #   weekly_by_model:   { state, reason, models: [ { model, used_percent, opened_at, resets_at, resets_at_source } ] }
 #                      The endpoint gives a model's percentage but no reset time of its own, so resets_at is
@@ -23,7 +25,10 @@ set -euo pipefail
 # Where it comes from, in this order (docs/worker-usage-sources.md, "The Claude Code allowance"):
 #   1. endpoint  GET /api/oauth/usage with the OAuth token from the credentials file. Not a model
 #                call, so it costs no tokens and does not move the allowance. Fresh.
-#   2. cache     cachedUsageUtilization in ~/.claude.json: the same shape, no token, no network, but a
+#   2. statusline  the last rate_limits payload a status line command saved (claude-statusline-save.sh):
+#                five_hour and weekly only, so per model and credits are unknown from it. No token, no
+#                network; age_seconds says how old. A window that has reset since is unknown.
+#   3. cache     cachedUsageUtilization in ~/.claude.json: the same shape, no token, no network, but a
 #                copy from whenever Claude Code last fetched. age_seconds says how old; a window that
 #                has reset since is unknown, because its stored percentage no longer applies.
 # The first source that gives a usable answer wins; the other is not mixed in. When the endpoint was
@@ -31,7 +36,7 @@ set -euo pipefail
 # With no usable source every figure is unknown and the exit status is still 0: that is an answer,
 # not an error.
 #
-# Neither source is a documented interface. checked_version is the Claude Code release the shapes
+# None of the sources is a documented interface. checked_version is the Claude Code release the shapes
 # were checked on; unknown keys are ignored, and a shape that has changed turns figures unknown
 # rather than guessed. The token is read, sent to the endpoint through curl's stdin, and never
 # printed, logged or put on a command line. The credentials and state files are read for the one
@@ -42,6 +47,7 @@ set -euo pipefail
 CHECKED_VERSION="2.1.318"
 CREDENTIALS="${CLAUDE_CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
 STATE_FILE="${CLAUDE_JSON_FILE:-$HOME/.claude.json}"
+STATUSLINE_FILE="${CLAUDE_STATUSLINE_FILE:-$HOME/.claude/statusline-rate-limits.json}"
 URL="${CLAUDE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
 NOW="${CLAUDE_USAGE_NOW:-}"
 FORMAT=json
@@ -49,7 +55,8 @@ FORMAT=json
 usage() { sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # The one jq program that turns a /api/oauth/usage response (from either source) into the windows.
-# Arguments: $u the response, $source, $snap (ms), $now, $note.
+# Arguments: $u the response, $source, $snap (ms), $now, $note, $lacks (null, or {weekly_by_model, credits}:
+# why the source cannot say that figure, which makes it unknown with that reason).
 # shellcheck disable=SC2016  # a jq program: the $names are jq's, not the shell's
 READ_PROGRAM='
   def epoch: if type == "string"
@@ -98,18 +105,23 @@ READ_PROGRAM='
            else { state: "known", reason: null, currency: ($extra.currency // null),
                   used: dollars($u.spend.used.amount_minor; $places), limit: dollars($u.spend.limit.amount_minor; $places) } end) }
   end
+  | if ($lacks.weekly_by_model // null) != null
+    then .weekly_by_model = { state: "unknown", reason: $lacks.weekly_by_model, models: [] } else . end
+  | if ($lacks.credits // null) != null
+    then .credits = { state: "unknown", reason: $lacks.credits, currency: null, used: null, limit: null } else . end
   | { snapshot_at: (if $snap == null then null else ($snap / 1000 | floor | todate) end),
       source: (if $source == "" then null else $source end),
       age_seconds: (if $snap == null then null else ([$now - ($snap / 1000 | floor), 0] | max) end),
       checked_version: $ver,
       note: (if $note == "" then null else $note end) } + .'
 
-# Each source answers with one JSON object, {body, note, at}: the response (null when there is none),
-# why there is none, and when it was taken (Unix seconds, null if unknown). Nothing is shared with
-# the caller through variables, and the token is never in what is printed.
-answer() { # <body json or null> <note or ""> <taken at or "">
-  jq -nc --argjson body "$1" --arg note "$2" --arg at "$3" \
-    '{ body: $body, note: (if $note == "" then null else $note end), at: (if $at == "" then null else ($at | tonumber) end) }'
+# Each source answers with one JSON object, {body, note, at, lacks}: the response (null when there is
+# none), why there is none, when it was taken (Unix seconds, null if unknown), and which figures it
+# cannot give at all (null, or {weekly_by_model, credits} with the reason for each). Nothing is shared
+# with the caller through variables, and the token is never in what is printed.
+answer() { # <body json or null> <note or ""> <taken at or ""> [lacks json]
+  jq -nc --argjson body "$1" --arg note "$2" --arg at "$3" --argjson lacks "${4:-null}" \
+    '{ body: $body, note: (if $note == "" then null else $note end), at: (if $at == "" then null else ($at | tonumber) end), lacks: $lacks }'
 }
 
 # Tries the endpoint. <dir> is a scratch directory for the response.
@@ -153,6 +165,28 @@ read_cache() {
   answer "$(jq -c .utilization <<< "$out")" "" "$(jq -r .at <<< "$out")"
 }
 
+# The saved status line payload, turned into the endpoint's shape so the one program reads it:
+# {used_percentage, resets_at (epoch)} becomes {utilization, resets_at (ISO)}. at is when it was saved.
+# It is a source only while it still knows something: with every window it holds already reset (or
+# out of range), it gives way to the next source instead of winning with nothing.
+read_statusline() {
+  if [[ ! -r "$STATUSLINE_FILE" ]]; then answer null "" ""; return 0; fi
+  local out
+  out="$(jq -c '
+    def win: if type == "object"
+      then { utilization: .used_percentage, resets_at: (if (.resets_at | type) == "number" then (.resets_at | floor | todate) else null end) }
+      else null end;
+    def open: type == "object" and (.used_percentage | type) == "number" and .used_percentage >= 0 and .used_percentage <= 100
+              and (.resets_at | type) == "number" and .resets_at > $now;
+    select(type == "object" and (.taken_at | type) == "number" and (.rate_limits | type) == "object"
+           and ((.rate_limits.five_hour | open) or (.rate_limits.seven_day | open)))
+    | { body: { five_hour: (.rate_limits.five_hour | win), seven_day: (.rate_limits.seven_day | win) }, at: (.taken_at | floor) }' \
+    --argjson now "$NOW" "$STATUSLINE_FILE" 2> /dev/null || true)"
+  if [[ -z "$out" ]]; then answer null "" ""; return 0; fi
+  answer "$(jq -c .body <<< "$out")" "" "$(jq -r .at <<< "$out")" \
+    '{"weekly_by_model":"the status line payload has no per-model figures","credits":"the status line payload has no credits"}'
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -171,22 +205,31 @@ main() {
   # shellcheck disable=SC2064  # expanded now on purpose: $work is local and gone when the trap runs
   trap "rm -rf '$work'" EXIT
 
-  local u="null" source="" snap="null" note="" from cached
+  # The endpoint first; failing that, each fallback in order, and the first with a body wins. A fallback
+  # is "<name>|<what the note says it used>", read by read_<name>. A source that is merely absent says
+  # nothing; one that has a reason to give (a missing file, a changed shape) adds it to the note.
+  local u="null" source="" snap="null" lacks="null" note="" from ans f name using why reasons=""
   from="$(fetch_endpoint "$work")"
   if [[ "$(jq -r '.body == null' <<< "$from")" == false ]]; then
     u="$(jq -c .body <<< "$from")"; source=endpoint; snap="$(jq -r '.at * 1000' <<< "$from")"
   else
-    cached="$(read_cache)"
-    if [[ "$(jq -r '.body == null' <<< "$cached")" == false ]]; then
-      u="$(jq -c .body <<< "$cached")"; source=cache; snap="$(jq -r '.at * 1000' <<< "$cached")"
-      note="$(jq -r .note <<< "$from"); using the copy Claude Code last stored"
-    else
-      note="$(jq -r .note <<< "$from"); $(jq -r .note <<< "$cached")"
-    fi
+    for f in "statusline|using the last status line payload saved" "cache|using the copy Claude Code last stored"; do
+      name="${f%%|*}"; using="${f#*|}"
+      ans="$("read_$name")"
+      if [[ "$(jq -r '.body == null' <<< "$ans")" == false ]]; then
+        u="$(jq -c .body <<< "$ans")"; source="$name"; snap="$(jq -r '.at * 1000' <<< "$ans")"
+        lacks="$(jq -c .lacks <<< "$ans")"
+        note="$(jq -r .note <<< "$from"); $using"
+        break
+      fi
+      why="$(jq -r '.note // empty' <<< "$ans")"
+      [[ -z "$why" ]] || reasons+="; $why"
+    done
+    [[ -n "$source" ]] || note="$(jq -r .note <<< "$from")$reasons"
   fi
 
   local reading
-  reading="$(jq -nc --argjson u "$u" --arg source "$source" --argjson snap "$snap" --argjson now "$NOW" \
+  reading="$(jq -nc --argjson u "$u" --arg source "$source" --argjson snap "$snap" --argjson now "$NOW" --argjson lacks "$lacks" \
     --arg note "$note" --arg ver "$CHECKED_VERSION" "$READ_PROGRAM")"
 
   if [[ "$FORMAT" == json ]]; then
@@ -197,7 +240,8 @@ main() {
         + (if $w.state == "known" then "\($w.used_percent)% used, resets \($w.resets_at | todate)"
            else "unknown (\($w.reason))" end);
       "Claude allowance: from \(.source // "nothing"), read \(.snapshot_at // "never")"
-        + (if .source == "cache" then " (\(.age_seconds / 3600 | floor) h old)" else "" end),
+        + (if .source == "cache" then " (\(.age_seconds / 3600 | floor) h old)"
+           elif .source == "statusline" then " (\(.age_seconds / 60 | floor) min old)" else "" end),
       row("5-hour"; .five_hour),
       row("weekly"; .weekly),
       (if .weekly_by_model.state == "known"

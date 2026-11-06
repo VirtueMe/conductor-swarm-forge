@@ -53,7 +53,7 @@ read_json() {
   export STUB_BODY="$3" STUB_CODE="${4:-200}"
   RC=0
   OUT="$(PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$1" CLAUDE_JSON_FILE="$2" CLAUDE_USAGE_NOW="${5:-$NOW}" \
-    "$READER" 2> "$TMP/err")" || RC=$?
+    CLAUDE_STATUSLINE_FILE="${STATUSLINE:-$TMP/no-statusline.json}" "$READER" 2> "$TMP/err")" || RC=$?
 }
 j() { jq -r "$1" <<< "$OUT"; }
 calls() { if [[ -f "$STUB_LOG.calls" ]]; then wc -l < "$STUB_LOG.calls" | tr -d ' '; else echo 0; fi; }
@@ -164,7 +164,51 @@ RC=0; PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$F
 has 'from cache.* (17 h old)' "a cached reading says how old it is"
 has '^5-hour  *unknown' "a reset cached window reads as unknown"
 
-section "8 · Arguments"
+section "8 · The status line payload: after the endpoint, before the cached copy"
+STATUSLINE="$FX/statusline.json"
+read_json "$CRED" "$FX/claude.json" "$FX/endpoint.json" 401
+assert_eq "endpoint refused, a saved payload and a cache: the payload wins" "$(j .source)" "statusline"
+assert_eq "the note says why, and what was used" "$(j .note)" "the endpoint refused the token (401); using the last status line payload saved"
+assert_eq "the snapshot is when the payload was saved" "$(j .snapshot_at)" "2026-11-05T07:50:00Z"
+assert_eq "its age is shown" "$(j .age_seconds)" "$(( NOW - 1793865000 ))"
+assert_eq "five-hour: known, percent used" "$(j '.five_hour | [.state, .used_percent] | map(tostring) | join(" ")')" "known 10"
+assert_eq "when it resets, and so when it opened" "$(j '.five_hour | [.resets_at, .opened_at] | map(tostring) | join(" ")')" "$FIVE_RESETS $(( FIVE_RESETS - 18000 ))"
+assert_eq "weekly: known, the payload's own percent" "$(j '.weekly | [.state, .used_percent, .resets_at] | map(tostring) | join(" ")')" "known 19 $WEEK_RESETS"
+assert_eq "per model is unknown, not an empty known list" "$(j '.weekly_by_model | [.state, (.models | length)] | map(tostring) | join(" ")')" "unknown 0"
+assert_eq "and says the payload does not carry it" "$(j .weekly_by_model.reason)" "the status line payload has no per-model figures"
+assert_eq "credits are unknown too" "$(j '.credits | [.state, .reason, (.used | tostring)] | join(" / ")')" "unknown / the status line payload has no credits / null"
+read_json "$CRED" "$FX/claude.json" "$FX/endpoint.json"
+assert_eq "an endpoint that answers wins over the payload" "$(j .source)" "endpoint"
+STATUSLINE="$FX/statusline-lapsed.json"
+read_json "$CRED" "$FX/claude.json" "$FX/endpoint.json" 401
+assert_eq "a payload whose windows have all reset knows nothing: the cache gets its turn" "$(j .source)" "cache"
+assert_eq "and the cache's week is read" "$(j '.weekly | [.state, .used_percent] | map(tostring) | join(" ")')" "known 17"
+read_json "$CRED" "$NOCACHE" "$FX/endpoint.json" 401
+assert_eq "all reset and no cache: everything unknown, no source, the old reason" "$(j '[.five_hour.state, .weekly.state, (.source | tostring)] | join(" ")')" "unknown unknown null"
+STATUSLINE="$FX/statusline.json"
+STATUSLINE="$FX/statusline-reset.json"
+read_json "$CRED" "$NOCACHE" "$FX/endpoint.json" 401
+assert_eq "one window reset since it was saved: that one is unknown" "$(j '.five_hour | [.state, .reason] | join(" ")')" "unknown the window reset after the reading"
+assert_eq "the other is still read" "$(j '.weekly | [.state, .used_percent] | map(tostring) | join(" ")')" "known 19"
+STATUSLINE="$FX/statusline-empty.json"
+read_json "$CRED" "$FX/claude.json" "$FX/endpoint.json" 401
+assert_eq "a saved file with no rate_limits is not a source: the cache is used" "$(j .source)" "cache"
+assert_eq "and the note is the cache's, as before" "$(j .note)" "the endpoint refused the token (401); using the copy Claude Code last stored"
+echo '{"taken_at":' > "$TMP/broken.json"; STATUSLINE="$TMP/broken.json"
+read_json "$CRED" "$FX/claude.json" "$FX/endpoint.json" 401
+assert_eq "a broken file is not a source either" "$(j .source)" "cache"
+STATUSLINE="$TMP/missing.json"
+read_json "$CRED" "$NOCACHE" "$FX/endpoint.json" 401
+assert_eq "no file, no cache: unknown, with the old reason (the missing payload adds no noise)" "$(j .five_hour.reason)" "the endpoint refused the token (401); no cachedUsageUtilization in ~/.claude.json"
+STATUSLINE="$FX/statusline.json"
+rm -f "$STUB_LOG".*; export STUB_BODY="$FX/endpoint.json" STUB_CODE=401
+RC=0; PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$NOCACHE" CLAUDE_USAGE_NOW="$NOW" CLAUDE_STATUSLINE_FILE="$STATUSLINE" \
+  "$READER" --text > "$TMP/text" 2> /dev/null || RC=$?
+has 'from statusline.* (10 min old)' "text output says the payload's age"
+has '^per model  *unknown' "and per model reads as unknown"
+unset STATUSLINE
+
+section "9 · Arguments"
 RC=0; "$READER" --bogus > /dev/null 2>&1 || RC=$?
 assert_eq "an unknown flag: exit 1" "$RC" "1"
 RC=0; "$READER" --now abc > /dev/null 2>&1 || RC=$?
