@@ -13,6 +13,8 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# Claude Code's sign-in and state are the test's own, never ~/.claude: no test reaches the usage endpoint.
+export CLAUDE_CREDENTIALS_FILE="$WORK/no-claude-login.json" CLAUDE_JSON_FILE="$WORK/no-claude.json"
 
 FAILS=0
 ok()   { echo "   ✓  $1"; }
@@ -134,7 +136,7 @@ case "$OUT" in *"sk-test-not-real"*) fail "the key is not printed" ;; *) ok "the
 assert_eq "assigned artifact written"    "$(assigned_count 0005)" "1"
 assert_eq "window opened"                "$(window_count 0005)"   "1"
 assert_eq "a record of the worker"       "$([[ -e "$CONDUCTOR_DIR/workers/coder-0005.json" ]] && echo yes || echo no)" "yes"
-assert_eq "but no allowance run is held for it" "$(find "$CONDUCTOR_DIR/allowance" -type f -name '*.json' 2> /dev/null | wc -l | tr -d ' ')" "0"
+assert_eq "but no allowance run is held for it" "$([[ -e "$CONDUCTOR_DIR/allowance/worker_coder-0005.json" ]] && echo held || echo none)" "none"
 printf '{"auth_mode":"chatgpt","OPENAI_API_KEY":null}\n' > "$CODEX_AUTH_FILE"
 RC=0; OUT=$(spawn 0006 coder) || RC=$?
 assert_eq "on a subscription it spawns"  "$RC" "0"

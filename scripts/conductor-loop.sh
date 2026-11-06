@@ -110,7 +110,7 @@ DISPATCH_STDERR="$CONDUCTOR_DIR/dispatch-stderr.log"
 LAST_ERROR=""
 USAGE_LOG="$CONDUCTOR_DIR/usage.jsonl"
 CUR_LABEL="" CUR_ATTEMPT=0 CUR_START=0
-ALLOWANCE_RUN="" ATTEMPT_EPOCH=0   # the Codex dispatch in flight, for allowance.sh, and when it began
+ALLOWANCE_RUN="" ATTEMPT_EPOCH=0   # the subscription dispatch in flight, for allowance.sh, and when it began
 export DISPATCH_ANSWER_FILE="$CONDUCTOR_DIR/dispatch-answer.txt"
 LOG_FILE="$CONDUCTOR_DIR/conductor.log"
 HEARTBEAT="${CONDUCTOR_HEARTBEAT:-600}"
@@ -203,14 +203,16 @@ log_usage() { # <event> <attempt> <outcome> <rc> <duration_s>
     record="$(cat "$DISPATCH_USAGE_FILE")"
     usage=reported
   fi
-  # What a Codex dispatch used of the subscription allowance: the reading from before it, and now.
+  # What a subscription dispatch (Codex, Claude Code) used of its allowance: the reading from before it, and now.
   if [[ -n "$ALLOWANCE_RUN" ]]; then
     allowance="$("$SCRIPTS_DIR/allowance.sh" end "$ALLOWANCE_RUN" 2> /dev/null)" || allowance=null
     jq -e . <<< "$allowance" > /dev/null 2>&1 || allowance=null
+    # A Codex run's session says which model answered; the adapter reports the one it asked for.
+    if [[ "$(basename "$ADAPTER_FILE" .sh)" == codex ]]; then
+      requested="$(jq -r '.model // empty' <<< "$record" 2> /dev/null || true)"
+      answered="$("$SCRIPTS_DIR/worker-usage.sh" model codex "$PWD" "$ATTEMPT_EPOCH" 2> /dev/null || true)"
+    fi
     ALLOWANCE_RUN=""
-    # The adapter reports the model it asked for; the session says which one answered.
-    requested="$(jq -r '.model // empty' <<< "$record" 2> /dev/null || true)"
-    answered="$("$SCRIPTS_DIR/worker-usage.sh" model codex "$PWD" "$ATTEMPT_EPOCH" 2> /dev/null || true)"
   fi
   # What this writer knows; usage_append adds the timestamp, the estimate and cost_source.
   local line
@@ -364,10 +366,12 @@ dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "
     if [[ -n "$HANDLER_SCRIPT" ]]; then
       run_script || rc=$?
     else
-      # A Codex dispatch draws on the subscription allowance: note where it stood. log_usage reads it again.
-      if [[ "$(basename "$ADAPTER_FILE" .sh)" == codex ]]; then
+      # A Codex or Claude Code dispatch draws on a subscription allowance: note where it stood. log_usage reads it again.
+      local vendor
+      vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$(basename "$ADAPTER_FILE" .sh)" 2> /dev/null || true)"
+      if [[ -n "$vendor" ]]; then
         ALLOWANCE_RUN="dispatch-$$-$attempt"; ATTEMPT_EPOCH="$(date +%s)"
-        "$SCRIPTS_DIR/allowance.sh" begin "$ALLOWANCE_RUN" --kind dispatch --pid $$ 2> /dev/null || ALLOWANCE_RUN=""
+        "$SCRIPTS_DIR/allowance.sh" begin "$ALLOWANCE_RUN" --kind dispatch --pid $$ --vendor "$vendor" 2> /dev/null || ALLOWANCE_RUN=""
       fi
       run_dispatch "$skill_content" "$event" || rc=$?
     fi

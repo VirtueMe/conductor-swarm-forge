@@ -23,6 +23,8 @@ cleanup() {
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+# Claude Code's sign-in and state are the test's own, never ~/.claude: no test reaches the usage endpoint.
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json" CLAUDE_JSON_FILE="$TMP/no-claude.json"
 
 FAILS=0
 ok()   { echo "   ✓  $1"; }
@@ -1040,6 +1042,50 @@ assert_eq "it has no allowance, and takes no reading" "$(ufield startup '.allowa
 RC=0; CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || RC=$?
 assert_eq "another adapter is not asked about Codex" "$RC" "0"
 unset CODEX_SESSIONS_DIR CODEX_USAGE_NOW CODEX_AUTH_FILE
+
+# 47 ------------------------------------------------------------------------------
+section "47 · A Claude Code dispatch records what it used of the Claude subscription allowance"
+# The adapter is named claude-code, so the loop notes the allowance before and after each dispatch,
+# from the usage endpoint (a stub curl here). The stub plays the account using more while it runs.
+mkdir -p "$TMP/claude-adapter" "$TMP/curl-bin"; cp "$STUB" "$TMP/claude-adapter/claude-code.sh"
+cat > "$TMP/curl-bin/curl" <<'CURL_EOF'
+#!/usr/bin/env bash
+out=""
+while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+cat > /dev/null
+[[ -z "$out" ]] || cp "$STUB_CLAUDE_BODY" "$out"
+printf '200'
+CURL_EOF
+chmod +x "$TMP/curl-bin/curl"
+export STUB_CLAUDE_BODY="$TMP/claude-body.json" CLAUDE_USAGE_NOW=1793865600
+export CLAUDE_CREDENTIALS_FILE="$ROOT_DIR/tests/claude-usage/credentials.json"
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+cp "$ROOT_DIR/tests/claude-usage/endpoint.json" "$STUB_CLAUDE_BODY"   # 10 % of five hours, 20 % of the week, $0 of credits
+new_swarm
+create_task
+PATH="$TMP/curl-bin:$PATH" STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.01,"turns":1}' \
+  CONDUCTOR_ADAPTER_FILE="$TMP/claude-adapter/claude-code.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+sleep 1; signal 0001 signal complete
+cat > "$STUB_HOOK" <<HOOK_EOF
+cp "$ROOT_DIR/tests/claude-usage/endpoint-extra.json" "\$STUB_CLAUDE_BODY"
+HOOK_EOF
+cp "$ROOT_DIR/tests/claude-usage/endpoint.json" "$STUB_CLAUDE_BODY"
+PATH="$TMP/curl-bin:$PATH" STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.01,"turns":1}' \
+  CONDUCTOR_ADAPTER_FILE="$TMP/claude-adapter/claude-code.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+assert_eq "the dispatch's line carries its allowance, in the Anthropic pool" "$(ufield 0001/signal .allowance.pool)" "subscription:anthropic"
+assert_eq "five-hour points" "$(ufield 0001/signal '.allowance.five_hour.points | tostring')" "27.5"
+assert_eq "weekly points" "$(ufield 0001/signal '.allowance.weekly.points | tostring')" "41"
+assert_eq "points for a model" "$(ufield 0001/signal '.allowance.weekly_by_model.models[] | select(.model == "Fable") | .points | tostring')" "12"
+assert_eq "credits, in dollars" "$(ufield 0001/signal '.allowance.credits.dollars | tostring')" "4.25"
+assert_eq "attributed to the run" "$(ufield 0001/signal .allowance.attributed_to)" "run"
+assert_eq "readings were taken around it, as records" "$(jq -r 'select(.record == "allowance") | .pool' "$CONDUCTOR_DIR/usage.jsonl" | sort -u | tr '\n' ' ')" "subscription:anthropic "
+assert_eq "no run is left noted" "$(find "$CONDUCTOR_DIR/allowance" -type f 2> /dev/null | wc -l | tr -d ' ')" "0"
+assert_eq "the model is the adapter's, not looked up as for Codex" "$(ufield 0001/signal '[.requested_model, .answered_model] | map(tostring) | join(" ")')" "null null"
+RC=0; PATH="$TMP/curl-bin:$PATH" CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json" CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || RC=$?
+assert_eq "an adapter that is neither is not asked about any allowance" "$RC" "0"
+rm -f "$STUB_HOOK"
+unset STUB_CLAUDE_BODY CLAUDE_USAGE_NOW
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

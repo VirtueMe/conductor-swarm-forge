@@ -58,6 +58,7 @@ printf '%s' "${STUB_CURL_CODE:-200}"
 STUB
 chmod +x "$TMP/bin/curl"
 export STUB_CLAUDE_BODY="$TMP/claude-body.json"
+cp "$SCRIPTS_DIR/../tests/claude-usage/endpoint.json" "$STUB_CLAUDE_BODY"   # until a section serves its own
 export PATH="$TMP/bin:$PATH"
 
 SEQ=0
@@ -200,19 +201,25 @@ assert_eq "its difference is worked out, though its window is gone" "$(j '[.over
 section "6b · A reading at swarm start, if Codex is in the workforce"
 reset; codex_wrote 10 20
 printf '{"members":[{"role":"conductor","adapter":"claude-code"},{"role":"reviewer","adapter":"codex"}]}' > "$TMP/wf-codex.json"
-printf '{"members":[{"role":"conductor","adapter":"claude-code"},{"role":"coder","adapter":"pi"}]}' > "$TMP/wf-other.json"
+printf '{"members":[{"role":"coder","adapter":"pi"}]}' > "$TMP/wf-other.json"
 "$AL" start "$TMP/wf-other.json"
-assert_eq "no Codex member: nothing is read" "$(lines 2> /dev/null || echo 0)" "0"
+assert_eq "no Codex or Claude member: nothing is read" "$(lines 2> /dev/null || echo 0)" "0"
+"$AL" start "$TMP/wf-codex.json" --vendor codex
+assert_eq "a Codex member: one reading, taken at swarm start" "$(jq -r '[.record, .pool, .moment] | join(" ")' "$LOG")" "allowance subscription:openai swarm-start"
+reset; codex_wrote 10 20
 "$AL" start "$TMP/wf-codex.json"
-assert_eq "a Codex member: one reading, taken at swarm start" "$(jq -r '[.record, .moment] | join(" ")' "$LOG")" "allowance swarm-start"
+assert_eq "with no --vendor, a reading for each vendor the workforce uses" "$(jq -r '.pool' "$LOG" | sort | tr '\n' ' ')" "subscription:anthropic subscription:openai "
 RC=0; "$AL" start "$TMP/missing.json" || RC=$?
 assert_eq "a workforce that cannot be read is not an error" "$RC" "0"
 
 section "6c · On an API key there is no allowance to measure"
 reset; codex_wrote 10 20
 printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test-not-real"}\n' > "$CODEX_AUTH_FILE"
-"$AL" start "$TMP/wf-codex.json"
+"$AL" start "$TMP/wf-codex.json" --vendor codex
 assert_eq "start takes no reading" "$(lines 2> /dev/null || echo 0)" "0"
+"$AL" start "$TMP/wf-codex.json"
+assert_eq "with no --vendor only the Claude reading is taken: the Codex one does not apply" "$(jq -r '.pool' "$LOG" | tr '\n' ' ')" "subscription:anthropic "
+reset; codex_wrote 10 20
 "$AL" begin k1 --kind worker --window k1 > /dev/null
 assert_eq "begin holds no run" "$(files)" "0"
 end_run k1
@@ -344,6 +351,12 @@ ANTHROPIC_API_KEY=sk-test-not-real "$AL" begin k9 --kind worker --window k9 --ve
 assert_eq "begin holds no run" "$(files)" "0"
 OUT="$(ANTHROPIC_API_KEY=sk-test-not-real "$AL" end k9)"
 assert_eq "and end has nothing to match: null, with no reading" "$OUT $(lines 2> /dev/null || echo 0)" "null 0"
+
+section "6h · Which adapter draws on which allowance"
+assert_eq "codex" "$("$AL" vendor codex)" "codex"
+assert_eq "claude-code is the claude vendor" "$("$AL" vendor claude-code)" "claude"
+RC=0; OUT="$("$AL" vendor pi)" || RC=$?
+assert_eq "pi has none: nothing printed, exit 1" "$RC ${OUT:-empty}" "1 empty"
 
 section "7 · Arguments"
 RC=0; "$AL" bogus > /dev/null 2>&1 || RC=$?

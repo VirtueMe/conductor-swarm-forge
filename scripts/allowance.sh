@@ -9,14 +9,18 @@ set -euo pipefail
 #        allowance.sh begin <run> --kind dispatch --pid <pid> [--vendor <v>]
 #        allowance.sh begin <run> --kind worker --window <tmux-window> [--vendor <v>]
 #        allowance.sh end <run> [--vendor <v>]
+#        allowance.sh vendor <adapter>
 # Env:   CONDUCTOR_DIR (default: .conductor)
 #
 # reading  takes a reading with the vendor's reader (codex-usage.sh, claude-usage.sh) and appends it to
 #          $CONDUCTOR_DIR/usage.jsonl as a record: {"record": "allowance", "pool": ..., "moment": ...,
 #          "ts": ...} followed by what the reader printed. A line of any other kind has no "record"
 #          field and is an attempt.
-# start    takes a "swarm-start" reading if the workforce has a member on the vendor's adapter (codex,
-#          claude-code), and does nothing otherwise. Called by swarm-start.sh.
+# start    takes a "swarm-start" reading for each vendor whose adapter (codex, claude-code) the workforce
+#          has a member on, and for none other. With --vendor, only that vendor. Called by swarm-start.sh.
+# vendor   prints the vendor an adapter draws its allowance from (codex, claude-code -> claude) and
+#          exits 1, printing nothing, for an adapter with no subscription allowance to measure (pi).
+#          The one place that maps an adapter to a vendor, so callers do not each know the names.
 # begin    notes that a run starts: a reading, kept with the run (and its vendor) in
 #          $CONDUCTOR_DIR/allowance/.
 # end      takes a second reading, appends it, and prints the run's allowance as one JSON object for
@@ -49,6 +53,7 @@ CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 RUNS_DIR="$CONDUCTOR_DIR/allowance"
 USAGE_LOG="$CONDUCTOR_DIR/usage.jsonl"
 VENDOR=codex
+VENDORS="codex claude"
 VENDOR_FLAG=""   # the --vendor the caller gave, if any
 POOL="" READER="" ADAPTER=""   # set from the vendor by set_vendor
 TMUX_SESSION="swarm"
@@ -142,11 +147,24 @@ cmd_reading() {
 # be read the reading is taken, because a reading is what could settle it.
 on_api_key() { [[ "$("$SCRIPTS_DIR/billing-mode.sh" detect "$ADAPTER" 2> /dev/null || true)" == api ]]; }
 
-cmd_start() {
-  local workforce="${1:?Usage: allowance.sh start <workforce.json>}"
-  jq -e --arg a "$ADAPTER" '[.members[]? | .adapter] | index($a) != null' "$workforce" > /dev/null 2>&1 || return 0
+start_one() { # <workforce.json>, for the current vendor
+  jq -e --arg a "$ADAPTER" '[.members[]? | .adapter] | index($a) != null' "$1" > /dev/null 2>&1 || return 0
   ! on_api_key || return 0
   cmd_reading swarm-start > /dev/null
+}
+
+cmd_start() {
+  local workforce="${1:?Usage: allowance.sh start <workforce.json>}" v
+  if [[ -n "$VENDOR_FLAG" ]]; then start_one "$workforce"; return 0; fi
+  for v in $VENDORS; do set_vendor "$v"; start_one "$workforce"; done
+}
+
+cmd_vendor() {
+  case "${1:?Usage: allowance.sh vendor <adapter>}" in
+    codex) echo codex ;;
+    claude-code) echo claude ;;
+    *) return 1 ;;
+  esac
 }
 
 cmd_begin() {
@@ -270,8 +288,9 @@ main() {
     start)   cmd_start ${args[@]+"${args[@]}"} ;;
     begin)   cmd_begin ${args[@]+"${args[@]}"} ;;
     end)     cmd_end ${args[@]+"${args[@]}"} ;;
+    vendor)  cmd_vendor ${args[@]+"${args[@]}"} ;;
     -h|--help) sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//' ;;
-    *) echo "Usage: allowance.sh reading|start|begin|end ... [--vendor codex|claude]" >&2; exit 1 ;;
+    *) echo "Usage: allowance.sh reading|start|begin|end|vendor ... [--vendor codex|claude]" >&2; exit 1 ;;
   esac
 }
 
