@@ -56,8 +56,10 @@ accepts "codex on api:openai (the swarm no longer refuses a key)" "$(wf codex ap
 section "3 · A pool belongs to the adapter's vendor"
 rejects "claude-code on an openai pool" "$(wf claude-code api:openai)"
 rejects "codex on an anthropic pool" "$(wf codex subscription:anthropic)"
-accepts "pi may declare any known pool: api:anthropic" "$(wf pi api:anthropic)"
-accepts "pi may declare any known pool: subscription:openai" "$(wf pi subscription:openai)"
+accepts "pi may declare api:anthropic" "$(wf pi api:anthropic)"
+accepts "pi may declare api:openai" "$(wf pi api:openai)"
+accepts "pi may declare subscription:openai (OpenAI lists pi for ChatGPT plan usage)" "$(wf pi subscription:openai)"
+rejects "pi may not declare subscription:anthropic (Anthropic does not permit a Claude login in a third-party harness)" "$(wf pi subscription:anthropic)"
 
 section "4 · Only known pools"
 rejects "a pool that does not exist" "$(wf claude-code bananas)"

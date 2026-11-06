@@ -35,7 +35,7 @@
         },
         "pool": {
           "type": "string",
-          "description": "What the member's work is billed to, as <billing>:<vendor>: an API key (api) or a subscription, with anthropic or openai. Optional. A sign-in the harness leaves behind overrides it (scripts/billing-mode.sh) and a mismatch is logged; with no declaration and nothing detected the pool is unknown. claude-code takes an anthropic pool, codex an openai pool, pi any of the four (what it costs depends on its provider).",
+          "description": "What the member's work is billed to, as <billing>:<vendor>: an API key (api) or a subscription, with anthropic or openai. Optional. A sign-in the harness leaves behind overrides it (scripts/billing-mode.sh) and a mismatch is logged; with no declaration and nothing detected the pool is unknown. claude-code takes an anthropic pool, codex an openai pool, pi any of the three that a third-party harness may use: not subscription:anthropic, since Anthropic does not permit a Claude subscription login outside Claude Code and its own apps (what pi costs depends on its provider).",
           "enum": ["api:anthropic", "subscription:anthropic", "api:openai", "subscription:openai"]
         },
         "params": {
@@ -50,6 +50,10 @@
         {
           "if": { "properties": { "adapter": { "const": "codex" } }, "required": ["adapter"] },
           "then": { "properties": { "pool": { "enum": ["api:openai", "subscription:openai"] } } }
+        },
+        {
+          "if": { "properties": { "adapter": { "const": "pi" } }, "required": ["adapter"] },
+          "then": { "properties": { "pool": { "enum": ["api:anthropic", "api:openai", "subscription:openai"] } } }
         }
       ]
     },

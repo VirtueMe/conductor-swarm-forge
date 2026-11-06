@@ -38,7 +38,7 @@ Each member binds one role to an adapter and, optionally, a tuning bag:
 | `role` | string | yes | Topology role this member runs. Must match a working-stage `role` in the active topology (`conductor` and `architect` are always present). |
 | `adapter` | enum | yes | Agent backend: `claude-code` · `codex` · `pi`. Resolves to `adapters/<adapter>.sh`; `swarm-start` fails fast if the file is missing. |
 | `params` | object | no | Launch-time tuning bag (below). Omit it to run the adapter on its defaults. |
-| `pool` | enum | no | What the member's work is billed to, as `<billing>:<vendor>`: `api:anthropic` · `subscription:anthropic` · `api:openai` · `subscription:openai`. `claude-code` takes an anthropic pool, `codex` an openai pool, `pi` any of the four. See [Pool](#pool). |
+| `pool` | enum | no | What the member's work is billed to, as `<billing>:<vendor>`: `api:anthropic` · `subscription:anthropic` · `api:openai` · `subscription:openai`. `claude-code` takes an anthropic pool, `codex` an openai pool, `pi` any but `subscription:anthropic`. See [Pool](#pool). |
 
 No other member keys are allowed — in particular there is **no `agent` field**
 (it was never read; `params.model` carries the real intent).
@@ -58,13 +58,19 @@ It is optional. `scripts/billing-mode.sh pool <adapter> --declared <pool>` settl
   goes on.
 - With nothing detected, the declaration stands. `pi` has no sign-in to read, so its
   declaration always stands.
+- `pi` may not declare `subscription:anthropic`. Anthropic's legal and compliance page limits
+  OAuth login to Claude Code and its own native apps and says third-party developers may not
+  "route requests through Free, Pro, Max, or Ultra plan credentials". The schema and
+  `billing-mode.sh pool` reject it. `subscription:openai` is allowed: OpenAI's "Sign in with
+  ChatGPT" page lists Pi among the open-source apps a Plus or Pro user can let use their plan. Both
+  read 2026-11-06; neither page is dated, so recheck them if either vendor changes course.
 - With neither, the pool is `unknown`. Doubt never stops a run, and nothing is compared
   against a budget for an `unknown` pool.
 - Only `codex` and `claude-code` are measured against a subscription allowance
   (`scripts/allowance.sh vendor <adapter>`). A `pi` member's usage is not, whatever pool it declares.
 
 The schema rejects a pool that does not belong to the adapter's vendor
-(`claude-code` on `api:openai`). `unknown` is not declared; it is what is left when
+(`claude-code` on `api:openai`) and `pi` on `subscription:anthropic`. `unknown` is not declared; it is what is left when
 nothing is known.
 
 ## Params
