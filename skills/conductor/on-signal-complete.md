@@ -51,4 +51,11 @@ Triggered when a `signal-*.md` artifact with `outcome: complete` appears in `wor
    stage-start.sh $TASK_ID "$DEST"
    ```
 
-5. Run `task-list.sh` to confirm.
+5. **If the task went to `done`** (a `design` task does, with no validation, review or merge), unblock
+   the tasks that were waiting on it, as `on-merge-success.md` does for a merged task (its step 3: read
+   each `kanban/backlog/` card's `depends-on` from `tasks/<id>.md`; if every listed ID now has a card in
+   `kanban/done/`, `task-move.sh <id> ready` and `stage-start.sh <id> ready`). Without this the
+   dependents stay in backlog until the next startup reconcile. Do not check whether the project is done
+   here: a design task is usually the first of several tasks.
+
+6. Run `task-list.sh` to confirm.

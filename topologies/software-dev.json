@@ -38,7 +38,7 @@
     ],
     "signal-complete": [
       { "_order": "first-match: order is the logic. design short-circuits before the test-cmd check; test-cmd inserts validation before any type routing.",
-        "when": { "type": ["design"] },        "to": "done" },
+        "when": { "type": ["design"] },        "to": "done", "then": ["unblock-dependents"] },
       { "when": { "config": "test-cmd" },       "to": "validation" },
       { "when": { "type": ["chore", "spike"] }, "to": "@merge" },
       { "to": "review" }

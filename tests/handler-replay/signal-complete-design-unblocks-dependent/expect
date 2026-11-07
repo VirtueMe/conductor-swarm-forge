@@ -1,0 +1,4 @@
+move 0001 done
+move 0002 ready
+spawn 0002 coder
+stage 0001 done
