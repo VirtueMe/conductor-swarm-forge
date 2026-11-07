@@ -122,6 +122,7 @@ export DISPATCH_ANSWER_FILE="$CONDUCTOR_DIR/dispatch-answer.txt"
 LOG_FILE="$CONDUCTOR_DIR/conductor.log"
 HEARTBEAT="${CONDUCTOR_HEARTBEAT:-600}"
 LAST_BEAT=$SECONDS EVENTS_DONE=0
+WATCH_EVERY="${CONDUCTOR_WATCH_INTERVAL:-60}" LAST_WATCH=$SECONDS   # seconds between looks at the worker windows (0 = every pass)
 
 # Every message passes through here, and some carry text a model wrote (its last line, an adapter's
 # error) that may have come from a task or a file nobody trusts. A terminal obeys escape sequences,
@@ -516,6 +517,21 @@ check_backlog() {
   done <<< "$out"
 }
 
+# A worker window that stops to ask a person something (a permission or trust question) is in the
+# background and says nothing (#168). window-watch.sh looks at the end of each worker window and
+# prints one line per new finding; this puts it in the log. Report only, and best effort: a failing
+# look is never a halt. Every WATCH_EVERY seconds, whether events arrive or not.
+check_windows() {
+  local win msg
+  [[ "${CONDUCTOR_WINDOW_WATCH:-on}" != off ]] || return 0
+  (( SECONDS - LAST_WATCH >= WATCH_EVERY )) || return 0
+  LAST_WATCH=$SECONDS
+  while IFS=$'\t' read -r win _ _ msg; do
+    [[ -n "$win" ]] || continue
+    log "$msg"
+  done < <("$SCRIPTS_DIR/window-watch.sh" 2> /dev/null || true)
+}
+
 # The startup reconcile (skills/conductor/reconcile.md) runs first, on every start: register
 # untracked tasks, unblock ready ones, respawn a worker whose window was lost, start the entry
 # stage. It is the same skill the interactive conductor runs from startup.md, it is safe to run
@@ -552,6 +568,7 @@ reconcile
 while :; do
   if [[ -f "$FLAG" ]]; then log "shutdown requested"; break; fi
   rel=""
+  check_windows
   read -r rel < <("$SCRIPTS_DIR/artifact-ledger.sh" unprocessed) || true
   if [[ -z "$rel" ]]; then
     "$ONCE" && break

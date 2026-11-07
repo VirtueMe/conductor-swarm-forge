@@ -1061,6 +1061,31 @@ so is everything once a shutdown is requested. A card whose `depends-on` cannot 
 with a message on stderr. A failing check is logged and never halts the loop; `CONDUCTOR_BACKLOG_CHECK=off`
 turns it off. Unblocking itself stays explicit in the handlers, not in `task-move.sh`.
 
+## Windows that wait for a person
+
+A worker is an interactive window in the background. When it stops to ask something (a permission
+or trust question) nothing moves and nothing says why (#168). Every `CONDUCTOR_WATCH_INTERVAL`
+seconds (default 60) the loop runs `scripts/window-watch.sh`, which reads the end of each worker
+window (`tmux capture-pane`, windows named `<role>-<task>` with a task file) and reports, once per
+window and finding:
+
+    window coder-0001 (task 0001) is waiting for you: Do you want to proceed?
+    window coder-0002 (task 0002) has produced nothing for 20 minutes; the pane ends: ...
+
+- **waiting**: the pane ends in a numbered menu (`❯ 1. ...`, the question is the line above it) or a
+  `(y/n)` question. These are the two shapes read; any other shape is not guessed at.
+- **quiet**: no new file in `work/<task>/` for `CONDUCTOR_QUIET_AFTER` minutes (default 20, `0` = off),
+  with the last line of the pane in the message, so an unknown prompt still surfaces.
+
+A finding also leaves `human-inbox/window-<window>-<timestamp>.md` (with the `tmux select-window`
+command), colours the window red in the tmux status bar until it moves on, and sends a desktop
+notification on macOS when `config.md` has `notify-channel: push`. A window that is no longer
+flagged is forgotten, so its next stop is reported again. Report only: nothing is answered on the
+person's behalf. `CONDUCTOR_WINDOW_WATCH=off` turns it off. Not verified: that these two shapes
+cover every Claude Code prompt in every version (only the "numbered menu" shape is assumed, from
+the permission and trust dialogs), and whether Claude Code rings the terminal bell when it waits;
+the watch does not depend on either.
+
 ## Spike results
 
 The spike (#73) ran one real handler, `on-review-approved`, under each harness

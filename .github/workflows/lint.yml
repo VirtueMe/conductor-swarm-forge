@@ -154,6 +154,9 @@ jobs:
       - name: test-handler-steps
         run: bash scripts/test-handler-steps.sh
 
+      - name: test-window-watch
+        run: bash scripts/test-window-watch.sh
+
       - name: test-handler-replay
         run: bash scripts/test-handler-replay.sh
 
