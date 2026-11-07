@@ -1209,6 +1209,29 @@ card_line="$(grep -n '0002/card-' "$CONDUCTOR_DIR/conductor.log" | tail -1 | cut
 inv_line="$(grep -n 'invariant: 0002 ' "$CONDUCTOR_DIR/conductor.log" | head -1 | cut -d: -f1 || true)"
 assert_eq "a card is not reported while its own event is unhandled" "$(( inv_line > card_line ? 1 : 0 ))" "1"
 
+# 51 ------------------------------------------------------------------------------
+section "51 · A worker window that waits for a person is said once in the conductor log"
+new_swarm
+create_task
+mkdir -p "$CONDUCTOR_DIR/work/0001" "$TMP/wwbin"
+echo x > "$CONDUCTOR_DIR/work/0001/assigned.md"
+cat > "$TMP/wwbin/tmux" << 'WW'
+#!/usr/bin/env bash
+case "$1" in
+  list-windows) echo coder-0001 ;;
+  capture-pane) printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n' ;;
+esac
+WW
+chmod +x "$TMP/wwbin/tmux"
+for _ in 1 2; do
+  PATH="$TMP/wwbin:$PATH" CONDUCTOR_WATCH_INTERVAL=0 CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+done
+expect_grep 'window coder-0001 (task 0001) is waiting for you: Do you want to proceed?' "$CONDUCTOR_DIR/conductor.log" "the log names the window, the task and the question"
+assert_eq "said once over two passes" "$(grep -c 'window coder-0001' "$CONDUCTOR_DIR/conductor.log" || true)" "1"
+rm -f "$CONDUCTOR_DIR/window-watch.seen"
+PATH="$TMP/wwbin:$PATH" CONDUCTOR_WINDOW_WATCH=off CONDUCTOR_WATCH_INTERVAL=0 CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > /dev/null 2>&1 || true
+assert_eq "CONDUCTOR_WINDOW_WATCH=off says nothing more" "$(grep -c 'window coder-0001' "$CONDUCTOR_DIR/conductor.log" || true)" "1"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1
