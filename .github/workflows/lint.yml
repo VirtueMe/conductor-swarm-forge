@@ -169,6 +169,12 @@ jobs:
       - name: test-swarm-start
         run: bash scripts/test-swarm-start.sh
 
+      - name: test-claude-launch
+        run: bash scripts/test-claude-launch.sh
+
+      - name: test-trust-project
+        run: bash scripts/test-trust-project.sh
+
       - name: test-usage-summary
         run: bash scripts/test-usage-summary.sh
 

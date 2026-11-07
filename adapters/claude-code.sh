@@ -98,6 +98,39 @@ print(" ".join(shlex.quote(x) for x in out))
 EOF
 }
 
+# The permission mode an interactive window is launched in, and the project's allow list, as flags.
+#   permission_mode  a member param: auto (the default), acceptEdits, dontAsk or manual. An unattended
+#                    window must not stop to ask, so the default is auto, and a claude that has no auto
+#                    mode (an older version, or a build without it) gets acceptEdits with a note.
+#                    bypassPermissions is not offered; anything else is refused before launch.
+# The project's .claude/settings.json (swarm-start.sh writes it: the scripts, git, the test command) is
+# passed with --settings, so a window in a worktree gets the allow list without depending on whether
+# claude finds the project root's file from there. Kept apart from adapter_params_to_flags on purpose:
+# that one also feeds the headless dispatch, which has its own fixed permissions.
+# Prints the flags on one line; exits non-zero with a message on a mode that is not allowed.
+adapter_permission_flags() { # <params json> <root dir>
+  local mode flags
+  mode="$(python3 - "${1:-}" << 'PYEOF'
+import json, sys
+ALLOWED = ("auto", "acceptEdits", "dontAsk", "manual")
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+p = json.loads(raw) if raw.strip() else {}
+m = str(p.get("permission_mode") or "auto")
+if m not in ALLOWED:
+    sys.stderr.write(f"claude-code: unsupported permission_mode '{m}' (allowed: {', '.join(ALLOWED)})\n")
+    sys.exit(2)
+print(m)
+PYEOF
+)" || return 2
+  if [[ "$mode" == auto ]] && ! claude --help 2>&1 | grep -q '"auto"'; then
+    echo "claude-code: this claude has no auto permission mode; using acceptEdits" >&2
+    mode=acceptEdits
+  fi
+  flags="--permission-mode $mode"
+  [[ -f "${2:-}/.claude/settings.json" ]] && flags="$flags --settings '$2/.claude/settings.json'"
+  printf '%s\n' "$flags"
+}
+
 # Launch a claude session — creates the tmux session if it doesn't exist yet,
 # otherwise adds a new window to the existing session.
 # Arguments:
@@ -113,10 +146,11 @@ adapter_launch() {
   local root_dir="$4"
   local params_json="${5:-}"
   local briefing="$root_dir/$worktree/AGENTS.md"
-  local param_flags
-  param_flags=$(adapter_params_to_flags "$params_json")
+  local param_flags permission_flags
+  param_flags=$(adapter_params_to_flags "$params_json") || return 2
+  permission_flags=$(adapter_permission_flags "$params_json" "$root_dir") || return 2
   local cmd="cd '$root_dir/$worktree' && claude \
-    --permission-mode acceptEdits \
+    ${permission_flags} \
     ${param_flags} \
     --append-system-prompt-file '$briefing' \
     -n '$window_name' \
