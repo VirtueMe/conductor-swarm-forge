@@ -1044,6 +1044,23 @@ The reconcile is also the most mechanical part of the conductor: a loop over car
 scripts. A live run cost $0.09 to $0.19 and 8 to 11 model turns, on every start with any task on
 the board, and once repeated a step. It is the first candidate for Phase 2 (a script, no model).
 
+## The backlog check
+
+The restart used to hide a handler that forgot to unblock a dependent: the startup reconcile moved
+the waiting task on, so a missing step looked like a slow start (#165). After each event the loop
+now checks one invariant: no card sits in `backlog` while every task in its `depends-on` is in
+`done` (the `deps_done` test `unblock_ready` uses). `scripts/backlog-invariant.sh` finds such cards
+and heals each as the reconcile would, by moving it to `ready` and starting the entry stage, so an
+unattended swarm keeps going. The loop then logs it, once per task:
+
+    invariant: 0002 was in backlog but its dependencies are done (0001); moved it to ready and started it. A handler left it behind.
+
+The log line is the signal and the healing is never silent. A card whose task still has an
+unhandled event is left alone (a new task sits in backlog until its new-task handler has run), and
+so is everything once a shutdown is requested. A card whose `depends-on` cannot be read is skipped
+with a message on stderr. A failing check is logged and never halts the loop; `CONDUCTOR_BACKLOG_CHECK=off`
+turns it off. Unblocking itself stays explicit in the handlers, not in `task-move.sh`.
+
 ## Spike results
 
 The spike (#73) ran one real handler, `on-review-approved`, under each harness
