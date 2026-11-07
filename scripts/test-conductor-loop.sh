@@ -854,6 +854,33 @@ expect_grep 'no lock check' "$CONDUCTOR_DIR/conductor-loop.halted" "the script's
 assert_eq "the event is still unprocessed" "$(unprocessed | wc -l | tr -d ' ')" "1"
 assert_eq "the model was not asked to take over" "$(dispatches)" "0"
 
+section "44c2 · A script that fails with nothing to say: the log, the halt and the notices say so, and name the restart command"
+# The cause in the first real swarm run: a script died with exit 1 and wrote nothing, and the halt said only "last exit 1".
+fresh_event
+cat > "$H/on-signal-complete.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+echo try >> "$SH_LOG"
+exit 1
+SH_EOF
+chmod +x "$H/on-signal-complete.sh"; : > "$SH_LOG"
+CONDUCTOR_MAX_ATTEMPTS=2 CONDUCTOR_POLL_INTERVAL=7 run_loop
+assert_eq "exit 1" "$RC" "1"
+expect_grep 'exited 1 and wrote nothing' "$TMP/loop.err" "the log line for the failed attempt says it wrote nothing"
+expect_grep 'exited 1 and wrote nothing' "$CONDUCTOR_DIR/conductor-loop.halted" "so does the halt"
+expect_grep '^restart: cd .* && env CONDUCTOR_DIR=.*conductor-loop.sh$' "$CONDUCTOR_DIR/conductor-loop.halted" "the halt records the command that restarts the loop"
+expect_grep 'CONDUCTOR_POLL_INTERVAL=7' "$CONDUCTOR_DIR/conductor-loop.halted" "with the settings the loop was started with"
+if grep -q 'CONDUCTOR_LOOP=' "$CONDUCTOR_DIR/conductor-loop.halted"; then fail "and not the variable the loop sets itself"; else ok "and not the variable the loop sets itself"; fi
+expect_grep 'Restart it with: cd ' "$(find "$CONDUCTOR_DIR/human-inbox" -name 'loop-halt-*.md' | head -1)" "the human's notice has the command to paste"
+expect_grep 'Restart:   cd ' "$TMP/loop.out" "and so does the banner in the conductor window"
+CMD="$(awk '/^restart: /{sub(/^restart: /, ""); print; exit}' "$CONDUCTOR_DIR/conductor-loop.halted")"
+rm -f "$CONDUCTOR_DIR/conductor-loop.halted"; : > "$SH_LOG"
+cat > "$H/on-signal-complete.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+echo fixed >> "$SH_LOG"
+SH_EOF
+RC=0; ( eval "$CMD --once" ) > "$TMP/restart.out" 2> "$TMP/restart.err" || RC=$?
+assert_eq "the command, pasted as it is, restarts the loop and the waiting event goes through" "$RC $(wc -l < "$SH_LOG" | tr -d ' ')" "0 1"
+
 section "44d · A script that exits 2 halts without a retry"
 fresh_event
 cat > "$H/on-signal-complete.sh" << 'SH_EOF'

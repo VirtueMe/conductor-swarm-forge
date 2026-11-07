@@ -83,6 +83,14 @@
 # Callers use these under `set -e`; a failing step ends the handler and so is retried or
 # halted by the loop.
 
+# A handler that fails inside one of these steps used to end with an exit status and nothing else,
+# and the loop could only report "last exit 1". The ERR trap prints the command that failed, on stderr,
+# which the loop keeps as the last error. -E makes functions and subshells use it too. It fires where
+# set -e would exit, so a failure the handler handles itself (|| true, an if, &&) says nothing.
+set -E
+_handler_step_failed() { echo "${0##*/}: \"$2\" exited $1" >&2; }
+trap '_handler_step_failed "$?" "$BASH_COMMAND"' ERR
+
 # shellcheck source=scripts/frontmatter.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/frontmatter.sh"
 

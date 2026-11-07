@@ -416,6 +416,20 @@ halt or its exit status. The next start of the loop removes the notices with the
 a fixed problem leaves no old alarm. A requested shutdown (project complete) is not a halt and
 leaves none.
 
+**Restarting.** The ledger, the board and the usage log are files, so running the loop again resumes
+the swarm: the startup reconcile picks up work that is unblocked, and the event that halted the loop is
+retried first. Each notice, the banner and the halt file print the command that does it, ready to paste:
+`cd <project> && env CONDUCTOR_DIR=<dir> <the settings the loop was started with> <scripts>/conductor-loop.sh`
+(built by `scripts/restart-command.sh`, the same code that builds the window `swarm-start.sh` opens). The
+conductor window prints it too when the loop exits.
+
+**A script handler that fails without a message.** The log and the halt report the last line the script
+wrote to stderr. When a script exits non-zero and wrote nothing, they say "the handler exited N and wrote
+nothing to stderr" instead of leaving a bare status. A handler that sources `scripts/handler-steps.sh`
+(all of them do) also prints the command that failed, through an ERR trap, so the last error is usually
+the step: `on-signal-complete.sh: "stage-start.sh 0002 validation" exited 1`. A failure the handler
+handles itself (`|| true`, an `if`) prints nothing.
+
 **Known limits**
 
 - A model can ignore a failing guard script and carry on (the spike saw this). The

@@ -105,6 +105,23 @@ assert_eq "none in the architect's" "$(grep -c "$ESC" "$(architect)" || true)" "
 assert_eq "no bell in the banner" "$(printf '%s\n' "$OUT" | grep -c "$BEL" || true)" "0"
 has 'bad .*2J.*owned.* detail' "$(human)" "the readable text is kept"
 
+section "R · The notice carries a restart command that can be pasted"
+hasf() { if grep -qF -- "$1" "$2"; then ok "$3"; else fail "$3 (in $2: $(tr '\n' '|' < "$2" | cut -c1-400))"; fi; }
+new_dir
+CMD='cd /work/my\ project && env CONDUCTOR_DIR=.conductor /tools/scripts/conductor-loop.sh'
+OUT="$("$NOTIFY" --kind failed --artifact 0001/a.md --handler h --detail d --restart "$CMD")"
+for f in "$(human)" "$(architect)"; do
+  hasf "Restart it with: $CMD" "$f" "the notice in $(basename "$(dirname "$f")") has the command as it is"
+done
+printf '%s\n' "$OUT" > "$TMP/banner"
+hasf "Restart:   $CMD" "$TMP/banner" "so does the banner in the conductor window"
+new_dir
+OUT="$("$NOTIFY" --kind failed --artifact 0001/a.md --handler h --detail d)"
+has 'scripts/conductor-loop.sh' "$(human)" "without a command, the older wording stays"
+new_dir
+"$NOTIFY" --kind failed --artifact 0001/a.md --handler h --detail d --restart "$(printf 'echo hi\033[2J there')" > /dev/null
+assert_eq "an escape sequence in the command does not reach the notice" "$(grep -c "$(printf '\033')" "$(human)" || true)" "0"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1
