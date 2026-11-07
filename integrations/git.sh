@@ -13,8 +13,12 @@
 #       Ensure the task's workspace exists. Prints a single tab-separated line:
 #         <workspace>\t<branch>
 #       where <workspace> is the path the worker runs in and <branch> is the
-#       branch name (empty for integrations without branches). All VCS chatter
-#       goes to /dev/null so stdout carries only the result line. A new branch
+#       branch name (empty for integrations without branches). VCS chatter goes to
+#       /dev/null so stdout carries only the result line; a workspace that cannot be
+#       made returns 1 with git's reason on stderr. There is one workspace per task:
+#       where the task's branch is already checked out (the coder's worktree) that is
+#       the workspace for any later role, since git allows a branch in one worktree
+#       only and the validator, reviewer and merger work on the coder's output. A new branch
 #       forks from <base_branch> when it resolves to a
 #       commit, else from the current HEAD.
 #
@@ -22,9 +26,23 @@
 #       Print the resource ids currently locked by in-flight consolidations,
 #       one per line. Empty output means nothing is locked (@merge stays `free`).
 
+# The worktree, other than the main working tree, where <branch> is checked out, relative to the current
+# directory when it is under it (git reports physical paths, so the comparison is against pwd -P, which
+# is also what a symlinked project directory needs). Nothing if there is none.
+_integration_branch_worktree() { # <branch>
+  local top
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  git worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$1" -v top="$top" -v pwd="$(pwd -P)" '
+    /^worktree / { p = substr($0, 10) }
+    $1 == "branch" && $2 == b && p != top {
+      if (index(p, pwd "/") == 1) p = substr(p, length(pwd) + 2)
+      print p; exit
+    }'
+}
+
 integration_prepare_workspace() {
   local task_id="$1" worker_type="$2" title="$3" base="${4:-}"
-  local slug branch worktree
+  local slug branch worktree existing
   slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
   branch="feature/${task_id}-${slug}"
   worktree=".worktrees/${worker_type}-${task_id}"
@@ -33,9 +51,17 @@ integration_prepare_workspace() {
     base=""
   fi
 
-  if [[ ! -d "$worktree" ]]; then
+  # One workspace per task: git allows a branch in one worktree only, and a later role (validator,
+  # reviewer, merger) has to see the coder's work. So where the task's branch is already checked out,
+  # that is the workspace, whatever role asked and whatever it is called.
+  existing="$(_integration_branch_worktree "$branch")"
+  if [[ -n "$existing" ]]; then
+    worktree="$existing"
+  elif [[ ! -d "$worktree" ]]; then
+    # The first attempt fails when the branch exists, which is expected and not worth a message; the
+    # second says why when the workspace cannot be made. Only stdout is kept clean: it carries the result.
     git worktree add "$worktree" -b "$branch" ${base:+"$base"} >/dev/null 2>&1 || \
-    git worktree add "$worktree" "$branch" >/dev/null 2>&1
+      git worktree add "$worktree" "$branch" >/dev/null || return 1
   fi
 
   printf '%s\t%s\n' "$worktree" "$branch"

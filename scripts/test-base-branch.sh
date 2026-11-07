@@ -182,6 +182,62 @@ assert_file "base has second merge" "$R9/b.txt"
 assert_eq "history stays linear (no merge commits)" \
   "$(git -C "$R9" rev-list --merges main | wc -l | tr -d ' ')" "0"
 
+echo "── a later role on the same task works in the task's worktree"
+# The coder's worktree has the task's branch checked out; git refuses a second worktree on it, so the
+# validator, reviewer and merger of the task must be given the one that exists (and see the coder's work).
+R10="$WORK/roles"; new_repo "$R10"
+(
+  cd "$R10"
+  # shellcheck source=integrations/git.sh
+  source "$ROOT_DIR/integrations/git.sh"
+  IFS=$'\t' read -r WT_C BR_C < <(integration_prepare_workspace t10 coder "Add t10" main)
+  echo c > "$WT_C/c.txt"; git -C "$WT_C" add c.txt; git -C "$WT_C" commit -q -m "feat: t10"
+  : > "$WORK/roles.env"
+  for role in validator reviewer merger; do
+    RC=0; OUT="$(integration_prepare_workspace t10 "$role" "Add t10" main 2> "$WORK/roles.err")" || RC=$?
+    printf '%s\t%s\t%s\n' "$role" "$RC" "$OUT" >> "$WORK/roles.env"
+  done
+  # the coder asked again (a replayed spawn) gets its own worktree back, nothing new
+  IFS=$'\t' read -r WT_C2 BR_C2 < <(integration_prepare_workspace t10 coder "Add t10" main)
+  printf 'coder-again\t0\t%s\t%s\n' "$WT_C2" "$BR_C2" >> "$WORK/roles.env"
+  printf '%s\t%s\n' "$WT_C" "$BR_C" > "$WORK/roles.coder"
+)
+IFS=$'\t' read -r WT_C BR_C < "$WORK/roles.coder"
+for role in validator reviewer merger; do
+  LINE="$(awk -F'\t' -v r="$role" '$1 == r' "$WORK/roles.env")"
+  assert_eq "$role: succeeds" "$(cut -f2 <<< "$LINE")" "0"
+  assert_eq "$role: gets the coder's worktree and branch" "$(cut -f3,4 <<< "$LINE" | tr '\t' ' ')" "$WT_C $BR_C"
+done
+assert_eq "a replayed coder spawn gets the same worktree" "$(awk -F'\t' '$1 == "coder-again" {print $3}' "$WORK/roles.env")" "$WT_C"
+assert_eq "no second worktree was made" "$(git -C "$R10" worktree list | wc -l | tr -d ' ')" "2"
+assert_file "the validator's worktree has the coder's work" "$R10/$WT_C/c.txt"
+
+echo "── a workspace that cannot be made says why"
+R11="$WORK/refused"; new_repo "$R11"
+(
+  cd "$R11"
+  # shellcheck source=integrations/git.sh
+  source "$ROOT_DIR/integrations/git.sh"
+  git checkout -q -b feature/t11-add-t11     # the task's branch is checked out in the main working tree
+  RC=0; OUT="$(integration_prepare_workspace t11 coder "Add t11" main 2> "$WORK/refused.err")" || RC=$?
+  printf '%s\t%s\n' "$RC" "$OUT" > "$WORK/refused.res"
+)
+IFS=$'\t' read -r RC OUT < "$WORK/refused.res"
+assert_eq "it fails" "$([[ "$RC" != 0 ]] && echo failed || echo succeeded)" "failed"
+assert_eq "and prints nothing on stdout" "${OUT:-empty}" "empty"
+assert_eq "git's reason reaches stderr" "$(grep -c 'already' "$WORK/refused.err" || true)" "1"
+
+echo "── the reused worktree is relative even when the project is reached through a symlink"
+R12="$WORK/real-proj"; new_repo "$R12"; ln -s "$R12" "$WORK/link-proj"
+(
+  cd "$WORK/link-proj"
+  # shellcheck source=integrations/git.sh
+  source "$ROOT_DIR/integrations/git.sh"
+  integration_prepare_workspace t12 coder "Add t12" main > /dev/null
+  { integration_prepare_workspace t12 validator "Add t12" main; } > "$WORK/link.out"
+)
+assert_eq "git reports physical paths, the answer is still relative to where it was asked" "$(cut -f1 "$WORK/link.out")" ".worktrees/coder-t12"
+
 echo ""
 if (( FAILS > 0 )); then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "All checks passed"
