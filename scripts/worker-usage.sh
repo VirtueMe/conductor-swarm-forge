@@ -194,9 +194,9 @@ cmd_spawned() {
       pool_check: $check,
       started_at: $started, started_epoch: ($epoch | tonumber) }' > "$tmp"
   mv "$tmp" "$file"
-  # A Codex or Claude Code worker draws on a subscription allowance: take the reading its run is measured from.
+  # A Codex or Claude Code worker, or a pi worker on a ChatGPT plan, draws on a subscription allowance: take the reading its run is measured from.
   local vendor
-  vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" 2> /dev/null || true)"
+  vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" --pool "$(jq -r '.pool // empty' <<< "$check")" 2> /dev/null || true)"
   if [[ -n "$vendor" ]]; then
     "$SCRIPTS_DIR/allowance.sh" begin "worker:$role-$task" --kind worker --window "$role-$task" --vendor "$vendor" \
       || echo "worker-usage.sh: could not take the allowance reading for $role-$task" >&2
@@ -241,9 +241,9 @@ cmd_read() {
   fi
   [[ -z "$epoch" ]] || duration=$(( $(date +%s) - epoch ))
 
-  # What a Codex or Claude Code worker used of its subscription allowance, from the readings at its spawn and now.
+  # What a Codex or Claude Code worker, or a pi worker on a ChatGPT plan, used of its subscription allowance, from the readings at its spawn and now.
   local allowance=null vendor
-  vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" 2> /dev/null || true)"
+  vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" --pool "$(jq -r '.pool // empty' <<< "$pool_check")" 2> /dev/null || true)"
   if [[ -n "$vendor" ]]; then
     allowance="$("$SCRIPTS_DIR/allowance.sh" end "worker:$role-$task" 2> /dev/null)" || allowance=null
     jq -e . <<< "$allowance" > /dev/null 2>&1 || allowance=null

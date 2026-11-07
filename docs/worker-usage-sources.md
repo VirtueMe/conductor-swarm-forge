@@ -226,12 +226,17 @@ What the reader settled, and what it assumed:
 - **Fractions and the payload-versus-endpoint gap** stay open. The reader keeps a fraction if one
   comes (the endpoint sent `10.0`) but one has not been seen.
 - **A run's difference needs two endpoint readings**, never the cached copy.
-- **Pi is not metered.** `pi` runs on whatever provider its model needs and has no allowance of its
-  own to read; a Pi run that spent a Claude or ChatGPT subscription would move the account's window
-  unseen. Settled in #156: Pi may not declare `subscription:anthropic` (Anthropic does not permit a
-  subscription login in a third-party harness) and the schema rejects it. `subscription:openai` is
-  allowed (OpenAI lists Pi for ChatGPT plan usage), so a Pi run on a ChatGPT plan still moves the
-  account's window unseen; metering it is a separate piece of work.
+- **Pi is metered only on a ChatGPT plan.** `pi` runs on whatever provider its model needs and has no
+  allowance of its own to read. Settled in #156: Pi may not declare `subscription:anthropic` (Anthropic
+  does not permit a subscription login in a third-party harness) and the schema rejects it.
+  `subscription:openai` is allowed (OpenAI lists Pi for ChatGPT plan usage), and since #159 a Pi run
+  there is registered in the same window as Codex (`allowance.sh vendor pi --pool subscription:openai`).
+  The window is still read from Codex's session logs: Pi's own hold the provider, tokens and cost per
+  message, no rate limits. Read 2026-11-07 from Pi 1.4.0's logs and docs: a session log names the
+  provider and not the sign-in; `~/.pi/agent/auth.json` has a `type` per provider (`api_key` or
+  `oauth`), and Pi uses a runtime `--api-key`, then a stored `auth.json` credential, then `models.json`,
+  then the provider's environment variable. No ChatGPT-plan session was available on this machine, so
+  what such a session looks like in the log was not seen.
 - **The window is the account's.** A person using Claude by hand moves it during a run too.
 
 ## Findings that change the price table

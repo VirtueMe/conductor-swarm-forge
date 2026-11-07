@@ -9,7 +9,7 @@ set -euo pipefail
 #        allowance.sh begin <run> --kind dispatch --pid <pid> [--vendor <v>]
 #        allowance.sh begin <run> --kind worker --window <tmux-window> [--vendor <v>]
 #        allowance.sh end <run> [--vendor <v>]
-#        allowance.sh vendor <adapter>
+#        allowance.sh vendor <adapter> [--pool <pool>]
 # Env:   CONDUCTOR_DIR (default: .conductor)
 #
 # reading  takes a reading with the vendor's reader (codex-usage.sh, claude-usage.sh) and appends it to
@@ -17,10 +17,15 @@ set -euo pipefail
 #          "ts": ...} followed by what the reader printed. A line of any other kind has no "record"
 #          field and is an attempt.
 # start    takes a "swarm-start" reading for each vendor whose adapter (codex, claude-code) the workforce
-#          has a member on, and for none other. With --vendor, only that vendor. Called by swarm-start.sh.
-# vendor   prints the vendor an adapter draws its allowance from (codex, claude-code -> claude) and
-#          exits 1, printing nothing, for an adapter with no subscription allowance to measure (pi).
-#          The one place that maps an adapter to a vendor, so callers do not each know the names.
+#          has a member on, or a pi member on the vendor's subscription pool, and for none other.
+#          With --vendor, only that vendor. Called by swarm-start.sh.
+# vendor   prints the vendor whose allowance a run draws on, and exits 1, printing nothing, for a run
+#          that draws on none. The vendor follows the pool the run is billed to: codex and claude-code
+#          each have a pool of their own, so the adapter says it; pi has none, so it is the pool
+#          (--pool, as billing-mode.sh pool settled it) that says: subscription:openai is the ChatGPT
+#          plan Codex draws on (codex), anything else is a pi run with no window to measure. Pi can not
+#          use subscription:anthropic. The one place that maps a run to a vendor, so callers do not
+#          each know the names.
 # begin    notes that a run starts: a reading, kept with the run (and its vendor) in
 #          $CONDUCTOR_DIR/allowance/.
 # end      takes a second reading, appends it, and prints the run's allowance as one JSON object for
@@ -148,8 +153,12 @@ cmd_reading() {
 on_api_key() { [[ "$("$SCRIPTS_DIR/billing-mode.sh" detect "$ADAPTER" 2> /dev/null || true)" == api ]]; }
 
 start_one() { # <workforce.json>, for the current vendor
-  jq -e --arg a "$ADAPTER" '[.members[]? | .adapter] | index($a) != null' "$1" > /dev/null 2>&1 || return 0
-  ! on_api_key || return 0
+  # A pi member on this vendor's subscription pool draws on the same window as the vendor's own adapter,
+  # whatever that adapter's sign-in on this machine says: it is not what pi uses.
+  if ! jq -e --arg p "$POOL" '[.members[]? | select(.adapter == "pi" and .pool == $p)] | length > 0' "$1" > /dev/null 2>&1; then
+    jq -e --arg a "$ADAPTER" '[.members[]? | .adapter] | index($a) != null' "$1" > /dev/null 2>&1 || return 0
+    ! on_api_key || return 0
+  fi
   cmd_reading swarm-start > /dev/null
 }
 
@@ -160,9 +169,13 @@ cmd_start() {
 }
 
 cmd_vendor() {
-  case "${1:?Usage: allowance.sh vendor <adapter>}" in
+  local adapter="${1:?Usage: allowance.sh vendor <adapter> [--pool <pool>]}" pool=""
+  shift
+  if [[ "${1:-}" == --pool ]]; then pool="${2:-}"; fi
+  case "$adapter" in
     codex) echo codex ;;
     claude-code) echo claude ;;
+    pi) [[ "$pool" == subscription:openai ]] || return 1; echo codex ;;
     *) return 1 ;;
   esac
 }

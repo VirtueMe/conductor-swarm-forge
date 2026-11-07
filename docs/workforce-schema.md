@@ -66,8 +66,11 @@ It is optional. `scripts/billing-mode.sh pool <adapter> --declared <pool>` settl
   read 2026-11-06; neither page is dated, so recheck them if either vendor changes course.
 - With neither, the pool is `unknown`. Doubt never stops a run, and nothing is compared
   against a budget for an `unknown` pool.
-- Only `codex` and `claude-code` are measured against a subscription allowance
-  (`scripts/allowance.sh vendor <adapter>`). A `pi` member's usage is not, whatever pool it declares.
+- `codex` and `claude-code` are measured against a subscription allowance
+  (`scripts/allowance.sh vendor <adapter> --pool <pool>`). A `pi` member is too when its pool is
+  `subscription:openai`: it draws on the same ChatGPT plan window as Codex. Pi on an API pool is not.
+  The window itself is still read from Codex's session logs (see
+  [event-driven-conductor.md](event-driven-conductor.md#codex-allowance)).
 
 The schema rejects a pool that does not belong to the adapter's vendor
 (`claude-code` on `api:openai`) and `pi` on `subscription:anthropic`. `unknown` is not declared; it is what is left when
