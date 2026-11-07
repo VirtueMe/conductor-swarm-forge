@@ -357,7 +357,28 @@ section "6h · Which adapter draws on which allowance"
 assert_eq "codex" "$("$AL" vendor codex)" "codex"
 assert_eq "claude-code is the claude vendor" "$("$AL" vendor claude-code)" "claude"
 RC=0; OUT="$("$AL" vendor pi)" || RC=$?
-assert_eq "pi has none: nothing printed, exit 1" "$RC ${OUT:-empty}" "1 empty"
+assert_eq "pi has none of its own: nothing printed, exit 1" "$RC ${OUT:-empty}" "1 empty"
+assert_eq "pi on a ChatGPT plan draws on the same window as Codex: the vendor follows the pool" "$("$AL" vendor pi --pool subscription:openai)" "codex"
+for p in api:openai api:anthropic unknown ""; do
+  RC=0; OUT="$("$AL" vendor pi --pool "$p")" || RC=$?
+  assert_eq "pi on '${p:-no pool}' has no allowance: nothing printed, exit 1" "$RC ${OUT:-empty}" "1 empty"
+done
+RC=0; OUT="$("$AL" vendor pi --pool subscription:anthropic)" || RC=$?
+assert_eq "pi may not use a Claude subscription, so there is no window for it" "$RC ${OUT:-empty}" "1 empty"
+assert_eq "an adapter with a vendor of its own keeps it, whatever the pool says" "$("$AL" vendor codex --pool subscription:openai) $("$AL" vendor claude-code --pool subscription:anthropic)" "codex claude"
+
+section "6i · Swarm start counts a pi member on a ChatGPT plan"
+reset; codex_wrote 10 20
+printf '{"members":[{"role":"coder","adapter":"pi","pool":"subscription:openai"}]}' > "$TMP/wf-pi-plan.json"
+printf '{"members":[{"role":"coder","adapter":"pi","pool":"api:openai"}]}' > "$TMP/wf-pi-key.json"
+"$AL" start "$TMP/wf-pi-key.json" --vendor codex
+assert_eq "pi on an API key: nothing is read" "$(lines 2> /dev/null || echo 0)" "0"
+"$AL" start "$TMP/wf-pi-plan.json" --vendor codex
+assert_eq "pi on subscription:openai: one reading, in the OpenAI pool" "$(jq -r '[.pool, .moment] | join(" ")' "$LOG")" "subscription:openai swarm-start"
+reset; codex_wrote 10 20
+printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test-not-real"}\n' > "$CODEX_AUTH_FILE"
+"$AL" start "$TMP/wf-pi-plan.json" --vendor codex
+assert_eq "a Codex login on an API key does not stop it: that login is not what pi uses" "$(jq -r '.pool' "$LOG")" "subscription:openai"
 
 section "7 · Arguments"
 RC=0; "$AL" bogus > /dev/null 2>&1 || RC=$?

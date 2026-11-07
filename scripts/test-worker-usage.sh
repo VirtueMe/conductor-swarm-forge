@@ -194,6 +194,30 @@ put codex <(jq -c 'if .payload.type == "token_count" then .timestamp = "2026-11-
 STUB_WINDOWS="reviewer-0042" "$WU" read 0041
 assert_eq "two Codex workers at once: the difference belongs to the batch" "$(last '.allowance | [.attributed_to, (.five_hour.points | tostring)] | join(" ")')" "batch null"
 
+section "7e · A pi worker on a ChatGPT plan is metered in the same window as Codex"
+reset
+old="$(put codex "$FX/codex/rollout.jsonl" rollout-old.jsonl)"; touch -d '2 hours ago' "$old"
+STUB_WINDOWS="coder-0050" "$WU" spawned 0050 coder pi "$CWD" '{"model":"openai/gpt-5.5"}' subscription:openai
+assert_eq "the spawn took the reading the run is measured from, in the OpenAI pool" "$(jq -r 'select(.record == "allowance") | [.pool, .moment] | join(" ")' "$LOG")" "subscription:openai run-begin:worker:coder-0050"
+put codex <(jq -c 'if .payload.type == "token_count" then .timestamp = "2026-11-04T07:00:00.000Z" | .payload.rate_limits.primary.used_percent = 3.0 else . end' "$FX/codex/rollout.jsonl") rollout-new.jsonl > /dev/null
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+STUB_WINDOWS="" "$WU" read 0050
+assert_eq "the tokens are Pi's own" "$(last '[.harness, .usage] | join(",")')" "pi,reported"
+assert_eq "its line carries the window's rise, attributed to the run" "$(last '.allowance | [.pool, (.five_hour.points | tostring), .attributed_to] | join(" ")')" "subscription:openai 3 run"
+reset
+old="$(put codex "$FX/codex/rollout.jsonl" rollout-old.jsonl)"; touch -d '2 hours ago' "$old"
+STUB_WINDOWS="coder-0051 validator-0052" "$WU" spawned 0051 coder pi "$CWD" '{"model":"m"}' subscription:openai
+STUB_WINDOWS="coder-0051 validator-0052" spawn 0052 validator codex
+put codex <(jq -c 'if .payload.type == "token_count" then .timestamp = "2026-11-04T07:00:00.000Z" | .payload.rate_limits.primary.used_percent = 3.0 else . end' "$FX/codex/rollout.jsonl") rollout-new.jsonl > /dev/null
+STUB_WINDOWS="coder-0051" "$WU" read 0052
+assert_eq "a Codex worker beside a pi worker on the plan: the rise belongs to the batch, not to the Codex worker" "$(last '.allowance | [.attributed_to, (.five_hour.points | tostring)] | join(" ")')" "batch null"
+reset
+STUB_WINDOWS="coder-0053" "$WU" spawned 0053 coder pi "$CWD" '{"model":"m"}' api:openai
+assert_eq "pi on an API key is not metered: no reading at the spawn" "$(jq -r 'select(.record == "allowance") | 1' "$LOG" 2> /dev/null | wc -l | tr -d ' ')" "0"
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+"$WU" read 0053
+assert_eq "and its line has no allowance" "$(last '.allowance | tostring')" "null"
+
 section "7f · A Claude Code worker's line carries what it used of the Claude allowance"
 # The usage endpoint is a stub curl that answers with $STUB_CLAUDE_BODY; the account uses more while the worker runs.
 cat > "$TMP/bin/curl" <<'CURL_EOF'

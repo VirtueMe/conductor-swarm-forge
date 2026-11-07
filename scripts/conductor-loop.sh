@@ -373,9 +373,13 @@ dispatch_until_done() { # <label> <skill_content> <event: an artifact path, or "
     if [[ -n "$HANDLER_SCRIPT" ]]; then
       run_script || rc=$?
     else
-      # A Codex or Claude Code dispatch draws on a subscription allowance: note where it stood. log_usage reads it again.
-      local vendor
-      vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$(basename "$ADAPTER_FILE" .sh)" 2> /dev/null || true)"
+      # A Codex or Claude Code dispatch, or a pi dispatch on a ChatGPT plan, draws on a subscription allowance:
+      # note where it stood. log_usage reads it again. The pool decides it for pi, so it is settled here as
+      # the usage line will settle it.
+      local vendor adapter declared
+      adapter="$(basename "$ADAPTER_FILE" .sh)"; declared="$(conductor_pool)"
+      vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" \
+        --pool "$("$SCRIPTS_DIR/billing-mode.sh" pool "$adapter" ${declared:+--declared "$declared"} 2> /dev/null || true)" 2> /dev/null || true)"
       if [[ -n "$vendor" ]]; then
         ALLOWANCE_RUN="dispatch-$$-$attempt"; ATTEMPT_EPOCH="$(date +%s)"
         "$SCRIPTS_DIR/allowance.sh" begin "$ALLOWANCE_RUN" --kind dispatch --pid $$ --vendor "$vendor" 2> /dev/null || ALLOWANCE_RUN=""

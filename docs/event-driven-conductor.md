@@ -866,6 +866,17 @@ between events in the same window.
   nothing new since the run began", and its `answered_model` is null. Workers are interactive and do write
   sessions, so they are measured. The reading records still show the pool's movement over any period.
   `scripts/codex-allowance-run.sh` runs real Codex without `--ephemeral` to check the readers.
+- **A Pi run on a ChatGPT plan is registered, but the window is read from Codex's logs.** Registering it
+  (#159) is what marks a Codex run beside it as a batch (`attributed_to: batch`) instead of giving the
+  Codex run the whole rise. The reading itself still comes from `codex-usage.sh`, which reads Codex's own
+  session logs; Pi's session logs hold tokens, cost and the provider, and no `rate_limits`. So a swarm
+  with Codex and Pi measures both, and a swarm with only Pi on the plan has no fresh reading: both windows
+  are `unknown` with the reason, and a Pi run's points are null, never zero. A reading that does not
+  depend on Codex logs is not built (it needs a source of its own, and may raise the terms question
+  that #156 settled for Anthropic).
+- **Pi's sign-in is not read.** Pi's session log names the provider (`openai`) and not the sign-in;
+  that is in Pi's `auth.json` (`type`: `api_key` or `oauth` per provider; a stored credential beats the
+  environment variable), which is not read here. The pool of a Pi member is what the workforce declares.
 
 `usage-summary.sh` shows each subscription pool in its own allowance section ("Codex allowance",
 "Claude allowance"), apart from tokens and dollars, because it is a percentage of a window and not a
@@ -957,11 +968,15 @@ reason}]}`) and `credits` (`{dollars, reason}`) on the run's usage line. Differe
   measured 0, since the endpoint is read live and not only when Claude Code writes something.
 - **Overlap is judged within a vendor.** A Codex run and a Claude run draw on different pools and never
   mark each other; two Claude runs at once do.
-- **Which adapters are measured** is `allowance.sh vendor <adapter>`: `codex` and `claude-code`. `pi` has
-  no allowance of its own to measure, and it is not metered. A Claude Code dispatch or worker is measured
-  by `conductor-loop.sh` and `worker-usage.sh` like a Codex one, and `swarm-start.sh` takes a reading at
-  start for each vendor the workforce uses. On an API key (`billing-mode.sh detect claude-code` says
-  `api`) there is no allowance to measure and nothing is read.
+- **Which runs are measured** is `allowance.sh vendor <adapter> --pool <pool>`: the vendor follows the
+  pool the run is billed to. `codex` and `claude-code` each have a pool of their own, so the adapter says
+  it. `pi` has none, so the pool does: a Pi run on `subscription:openai` draws on the ChatGPT plan Codex
+  draws on, and is measured as the `codex` vendor; Pi on an API pool has no window and is not measured.
+  Pi cannot be on `subscription:anthropic`. A Claude Code dispatch or worker is measured by
+  `conductor-loop.sh` and `worker-usage.sh` like a Codex one, and `swarm-start.sh` takes a reading at
+  start for each vendor the workforce uses (a Pi member on `subscription:openai` counts for the Codex
+  one). On an API key (`billing-mode.sh detect claude-code` says `api`) there is no allowance to
+  measure and nothing is read.
 
 **What a difference is.** The window belongs to the account, not to the swarm: `seven_day_breakdown`
 shows chats and cowork counting against the same week. So a run's points are the account's rise during

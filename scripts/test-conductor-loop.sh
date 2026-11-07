@@ -1110,6 +1110,35 @@ sleep 1; signal 0001 signal complete
 ANTHROPIC_API_KEY=sk-test-not-real STUB_USAGE='{"harness":"claude-code","model":"claude-opus-4-8","input_tokens":8,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.45,"turns":1}' run_loop
 assert_eq "no budgets file: no warning" "$(grep -c 'budget' "$CONDUCTOR_DIR/conductor.log" || true)" "0"
 
+# 49 ------------------------------------------------------------------------------
+section "49 · A pi dispatch on a ChatGPT plan records what it used of the same allowance as Codex"
+# The adapter is named pi, so what draws on the allowance is the pool the workforce gives the conductor, not the adapter.
+mkdir -p "$TMP/pi-adapter"; cp "$STUB" "$TMP/pi-adapter/pi.sh"
+export CODEX_SESSIONS_DIR="$TMP/codex-sessions" CODEX_USAGE_NOW=1793790000
+rm -rf "$CODEX_SESSIONS_DIR"; codex_event 10 1
+new_swarm
+jq '(.members[] | select(.role == "conductor")) |= (.adapter = "pi" | .pool = "subscription:openai")' "$CONDUCTOR_DIR/workforce.json" > "$CONDUCTOR_DIR/wf.new" && mv "$CONDUCTOR_DIR/wf.new" "$CONDUCTOR_DIR/workforce.json"
+create_task
+CONDUCTOR_ADAPTER_FILE="$TMP/pi-adapter/pi.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+sleep 1; signal 0001 signal complete
+write_hook
+STUB_USAGE='{"harness":"pi","model":"openai/gpt-5.5","input_tokens":100,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":null,"turns":1}' \
+  CONDUCTOR_ADAPTER_FILE="$TMP/pi-adapter/pi.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+assert_eq "the line is pi's, in the OpenAI pool" "$(ufield 0001/signal '[.harness, .pool] | join(" ")')" "pi subscription:openai"
+assert_eq "it carries the allowance: five-hour points, attributed to the run" "$(ufield 0001/signal '.allowance | [.pool, (.five_hour.points | tostring), .attributed_to] | join(" ")')" "subscription:openai 2 run"
+assert_eq "readings were taken around each dispatch, in the OpenAI pool, as records" \
+  "$(jq -r 'select(.record == "allowance") | select(.pool == "subscription:openai") | .moment | sub("[0-9]+-[0-9]+$"; "N")' "$CONDUCTOR_DIR/usage.jsonl" | grep -c 'run-begin:dispatch-N\|run-end:dispatch-N')" "$(jq -r 'select(.record == "allowance") | .moment' "$CONDUCTOR_DIR/usage.jsonl" | wc -l | tr -d ' ')"
+rm -f "$STUB_HOOK"
+new_swarm
+jq '(.members[] | select(.role == "conductor")) |= (.adapter = "pi" | .pool = "api:openai")' "$CONDUCTOR_DIR/workforce.json" > "$CONDUCTOR_DIR/wf.new" && mv "$CONDUCTOR_DIR/wf.new" "$CONDUCTOR_DIR/workforce.json"
+create_task
+CONDUCTOR_ADAPTER_FILE="$TMP/pi-adapter/pi.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+sleep 1; signal 0001 signal complete
+STUB_USAGE='{"harness":"pi","model":"openai/gpt-5.5","input_tokens":100,"output_tokens":5,"cache_read_tokens":0,"cache_write_tokens":0,"cost_usd":0.01,"turns":1}' \
+  CONDUCTOR_ADAPTER_FILE="$TMP/pi-adapter/pi.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+assert_eq "pi on an API key: no allowance on the line" "$(ufield 0001/signal '.allowance | tostring')" "null"
+assert_eq "and no reading taken" "$(jq -r 'select(.record == "allowance") | 1' "$CONDUCTOR_DIR/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1
