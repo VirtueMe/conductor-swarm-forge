@@ -110,6 +110,7 @@ can be added per pack without a schema change.
 | --- | --- | --- | --- | --- |
 | `model` | string | `--model <model>` | `--model <model>` | `--model <model>` (qualify as `provider/id`, e.g. `anthropic/claude-sonnet-4-6`, so an ambiguous id cannot make pi prompt for `--provider`) |
 | `effort` | string | `--effort <level>` (`low`·`medium`·`high`·`xhigh`·`max`) | `-c model_reasoning_effort=<level>` (`minimal`·`low`·`medium`·`high`) | `--thinking <level>` (`off`·`minimal`·`low`·`medium`·`high`·`xhigh`·`max`) |
+| `permission_mode` | string | `auto` · `acceptEdits` · `dontAsk` · `manual`, default `auto` | ignored | ignored |
 | *(other)* | any | ignored | ignored | ignored |
 
 The params object is passed to `adapter_launch` as a JSON string and parsed with
@@ -132,6 +133,17 @@ that dies immediately in a detached tmux window.
 provider names) — the adapter can't enumerate it, so an unknown model id is left
 to fail when the CLI starts. A key the active adapter doesn't implement at all is
 never an error — it is silently dropped.
+
+### Permission mode (claude-code)
+
+An interactive Claude window that stops to ask permission stalls an unattended swarm, so `permission_mode`
+defaults to `auto`. It applies to the windows `adapter_launch` opens (the architect and the workers), not to
+the headless conductor dispatch, which has its own fixed permissions. A `claude` that has no `auto` mode gets
+`acceptEdits`, with a note. `bypassPermissions` is not offered, and any other value fails before launch. The
+project's `.claude/settings.json` (the scripts, `git`, the language's tools, and the project's own test
+command, which `swarm-start.sh` adds) is passed to every window with `--settings`, so a worker in a worktree
+does not depend on finding the project root's file. The first window in a new directory still asks Claude
+Code's trust question once; see `--trust-project` in the README.
 
 ## Example
 

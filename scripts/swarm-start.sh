@@ -8,6 +8,7 @@ PROMPTS_DIR="$ROOT_DIR/prompts"
 SESSION="swarm"
 KANBAN_SERVER=false
 HEADLESS=false
+TRUST_PROJECT=false
 BRIEF_FILE=""
 TARGET_DIR=""
 LANG="typescript"
@@ -17,7 +18,7 @@ WORKFORCE_NAME="default"
 BASE_BRANCH=""
 
 usage() {
-  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--workforce|-wf <name>] [--base-branch|-bb <name>] [--kanban-server|-cbs] [--headless-conductor|-hc]" >&2
+  echo "Usage: swarm-start.sh [target-dir] [--brief|-b <file>] [--lang|-l <language>] [--test-cmd|-tc <cmd>] [--topology|-tp <name>] [--workforce|-wf <name>] [--base-branch|-bb <name>] [--kanban-server|-cbs] [--headless-conductor|-hc] [--trust-project]" >&2
   exit 1
 }
 
@@ -26,6 +27,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --kanban-server|-cbs) KANBAN_SERVER=true; shift ;;
     --headless-conductor|-hc) HEADLESS=true; shift ;;
+    --trust-project)      TRUST_PROJECT=true; shift ;;
     --brief|-b)           BRIEF_FILE="$2"; shift 2 ;;
     --lang|-l)            LANG="$2"; shift 2 ;;
     --test-cmd|-tc)       TEST_CMD="$2"; shift 2 ;;
@@ -218,6 +220,48 @@ fi
   printf 'notify-channel: %s\n' "${CONDUCTOR_NOTIFY_CHANNEL:-none}"
   printf -- '---\n'
 } > "$CONDUCTOR_DIR/config.md"
+# The project's own test command and its language's runner are allowed too, so the validator and the coder
+# are not stopped to ask for the one command the swarm is built around. The list above is fixed per tool,
+# and the command is only known now (it may be detected). The command as written, the same command with
+# other arguments (python3 -m unittest discover -> python3 -m unittest *) and, for python, its runners.
+# python3, not jq: a default start does not need jq, and the adapters already need python3.
+if ! python3 -I - ".claude/settings.json" "${TEST_CMD:-}" "${LANG:-}" << 'PYEOF'
+import json, os, sys
+path, test_cmd, lang = sys.argv[1], sys.argv[2], sys.argv[3]
+words = test_cmd.split()
+extra = []
+if test_cmd:
+    extra.append(f"Bash({test_cmd})")
+if words:
+    prefix = words[:3] if len(words) > 2 and words[1] == "-m" else words[:1]
+    extra.append(f"Bash({' '.join(prefix)} *)")
+if lang.lower() == "python":
+    extra += ["Bash(python3 *)", "Bash(python *)"]
+with open(path) as f:
+    settings = json.load(f)
+allow = settings["permissions"]["allow"]
+settings["permissions"]["allow"] = allow + [e for e in dict.fromkeys(extra) if e not in allow]
+with open(path + ".new", "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+os.replace(path + ".new", path)
+PYEOF
+then
+  rm -f ".claude/settings.json.new"
+  echo "Warning: could not add the test command to .claude/settings.json; the validator may ask for permission" >&2
+fi
+# Claude Code asks "do you trust this folder?" the first time it starts in a new directory, and an
+# interactive window that nobody answers is a stalled swarm. Say so before launching. --trust-project
+# records the trust the way the dialog does (scripts/trust-project.sh), and is only ever done when asked:
+# trust lets the project's settings and hooks run without the prompt. Nothing to say if no window runs claude.
+if grep -q '"claude-code"' "$WORKFORCE"; then
+  if [[ "$TRUST_PROJECT" == true ]]; then
+    "$SCRIPTS_DIR/trust-project.sh" grant "$PWD" \
+      || echo "Warning: could not record the trust; the first Claude window will ask for it. Run claude once, then retry --trust-project." >&2
+  elif [[ "$("$SCRIPTS_DIR/trust-project.sh" check "$PWD" 2> /dev/null || echo unknown)" != trusted ]]; then
+    echo "Note     : Claude Code will ask you to trust $PWD in the first window it opens (the architect's) before it can start; answer it once and the rest runs on its own. To skip the question: --trust-project records the trust for you (it lets the project's settings and hooks run without asking)."
+  fi
+fi
 echo "Topology : $TOPOLOGY"
 echo "Workforce: $WORKFORCE_NAME"
 [[ -n "$LANG" ]]     && echo "Language : $LANG"

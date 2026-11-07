@@ -309,6 +309,52 @@ assert_eq "a brief lowers one and cannot raise the other" "$(jq -r 'map(.pool + 
 start --
 assert_eq "a workforce with no budgets leaves no budgets file" "$([[ -e "$TARGET/.conductor/budgets.json" ]] && echo yes || echo no)" "no"
 
+section "16 · The allow list covers the project's test command and its language's runner"
+allow() { jq -r '.permissions.allow[]' "$TARGET/.claude/settings.json"; }
+start -- --lang python --test-cmd "python3 -m unittest discover"
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the test command itself is allowed" "$(allow | grep -cxF 'Bash(python3 -m unittest discover)')" "1"
+assert_eq "and so is the same module with other arguments" "$(allow | grep -cxF 'Bash(python3 -m unittest *)')" "1"
+assert_eq "python's runners are allowed" "$(allow | grep -cxF -e 'Bash(python3 *)' -e 'Bash(python *)')" "2"
+assert_eq "what was already allowed still is" "$(allow | grep -cxF 'Bash(git *)')" "1"
+assert_eq "and the deny list is untouched" "$(jq -r '.permissions.deny | length' "$TARGET/.claude/settings.json")" "5"
+start -- --lang typescript --test-cmd "npm test"
+assert_eq "an npm test command: allowed as written" "$(allow | grep -cxF 'Bash(npm test)')" "1"
+assert_eq "no python rules for another language" "$(allow | grep -c 'python')" "0"
+start --
+assert_eq "no test command: the settings file is the fixed list, and valid JSON" "$(jq -e '.permissions.allow | length > 5' "$TARGET/.claude/settings.json" > /dev/null && echo ok)" "ok"
+start -- --lang bash --test-cmd 'make test "quoted arg"'
+assert_eq "a test command with quotes still gives valid JSON" "$(jq -e . "$TARGET/.claude/settings.json" > /dev/null && echo ok)" "ok"
+assert_eq "and is allowed as written" "$(allow | grep -cxF 'Bash(make test "quoted arg")')" "1"
+
+section "17 · Trust: a note by default, and --trust-project only when asked"
+export CLAUDE_JSON_FILE="$TMP/claude-state.json"
+printf '{"numStartups":1,"projects":{}}' > "$CLAUDE_JSON_FILE"
+start --
+assert_eq "exit 0" "$RC" "0"
+has "will ask you to trust" "$TMP/out" "an untrusted project: said up front"
+has "trust-project" "$TMP/out" "with the way to avoid it"
+assert_eq "and nothing was written to Claude's file" "$(jq -c . "$CLAUDE_JSON_FILE")" '{"numStartups":1,"projects":{}}'
+start -- --trust-project
+assert_eq "--trust-project: exit 0" "$RC" "0"
+assert_eq "it records the trust for the project directory" "$(jq -r --arg d "$(cd "$TARGET" && pwd -P)" '.projects[$d].hasTrustDialogAccepted' "$CLAUDE_JSON_FILE")" "true"
+lacks "will ask you to trust" "$TMP/out" "and the note is gone"
+start --
+lacks "will ask you to trust" "$TMP/out" "a project that is already trusted needs no note"
+printf '{"projects":{}}' > "$CLAUDE_JSON_FILE"
+start --tool "$FAKE" -- --workforce interactive-only
+has "will ask you to trust" "$TMP/out" "a workforce with claude-code windows: the note"
+jq '(.members[] | .adapter) = "pi"' "$ROOT_DIR/workforces/default.json" > "$FAKE/workforces/no-claude.json"
+start --tool "$FAKE" -- --workforce no-claude
+lacks "will ask you to trust" "$TMP/out" "no claude-code member: nothing to say about Claude's trust"
+rm -f "$CLAUDE_JSON_FILE"
+start --
+has "will ask you to trust" "$TMP/out" "no Claude state file: the dialog will come, so the note too"
+start -- --trust-project
+assert_eq "--trust-project with no state file: the start goes on" "$RC" "0"
+has "claude once" "$TMP/err" "and says what to do"
+export CLAUDE_JSON_FILE="$TMP/no-claude.json"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1
