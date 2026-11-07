@@ -130,6 +130,13 @@ A rule has:
 | `then` | Optional list of named engine side-effects to run on transition |
 | `reason` | Optional human-readable note (surfaced in logs / notifications) |
 
+A task that nobody works on is routed past the working stages on arrival. `software-dev` does this
+for `design`: the architect writes the content in the task description, so `new-task` with
+`type: design` goes straight to `done` (whatever the task depends on) and its dependents are
+unblocked, where every other type goes to `ready` or, with pending dependencies, `backlog`. The
+steps that take a card out of backlog later (the startup reconcile, the backlog check) ask the same
+`new-task` rule, so a design card is never handed to a coder on that path either.
+
 **Spawn is derived, not declared.** A rule only names a destination stage; the
 executor comes from that stage's `working_stages` entry. So a loopback `to:
 in-progress` spawns a coder automatically — one source of truth.

@@ -6,9 +6,11 @@
 #   0. skip a replayed event: a card already in any column but the first stage means the task
 #      was placed, and routing it again would pull it back. A skip is a success (exit 0, no
 #      move), so the loop records the event as done
-#   1. gather the deps guard: all-done, or pending
-#   2. ask the topology where new-task deps=<...> sends the task, and move it
+#   1. gather the type and the deps guard (all-done, or pending)
+#   2. ask the topology where new-task type=<...> deps=<...> sends the task, and move it
 #   3. start the destination stage (a spawn, a notice, or nothing for a holding column)
+#   4. if the task went to done (a design task does, the architect having written it), unblock the
+#      tasks that were waiting on it
 #
 # The skill's replay guard is kept as it is, including what it cannot see: a card that reached
 # the second stage but whose worker never started (a crash between the move and the start) is
@@ -36,5 +38,10 @@ if card="$(card_path "$TASK_ID")"; then
   fi
 fi
 
+# The task file, not the card: the card may not exist yet, and the type is written once, at creation.
+: "${TASK_FILE:?on-new-task: TASK_FILE is not set}"
+type="$(fm_field "$TASK_FILE" type)"
+if [[ -z "$type" ]]; then echo "on-new-task: task $TASK_ID has no type, so its route is unknown" >&2; exit 1; fi
 deps="$(deps_done "$TASK_ID")"
-route_task "$TASK_ID" new-task "deps=$deps"
+route_task "$TASK_ID" new-task "type=$type" "deps=$deps"
+if [[ "$ROUTED_DEST" == "done" ]]; then unblock_dependents "$TASK_ID"; fi

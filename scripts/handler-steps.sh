@@ -41,9 +41,13 @@
 #                                   mistyped ID keeps its task in backlog, and this is where to look
 #   task_deps <task>                print the IDs the task's depends-on lists, one per line. The
 #                                   same fail-closed rules as deps_done, which uses it
+#   backlog_dest <task>             print where the topology sends a backlog card whose dependencies
+#                                   are all done: ready, or done for a design task
+#   release_backlog_card <task>     move such a card to backlog_dest and start the stage; one that
+#                                   lands in done unblocks its own dependents
 #   unblock_dependents <task>       for each task in backlog whose depends-on lists <task> and whose
-#                                   dependencies are now all done, move it to ready and start the
-#                                   entry stage. A backlog task whose depends-on cannot be read
+#                                   dependencies are now all done, release_backlog_card it (to ready
+#                                   and the entry stage, or to done for a design task). A backlog task whose depends-on cannot be read
 #                                   (an inline list, say) stops it: skipping would leave a task
 #                                   waiting forever on a list nobody read
 #   release_merge_pending           for each task in merge-pending whose files are no longer locked,
@@ -53,7 +57,8 @@
 #   register_untracked              for each task file with no card in any column, move it to backlog
 #                                   (task-move.sh creates the card). Starts nothing
 #   unblock_ready                   for each card in backlog whose depends-on are all done, move it to
-#                                   ready. Moves only: start_ready starts them. Unlike
+#                                   backlog_dest (ready, or done for a design task, whose dependents
+#                                   are then unblocked). Moves only: start_ready starts the ready ones. Unlike
 #                                   unblock_dependents it looks at every backlog card, not at the
 #                                   dependents of one task. A card whose depends-on cannot be read
 #                                   stops it, for the same reason
@@ -182,6 +187,28 @@ deps_done() { # <task>
   echo all-done
 }
 
+# Where the topology sends a backlog card whose dependencies are all done: ready, or done for a
+# task nobody works on (a design task). The same new-task rule the card met when it was created.
+backlog_dest() { # <task>
+  local type
+  type="$(fm_field "$CONDUCTOR_DIR/tasks/$1.md" type)"
+  if [[ -z "$type" ]]; then
+    echo "backlog_dest: task $1 has no type, so its route is unknown" >&2
+    return 1
+  fi
+  topology-load.sh route "$CONDUCTOR_DIR/topology.json" new-task "type=$type" deps=all-done
+}
+
+# Take a card out of backlog, its dependencies being done: move it where the topology says and start
+# the stage. A card that lands in done (a design task) unblocks its own dependents in turn.
+release_backlog_card() { # <task>
+  local dest
+  dest="$(backlog_dest "$1")" || return 1
+  task-move.sh "$1" "$dest" || return 1
+  stage-start.sh "$1" "$dest" || return 1
+  if [[ "$dest" == "done" ]]; then unblock_dependents "$1"; fi
+}
+
 unblock_dependents() { # <task>
   local card id deps dep listed
   for card in "$CONDUCTOR_DIR"/kanban/backlog/*.md; do
@@ -194,8 +221,7 @@ unblock_dependents() { # <task>
     done <<< "$deps"
     [[ "$listed" == true ]] || continue
     [[ "$(deps_done "$id")" == all-done ]] || continue
-    task-move.sh "$id" ready || return 1
-    stage-start.sh "$id" ready || return 1
+    release_backlog_card "$id" || return 1
   done
 }
 
@@ -222,13 +248,15 @@ register_untracked() {
 }
 
 unblock_ready() {
-  local card id deps
+  local card id deps dest
   for card in "$CONDUCTOR_DIR"/kanban/backlog/*.md; do
     [[ -f "$card" ]] || continue
     id="$(basename "$card" .md)"
     deps="$(deps_done "$id")" || return 1
     [[ "$deps" == all-done ]] || continue
-    task-move.sh "$id" ready || return 1
+    dest="$(backlog_dest "$id")" || return 1
+    task-move.sh "$id" "$dest" || return 1
+    if [[ "$dest" == "done" ]]; then unblock_dependents "$id" || return 1; fi
   done
 }
 

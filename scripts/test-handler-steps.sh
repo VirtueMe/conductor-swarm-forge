@@ -397,6 +397,22 @@ RC=0; OUT="$(stranded_backlog 2> "$TMP/err")" || RC=$?
 assert_eq "an unreadable depends-on does not stop the check" "$RC" "0"
 assert_eq "it is left out" "$(grep -c '^0005' <<< "$OUT" || true)" "0"
 
+section "11c · A design task is never given to a coder"
+board_reset
+btask 0001; btask 0002 0001
+sed -i 's/^type: feature/type: design/' "$CONDUCTOR_DIR/tasks/0002.md"
+bcard 0001 "done"; bcard 0002 backlog
+unblock_ready
+assert_eq "a design card whose dependencies are done goes to done, not ready" "$(calls)" "task-move 0002 done"
+board_reset
+btask 0001; btask 0002 0001
+sed -i 's/^type: feature/type: design/' "$CONDUCTOR_DIR/tasks/0002.md"
+bcard 0001 "done"; bcard 0002 backlog
+unblock_dependents 0001
+assert_eq "a design dependent of a finished task goes to done" "$(calls)" "$(printf 'task-move 0002 done\nstage-start 0002 done')"
+RC=0; backlog_dest 0009 2> "$TMP/err" || RC=$?
+assert_eq "a task with no task file has no route" "$RC" "1"
+
 section "12 · Resuming interrupted work"
 # The tmux stub lists the windows conductor, coder-0001 and reviewer-0002.
 board_reset

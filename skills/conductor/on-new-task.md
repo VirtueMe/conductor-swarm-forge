@@ -27,7 +27,8 @@ Triggered by the new task's `card` artifact (`work/<id>/card-*.md`).
 
 1. Read `$TASK_FILE` and extract the `depends-on` field.
 
-2. **Determine the `deps` guard** — the only input this event's routing needs:
+2. **Determine the guards** this event's routing needs: the task's `type` (from the card, or
+   `$TASK_FILE`), and `deps`:
    - If `depends-on` is empty or `[]`, or every listed ID has a card in
      `kanban/done/`, then dependencies are satisfied → `deps=all-done`.
    - If any listed ID is not yet in `kanban/done/`, dependencies are pending →
@@ -36,7 +37,7 @@ Triggered by the new task's `card` artifact (`work/<id>/card-*.md`).
 3. **Ask the topology where this task goes.** Do not hardcode the column — call
    `route` with the event and the `deps` guard:
    ```bash
-   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" new-task deps=<all-done|pending>)
+   DEST=$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" new-task type=<type> deps=<all-done|pending>)
    task-move.sh $TASK_ID "$DEST"
    ```
 
@@ -48,4 +49,9 @@ Triggered by the new task's `card` artifact (`work/<id>/card-*.md`).
    stage-start.sh $TASK_ID "$DEST"
    ```
 
-5. Run `task-list.sh` to confirm placement.
+5. **If the task went to `done`** (a `design` task does: the architect wrote it, so no coder runs),
+   unblock its dependents as `on-signal-complete` does: for each card in `backlog` whose
+   `depends-on` lists `$TASK_ID` and whose dependencies are all in `kanban/done/`, move it to
+   `ready` and start the stage.
+
+6. Run `task-list.sh` to confirm placement.
