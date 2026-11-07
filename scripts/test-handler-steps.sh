@@ -383,6 +383,20 @@ RC=0; unblock_ready 2> "$TMP/err" || RC=$?
 assert_eq "an unreadable depends-on is a failure, not skipped" "$RC" "1"
 assert_eq "and moves nothing" "$(calls)" ""
 
+section "11b · Finding the cards left in backlog"
+board_reset
+btask 0001; btask 0002 0001; btask 0003 0001 0004; btask 0004; btask 0005; btask 0006 0009
+bcard 0001 "done"; bcard 0002 backlog; bcard 0003 backlog; bcard 0004 in-progress; bcard 0005 backlog; bcard 0006 backlog
+assert_eq "a card whose dependencies are done, and one with none, are listed with them" \
+  "$(stranded_backlog)" "$(printf '0002 0001\n0005')"
+assert_eq "and nothing is moved" "$(calls)" ""
+bcard 0004 "done"
+assert_eq "all dependencies done, all listed" "$(stranded_backlog | grep '^0003')" "0003 0001 0004"
+sed -i 's/^depends-on: \[\]$/depends-on: [0001]/' "$CONDUCTOR_DIR/tasks/0005.md"
+RC=0; OUT="$(stranded_backlog 2> "$TMP/err")" || RC=$?
+assert_eq "an unreadable depends-on does not stop the check" "$RC" "0"
+assert_eq "it is left out" "$(grep -c '^0005' <<< "$OUT" || true)" "0"
+
 section "12 · Resuming interrupted work"
 # The tmux stub lists the windows conductor, coder-0001 and reviewer-0002.
 board_reset

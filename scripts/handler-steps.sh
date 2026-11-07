@@ -57,6 +57,11 @@
 #                                   unblock_dependents it looks at every backlog card, not at the
 #                                   dependents of one task. A card whose depends-on cannot be read
 #                                   stops it, for the same reason
+#   stranded_backlog                print one line per card in backlog whose depends-on are all done:
+#                                   the task, then the dependencies (none for a task with no
+#                                   depends-on). The test unblock_ready uses, but it only reports.
+#                                   A card whose depends-on cannot be read is said so on stderr and
+#                                   left out: this is a check, and must not stop the loop that runs it
 #   resume_interrupted              for each card in a working stage, check that what the stage is
 #                                   waiting on exists: an auto stage needs the window <role>-<task>,
 #                                   else the worker is spawned again; a manual stage needs a file
@@ -224,6 +229,19 @@ unblock_ready() {
     deps="$(deps_done "$id")" || return 1
     [[ "$deps" == all-done ]] || continue
     task-move.sh "$id" ready || return 1
+  done
+}
+
+stranded_backlog() {
+  local card id deps
+  for card in "$CONDUCTOR_DIR"/kanban/backlog/*.md; do
+    [[ -f "$card" ]] || continue
+    id="$(basename "$card" .md)"
+    deps="$(deps_done "$id")" || continue
+    [[ "$deps" == all-done ]] || continue
+    printf '%s' "$id"
+    task_deps "$id" | while IFS= read -r dep; do [[ -z "$dep" ]] || printf ' %s' "$dep"; done
+    printf '\n'
   done
 }
 

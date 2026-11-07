@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$(dirname "$SCRIPTS_DIR")" && pwd)"
+
 LOOP="$SCRIPTS_DIR/conductor-loop.sh"
 
 TMP="$(mktemp -d)"
@@ -94,6 +95,9 @@ new_swarm() {
   # otherwise change each time a real handler in scripts/handlers is converted.
   mkdir -p "$TMP/no-handlers"; export CONDUCTOR_HANDLERS_DIR="$TMP/no-handlers"
   export CONDUCTOR_RETRY_DELAY=0
+  # The stub handlers move nothing, so every card they leave in backlog would be healed after the
+  # event (#170), and these tests are about the loop's other work. Section 50 turns the check on.
+  export CONDUCTOR_BACKLOG_CHECK=off
 }
 create_task() { "$SCRIPTS_DIR/task-create.sh" --title "T" --type chore --description "x" > /dev/null; }
 signal() { "$SCRIPTS_DIR/task-signal.sh" --task "$1" --type "$2" ${3:+--outcome "$3"} > /dev/null; }
@@ -1165,6 +1169,45 @@ STUB_USAGE='{"harness":"pi","model":"openai/gpt-5.5","input_tokens":100,"output_
   CONDUCTOR_ADAPTER_FILE="$TMP/pi-adapter/pi.sh" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
 assert_eq "pi on an API key: no allowance on the line" "$(ufield 0001/signal '.allowance | tostring')" "null"
 assert_eq "and no reading taken" "$(jq -r 'select(.record == "allowance") | 1' "$CONDUCTOR_DIR/usage.jsonl" 2> /dev/null | wc -l | tr -d ' ')" "0"
+
+# 50 ------------------------------------------------------------------------------
+section "50 · A dependent left in backlog is reported and healed after the event"
+# A copy of the scripts with a stage-start.sh that only logs: the real one would spawn a worker.
+CP="$TMP/scripts-copy"; rm -rf "$CP"; cp -r "$SCRIPTS_DIR" "$CP"
+cat > "$CP/stage-start.sh" << 'S'
+#!/usr/bin/env bash
+echo "stage-start $*" >> "$STUB_LOG"
+S
+LOOP="$CP/conductor-loop.sh"
+new_swarm
+export CONDUCTOR_BACKLOG_CHECK=on
+"$SCRIPTS_DIR/task-create.sh" --title A --type chore --description x > /dev/null
+"$SCRIPTS_DIR/task-create.sh" --title B --type chore --depends-on 0001 --description x > /dev/null
+CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+# 0001 finishes without anyone unblocking 0002: the stub handler does nothing for the event.
+"$SCRIPTS_DIR/task-move.sh" 0001 "done"
+: > "$STUB_LOG"
+sleep 1; signal 0001 signal complete
+CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+expect_grep 'invariant: 0002 was in backlog but its dependencies are done (0001)' "$CONDUCTOR_DIR/conductor.log" "the log names the task and its done dependency"
+expect_grep 'invariant: 0002 ' "$TMP/loop.err" "and the window shows it"
+assert_eq "the card was healed into ready" "$([[ -f "$CONDUCTOR_DIR/kanban/ready/0002.md" ]] && echo yes)" "yes"
+assert_eq "and its stage started" "$(grep -c '^stage-start 0002 ready$' "$STUB_LOG" || true)" "1"
+assert_eq "the loop did not halt" "$([[ -f "$CONDUCTOR_DIR/conductor-loop.halted" ]] && echo halted || echo running)" "running"
+# A task whose own event is still unhandled is just new, not stranded.
+new_swarm
+export CONDUCTOR_BACKLOG_CHECK=on
+"$SCRIPTS_DIR/task-create.sh" --title A --type chore --description x > /dev/null
+CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+"$SCRIPTS_DIR/task-move.sh" 0001 "done"
+sleep 1; signal 0001 signal complete
+"$SCRIPTS_DIR/task-create.sh" --title B --type chore --description x > /dev/null
+CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > "$TMP/loop.out" 2> "$TMP/loop.err" || true
+# (The stub handlers do not register or unblock anything, so 0002 is stranded once its own card
+# event has been handled; what matters is that it is not reported before.)
+card_line="$(grep -n '0002/card-' "$CONDUCTOR_DIR/conductor.log" | tail -1 | cut -d: -f1 || true)"
+inv_line="$(grep -n 'invariant: 0002 ' "$CONDUCTOR_DIR/conductor.log" | head -1 | cut -d: -f1 || true)"
+assert_eq "a card is not reported while its own event is unhandled" "$(( inv_line > card_line ? 1 : 0 ))" "1"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

@@ -182,6 +182,7 @@ printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
 # These tests check what reaches the model, so no script handler may stand in for it; the real
 # handlers directory would change meaning each time a handler is converted.
 mkdir -p "$TMP/no-handlers"; export CONDUCTOR_HANDLERS_DIR="$TMP/no-handlers"
+export CONDUCTOR_BACKLOG_CHECK=off   # the stub handler moves nothing; healing would start a worker (#170)
 "$SCRIPTS_DIR/task-create.sh" --title T --type chore --description x > /dev/null
 PATH="$TMP/bin:$PATH" bash "$SCRIPTS_DIR/conductor-loop.sh" --once > /dev/null 2>&1   # seeds the ledger
 sleep 1

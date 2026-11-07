@@ -16,6 +16,8 @@ set -euo pipefail
 #   CONDUCTOR_KILL_GRACE        seconds between the deadline and a hard kill (default 10)
 #   CONDUCTOR_RETRY_DELAY       seconds to wait between attempts at one event (default 5)
 #   CONDUCTOR_TIMEOUT_CMD       the timeout command (default: timeout, else gtimeout)
+#   CONDUCTOR_BACKLOG_CHECK     'off' skips the check after each event that no card waits in backlog with its
+#                               dependencies done (default on)
 #   CONDUCTOR_HEARTBEAT         seconds of idleness between 'idle' lines in the log (default 600; 0 = never)
 #   CONDUCTOR_HANDLERS_DIR      where script handlers live (default: handlers/ next to this script)
 #
@@ -41,6 +43,9 @@ set -euo pipefail
 #                appends it, with the event, the handler and the outcome, to
 #                $CONDUCTOR_DIR/usage.jsonl, one line per dispatch attempt (read it with
 #                usage-summary.sh)
+#
+# After each event the loop checks that no card waits in backlog with its dependencies done, and
+# heals one it finds (see check_backlog below).
 #
 # The loop first runs the startup reconcile (see reconcile below), then drains events.
 #
@@ -480,6 +485,37 @@ handle_event() { # <artifact path relative to the work dir>
   EVENTS_DONE=$(( EVENTS_DONE + 1 ))
 }
 
+# After each event: no card may sit in backlog with all its dependencies done (see
+# backlog-invariant.sh). A handler that forgets to unblock a dependent leaves it there, and the
+# startup reconcile used to hide that by repairing it on the next restart (#165). The script heals
+# the card so an unattended swarm keeps going; this says so, once per task, so the gap in the
+# handler stays visible. CONDUCTOR_BACKLOG_CHECK=off skips it. A failing check is reported and never halts the loop.
+INVARIANT_SEEN=" "
+CHECK_STDERR="$CONDUCTOR_DIR/backlog-check-stderr.log"   # apart from DISPATCH_STDERR, which is the last error of an event
+check_backlog() {
+  local out line task verdict step deps
+  [[ "${CONDUCTOR_BACKLOG_CHECK:-on}" != off ]] || return 0
+  [[ ! -f "$FLAG" ]] || return 0         # shutting down: the handler's job is done, start nothing new
+  if ! out="$("$SCRIPTS_DIR/backlog-invariant.sh" 2> "$CHECK_STDERR")"; then
+    log "invariant: the backlog check itself failed: $(head -c 300 "$CHECK_STDERR" 2> /dev/null || true)"
+    return 0
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    read -r task verdict deps <<< "$line"
+    step=""
+    if [[ "$verdict" == failed ]]; then read -r step deps <<< "$deps"; fi
+    [[ "$INVARIANT_SEEN" != *" $task:$verdict "* ]] || continue
+    INVARIANT_SEEN="$INVARIANT_SEEN$task:$verdict "
+    if [[ -z "$deps" ]]; then deps="nothing, it has no dependencies"; else deps="${deps// /, }"; fi
+    if [[ "$verdict" == healed ]]; then
+      log "invariant: $task was in backlog but its dependencies are done ($deps); moved it to ready and started it. A handler left it behind."
+    else
+      log "invariant: $task is in backlog but its dependencies are done ($deps); healing failed at the $step step. It is tried again after every event, and by the next startup reconcile."
+    fi
+  done <<< "$out"
+}
+
 # The startup reconcile (skills/conductor/reconcile.md) runs first, on every start: register
 # untracked tasks, unblock ready ones, respawn a worker whose window was lost, start the entry
 # stage. It is the same skill the interactive conductor runs from startup.md, it is safe to run
@@ -530,6 +566,7 @@ while :; do
     continue
   fi
   handle_event "$rel"
+  check_backlog
   LAST_BEAT=$SECONDS
 done
 
