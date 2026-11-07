@@ -167,7 +167,10 @@ TASK_BODY=$(yaml_body "$TASK_FILE")
 # Prepare the workspace via the integration adapter. It prints "<workspace>\t<branch>"
 # (branch empty for branchless integration models).
 TITLE=$(yaml_field "title" "$TASK_FILE")
-IFS=$'\t' read -r WORKTREE_PATH BRANCH < <(integration_prepare_workspace "$TASK_ID" "$WORKER_TYPE" "$TITLE" "${BASE_BRANCH:-}")
+IFS=$'\t' read -r WORKTREE_PATH BRANCH < <(integration_prepare_workspace "$TASK_ID" "$WORKER_TYPE" "$TITLE" "${BASE_BRANCH:-}") || true
+# A failed preparation prints its reason on stderr and nothing on stdout, and the status of a process
+# substitution is lost: without this check the script would end here with exit 1 and no words.
+[[ -n "${WORKTREE_PATH:-}" ]] || { echo "worker-spawn.sh: could not prepare a workspace for task $TASK_ID ($WORKER_TYPE)" >&2; exit 1; }
 
 # Write assigned artifact, then move the card to the role's working stage.
 # stage_for_role maps the role back to the stage that spawns it: for the coder

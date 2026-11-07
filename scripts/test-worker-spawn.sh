@@ -121,6 +121,31 @@ echo "coder-10001" >> "$WINDOWS"
 OUT=$(spawn 0004 coder)
 assert_eq "task 0004 still spawns"       "$(assigned_count 0004)" "1"
 
+echo "── the next role on a task works in the coder's worktree, as in a real swarm"
+# The coder's window is closed (worker-close.sh) before the validator is spawned; its worktree stays, with
+# the task's branch checked out, and git allows a branch in one worktree only.
+: > "$WINDOWS"
+RC=0; OUT=$(spawn 0001 validator) || RC=$?
+assert_eq "the validator spawns"         "$RC" "0"
+case "$OUT" in *"Spawned validator"*) ok "and says so" ;; *) fail "and says so ($OUT)" ;; esac
+assert_eq "with its window"              "$(window_count 0001)" "1"
+assert_eq "in the coder's worktree: no second one was made" "$(find "$PROJECT/.worktrees" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "coder-0001 coder-0003 coder-0004 "
+assert_eq "its record names the coder's worktree" "$(jq -r '.cwd | endswith("/.worktrees/coder-0001")' "$CONDUCTOR_DIR/workers/validator-0001.json")" "true"
+: > "$WINDOWS"
+RC=0; OUT=$(spawn 0001 reviewer) || RC=$?
+assert_eq "so does the reviewer"         "$RC" "0"
+
+echo "── a workspace that cannot be made fails with a reason"
+"$SCRIPTS_DIR/task-create.sh" --title "Task nine" --type chore --description "x" > /dev/null
+N9="$(find "$CONDUCTOR_DIR/tasks" -name '*.md' -printf '%f\n' | sort | tail -1 | sed 's/\.md$//')"
+mkdir -p "$PROJECT/.worktrees"; : > "$PROJECT/.worktrees/coder-$N9"   # a file where the worktree should go
+RC=0; OUT=$(spawn "$N9" coder) || RC=$?
+assert_eq "exit 1"                       "$RC" "1"
+case "$OUT" in *"could not prepare a workspace"*) ok "and says what failed" ;; *) fail "and says what failed ($OUT)" ;; esac
+case "$OUT" in *"already exists"*|*"fatal"*) ok "with git's reason" ;; *) fail "with git's reason ($OUT)" ;; esac
+assert_eq "no window was opened"         "$(window_count "$N9")" "0"
+rm -f "$PROJECT/.worktrees/coder-$N9"
+
 echo "── a Codex worker on an API key spawns like any other, with no allowance to measure"
 "$SCRIPTS_DIR/task-create.sh" --title "Task five" --type chore --description "x" > /dev/null
 "$SCRIPTS_DIR/task-create.sh" --title "Task six" --type chore --description "x" > /dev/null
