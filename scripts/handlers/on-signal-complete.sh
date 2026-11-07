@@ -9,6 +9,11 @@
 #      the task, and move it (design to done, a configured test-cmd to validation, chore and
 #      spike to the merge stage, everything else to review)
 #   4. start the destination stage (a spawn, a human notice, or nothing for a holding column)
+#   5. if the task went to done (a design task does, with no validation, review or merge), unblock the
+#      tasks that were waiting on it. on-merge-success does this for a task that is merged, and a task
+#      that never merges would otherwise leave its dependents in backlog until the next startup reconcile.
+#      The project is not checked for completion here: a design task is usually the first of several, and
+#      the architect may not have finished creating the rest.
 #
 # The locks guard is computed for every task, as in on-validation-passed, for the same reason:
 # knowing which routes land on a merge would copy the topology's branching into this script.
@@ -29,3 +34,4 @@ type="$(card_field "$TASK_ID" type)"
 test_cmd="$(config_field test-cmd)"
 guard="$(locks_guard "$TASK_ID")"
 route_task "$TASK_ID" signal-complete "type=$type" "config.test-cmd=$test_cmd" "locks=$guard"
+if [[ "$ROUTED_DEST" == "done" ]]; then unblock_dependents "$TASK_ID"; fi
