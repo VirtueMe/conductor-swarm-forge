@@ -275,6 +275,8 @@ fi
 
 # shellcheck source=scripts/wf-read.sh
 source "$SCRIPTS_DIR/wf-read.sh"
+# shellcheck source=scripts/restart-command.sh
+source "$SCRIPTS_DIR/restart-command.sh"
 
 # Run one function of an adapter in a shell of its own. Sourcing two adapters into this shell lets
 # the later one replace the functions of the earlier (every adapter defines adapter_launch,
@@ -381,13 +383,11 @@ fi
 #  - The loop prints its log lines (timestamped) in this window and appends them to
 #    $CONDUCTOR_DIR/conductor.log; any other window can `tail -F` that file.
 launch_conductor_loop() {
-  local assignments="" name script
-  # compgen -e lists the exported variables by name, so a value is read as it is: spaces,
-  # quotes and newlines all go through printf %q intact.
-  while IFS= read -r name; do
-    [[ "$name" == "CONDUCTOR_DIR" ]] && continue
-    assignments+=" $(printf '%q' "$name=${!name}")"
-  done < <(compgen -e | grep -E '^(CONDUCTOR_[A-Z_]+|PI_ABORT_GRACE)$' || true)
+  local assignments restart_cmd script
+  # The settings the loop is started with, quoted so a value is read as it is (restart-command.sh).
+  # The same producer gives the command the halt notice prints, so the two cannot differ.
+  assignments="$(loop_env_assignments)"
+  restart_cmd="$(loop_restart_command "$TARGET_DIR" "$CONDUCTOR_DIR" "$SCRIPTS_DIR")"
   # After a halt and a restart the window is new and empty, so it first shows where the last run
   # left off: the end of conductor.log (the loop appends to it, with the same lines it prints).
   local log; log="$(printf '%q' "$CONDUCTOR_DIR/conductor.log")"
@@ -396,7 +396,7 @@ launch_conductor_loop() {
   script+="if [ -s $log ]; then printf '%s\\n' '--- earlier in conductor.log:'; tail -n 20 $log; printf '%s\\n' '--- now:'; fi; "
   script+="env CONDUCTOR_DIR=$(printf '%q' "$CONDUCTOR_DIR")${assignments} $(printf '%q' "$SCRIPTS_DIR/conductor-loop.sh"); "
   # shellcheck disable=SC2016  # these expand in the window's shell, not here
-  script+='status=$?; printf "\nconductor-loop exited with status %s.\nThis window is now a shell: restart it with scripts/conductor-loop.sh\n" "$status"; exec "${SHELL:-bash}"'
+  script+='status=$?; printf "\nconductor-loop exited with status %s.\nThis window is now a shell. Restart the loop with (the swarm resumes where it stopped):\n  %s\n" "$status" '"$(printf '%q' "$restart_cmd")"'; exec "${SHELL:-bash}"'
   tmux new-session -d -s "$SESSION" -n "conductor" "bash -c $(printf '%q' "$script")"
 }
 

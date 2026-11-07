@@ -2,7 +2,7 @@
 # Tell the human and the architect that conductor-loop.sh has halted.
 #
 # Usage: loop-halt-notify.sh --kind <kind> --artifact <path> --handler <skill> \
-#                            --detail <text> [--last-error <text>]
+#                            --detail <text> [--last-error <text>] [--restart <command>]
 # Env:   CONDUCTOR_DIR (default: .conductor)
 #
 # A halt stops the whole loop, for every task, so unlike task-notify.sh this is not tied
@@ -20,7 +20,7 @@
 
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 
-KIND="" ARTIFACT="" HANDLER="" DETAIL="" LAST_ERROR=""
+KIND="" ARTIFACT="" HANDLER="" DETAIL="" LAST_ERROR="" RESTART=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --kind)       KIND="${2-}";       shift 2 || shift ;;
@@ -28,6 +28,7 @@ while [[ $# -gt 0 ]]; do
     --handler)    HANDLER="${2-}";    shift 2 || shift ;;
     --detail)     DETAIL="${2-}";     shift 2 || shift ;;
     --last-error) LAST_ERROR="${2-}"; shift 2 || shift ;;
+    --restart)    RESTART="${2-}";    shift 2 || shift ;;
     *) shift ;;
   esac
 done
@@ -37,7 +38,7 @@ done
 # terminal, which obeys escape sequences.
 oneline() { printf '%s' "$1" | LC_ALL=C tr '\000-\037\177' ' ' | cut -c1-300; }
 KIND="$(oneline "$KIND")"; ARTIFACT="$(oneline "$ARTIFACT")"; HANDLER="$(oneline "${HANDLER:-none}")"
-DETAIL="$(oneline "$DETAIL")"; LAST_ERROR="$(oneline "$LAST_ERROR")"
+DETAIL="$(oneline "$DETAIL")"; LAST_ERROR="$(oneline "$LAST_ERROR")"; RESTART="$(oneline "$RESTART")"
 
 TS="$(date +%Y%m%d-%H%M%S)"
 NAME="loop-halt-${TS}.md"
@@ -52,7 +53,11 @@ body() { # <type> -> the notice, front matter first. printf, so no value is ever
   printf 'Why:       %s\n' "$DETAIL"
   [[ -n "$LAST_ERROR" ]] && printf 'Last error: %s\n' "$LAST_ERROR"
   printf '\nThe event was not skipped: it is still waiting. Fix the cause, then start the loop\n'
-  printf 'again (scripts/conductor-loop.sh) and it will retry this event first.\n'
+  if [[ -n "$RESTART" ]]; then
+    printf 'again and it will retry this event first.\nRestart it with: %s\n' "$RESTART"
+  else
+    printf 'again (scripts/conductor-loop.sh) and it will retry this event first.\n'
+  fi
   printf 'Details: %s/conductor-loop.halted\n' "$CONDUCTOR_DIR"
 }
 
@@ -66,7 +71,11 @@ body() { # <type> -> the notice, front matter first. printf, so no value is ever
 printf '\n=== CONDUCTOR LOOP HALTED ===\n'
 printf 'Halt:      %s\nArtifact:  %s\nHandler:   %s\nWhy:       %s\n' "$KIND" "$ARTIFACT" "$HANDLER" "$DETAIL"
 [[ -n "$LAST_ERROR" ]] && printf 'Last error: %s\n' "$LAST_ERROR"
-printf 'Restart:   scripts/conductor-loop.sh   (the event is still waiting)\n'
+if [[ -n "$RESTART" ]]; then
+  printf 'Restart:   %s   (the event is still waiting)\n' "$RESTART"
+else
+  printf 'Restart:   scripts/conductor-loop.sh   (the event is still waiting)\n'
+fi
 printf '=============================\n\n'
 
 # 4. a desktop notification, if asked for. Strip double quotes first: a value inside the

@@ -432,6 +432,28 @@ board_reset
 RC=0; start_ready || RC=$?
 assert_eq "none ready is nothing to do" "$RC" "0"
 
+section "E · A step that fails names the command that failed"
+# A script handler that dies silently leaves a person with an exit status. With the steps sourced, the
+# command that failed is printed on stderr, so the loop's last error says which step it was.
+cat > "$TMP/failing-handler.sh" << 'SH_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$STEPS"
+some_step() { /bin/false; }
+mode="${1:-fail}"
+case "$mode" in
+  fail)    some_step ;;
+  nested)  echo "$(some_step)" ;;
+  handled) some_step || true; if ! some_step; then :; fi; x="$(some_step)" || true; some_step && true; exit 0 ;;
+esac
+SH_EOF
+chmod +x "$TMP/failing-handler.sh"
+RC=0; STEPS="$SCRIPTS_DIR/handler-steps.sh" "$TMP/failing-handler.sh" fail > /dev/null 2> "$TMP/e.err" || RC=$?
+assert_eq "a failing command inside a step: the handler fails" "$RC" "1"
+assert_eq "and the command that failed is on stderr, with its exit status" "$(grep -c 'failing-handler.sh: "/bin/false" exited 1' "$TMP/e.err")" "1"
+RC=0; STEPS="$SCRIPTS_DIR/handler-steps.sh" "$TMP/failing-handler.sh" handled > /dev/null 2> "$TMP/e.err" || RC=$?
+assert_eq "failures the handler handles itself (|| true, if, &&) are not reported" "$RC $(wc -c < "$TMP/e.err" | tr -d ' ')" "0 0"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

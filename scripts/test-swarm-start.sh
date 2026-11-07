@@ -175,7 +175,8 @@ RC=0
 assert_eq "the window command exits 0 through the shell it hands over to" "$RC" "0"
 has "needs GNU timeout" "$TMP/win.out" "the loop ran, with the settings it was given"
 has "conductor-loop exited with status 3" "$TMP/win.out" "the window reports the loop's status"
-has "restart it with scripts/conductor-loop.sh" "$TMP/win.out" "and how to start it again"
+has "Restart the loop with" "$TMP/win.out" "and how to start it again"
+has "^  cd .* && env CONDUCTOR_DIR=.*CONDUCTOR_TIMEOUT_CMD=no-such-timeout .*scripts/conductor-loop.sh\$" "$TMP/win.out" "as a command to paste, in the project, with the settings the loop was given"
 
 section "9 · A setting reaches the loop exactly as written"
 # A stand-in loop reports the variable it received. The value has spaces, quotes, a dollar

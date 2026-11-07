@@ -88,6 +88,8 @@ source "$SCRIPTS_DIR/wf-read.sh"
 source "$SCRIPTS_DIR/handler-resolve.sh"
 # shellcheck source=scripts/usage-log.sh
 source "$SCRIPTS_DIR/usage-log.sh"
+# shellcheck source=scripts/restart-command.sh
+source "$SCRIPTS_DIR/restart-command.sh"
 
 # Sets CONDUCTOR_DIR (absolute), SCRIPTS_DIR and PATH, as a dispatched run needs them.
 conductor_env "${CONDUCTOR_DIR:-.conductor}"
@@ -287,17 +289,20 @@ mark() { "$SCRIPTS_DIR/artifact-ledger.sh" mark "$1"; }
 # --- One event --------------------------------------------------------------
 
 halt() { # <kind> <artifact> <detail>
+  local restart
+  restart="$(loop_restart_command "$(pwd -P)" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" 2> /dev/null || true)"
   {
     echo "kind: $1"
     echo "artifact: $2"
     echo "handler: ${SKILL_NAME:-none}"
     echo "detail: $3"
     [[ -n "$LAST_ERROR" ]] && echo "last-error: $LAST_ERROR"
+    [[ -n "$restart" ]] && echo "restart: $restart"
   } > "$HALTED"
   log "HALT ($1) at $2: $3${LAST_ERROR:+ (last error: $LAST_ERROR)}"
   # Best effort: a notice that cannot be written must not change the halt or its exit status.
   "$SCRIPTS_DIR/loop-halt-notify.sh" --kind "$1" --artifact "$2" --handler "${SKILL_NAME:-none}" \
-    --detail "$3" --last-error "$LAST_ERROR" || true
+    --detail "$3" --last-error "$LAST_ERROR" ${restart:+--restart "$restart"} || true
   exit 1
 }
 
@@ -315,6 +320,11 @@ wait_dispatch() {
     LAST_ERROR="$(awk 'NF{l=$0} END{print substr(l, 1, 300)}' "$DISPATCH_STDERR")"
   else
     LAST_ERROR=""
+    # A script that fails and says nothing leaves a person with an exit status and no lead. Say that it
+    # said nothing (a timeout or a kill is not a failure of the script, and has its own words).
+    if [[ -n "$HANDLER_SCRIPT" && "$rc" -ne 0 && "$rc" -ne 124 && "$rc" -ne 137 && "$rc" -ne 143 ]]; then
+      LAST_ERROR="the handler exited $rc and wrote nothing to stderr"
+    fi
   fi
   return "$rc"
 }
