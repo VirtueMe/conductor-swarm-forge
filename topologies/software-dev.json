@@ -33,6 +33,8 @@
 
   "transitions": {
     "new-task": [
+      { "_order": "a design task is written by the architect, in the task description, so there is nothing for a coder to do: it is done on arrival, whatever it depends on, and its dependents are unblocked.",
+        "when": { "type": ["design"] },        "to": "done", "then": ["unblock-dependents"] },
       { "when": { "deps": "all-done" }, "to": "ready" },
       { "to": "backlog" }
     ],

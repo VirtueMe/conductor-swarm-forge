@@ -6,8 +6,8 @@ set -euo pipefail
 # repairs it. This finds such cards, heals each the way the reconcile does (move to ready, start
 # the entry stage) and prints one line per card, so the caller can say so loudly:
 #
-#   <task> healed <dependency>...        moved to ready and started
-#   <task> failed <step> <dependency>... the move or the start failed (the step is named)
+#   <task> healed <dependency>...        released from backlog (to ready and started, or to done)
+#   <task> failed release <dependency>... the move or the start failed
 #
 # A card whose task still has an event the loop has not handled is left alone: a task that was
 # just created sits in backlog until its new-task handler has run, and that is not stranded.
@@ -32,12 +32,10 @@ while IFS= read -r line; do
   task="${line%% *}"
   deps="${line#"$task"}"; deps="${deps# }"
   grep -q -- "^$task/" <<< "$pending" && continue
-  if ! task-move.sh "$task" ready > /dev/null 2>&1; then
-    echo "$task failed move $deps"
-  elif ! stage-start.sh "$task" ready > /dev/null 2>&1; then
-    echo "$task failed start $deps"
-  else
+  if release_backlog_card "$task" > /dev/null 2>&1; then
     echo "$task healed $deps"
+  else
+    echo "$task failed release $deps"
   fi
 done <<< "$stranded"
 exit 0
