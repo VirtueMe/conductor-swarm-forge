@@ -767,12 +767,18 @@ scope, see #111).
   or for a pool the workforce has no budget for, is ignored and said on stderr: the workforce is the ceiling.
   A brief that requires an adapter does not exist yet (a brief is free text), so there is nothing that
   names a pool that way.
-- **What counts as spent.** On an api pool, the cost of the pool's lines (reported, else estimated). On a
-  subscription pool, the weekly points that the lines' own `allowance` carries: what the swarm's runs
-  used, not what the account used. Both are floors. A line with no cost, or with no points (runs overlapped, a
-  reading was unknown), is counted as `unmeasured` and never as free. Five-hour points are not budgeted:
-  that window resets many times in a run. A line whose pool is `unknown` (no declaration, no sign-in) is in
-  no budget: it is in the totals, and `--by pool` shows it.
+- **What counts as spent.** On an api pool, the cost of the pool's lines (reported, else estimated): a floor,
+  a line with no cost is counted as `unmeasured` and never as free. On a subscription pool, the **rise of the
+  weekly window** over the period (#174): the last minus the first live allowance reading (`source:
+  "endpoint"`) of one window in the usage log. It covers the whole swarm, needs no attribution and survives
+  overlapping workers, which the sum of per-run points did not (in the first real run it said 1% of 8% where
+  the window had risen 3 points and almost every run was marked a batch). It is the account's rise, so it also
+  counts what a person did by hand in the same window; the summary and the warning say so. It cannot be
+  measured with fewer than two live readings, or when the window reset between them (the readings belong to
+  different windows): spent is then the floor of the runs' own weekly points, as before, and the row says
+  why (`basis: "runs"`, `reason`). A role, adapter or model cap is always on the runs' points (a window has
+  no roles). Five-hour points are not budgeted: that window resets many times in a run. A line whose pool is
+  `unknown` (no declaration, no sign-in) is in no budget: it is in the totals, and `--by pool` shows it.
 - **Where it shows.** `usage-summary.sh` prints **Budgets**: one row per pool and per cap, with spent, budget,
   percent and state. After each dispatch the loop runs `budget.sh warn`, which writes a line to
   `conductor.log` for a budget at its `warn_at` percent (default 80) or over (100), once: it appends
