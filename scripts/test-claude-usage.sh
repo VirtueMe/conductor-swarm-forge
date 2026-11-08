@@ -36,20 +36,24 @@ cat > "$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 out=""
 while [[ $# -gt 0 ]]; do
-  case "$1" in -o) out="$2"; shift 2 ;; *) printf '%s\n' "$1" >> "$STUB_LOG.args"; shift ;; esac
+  case "$1" in -o) out="$2"; shift 2 ;; -D) hdr="$2"; shift 2 ;; *) printf '%s\n' "$1" >> "$STUB_LOG.args"; shift ;; esac
 done
 cat > "$STUB_LOG.stdin"
 echo called >> "$STUB_LOG.calls"
+[[ -z "${hdr:-}" ]] || { printf 'HTTP/2 %s\r\n' "${STUB_CODE:-200}"; [[ -z "${STUB_RETRY_AFTER:-}" ]] || printf 'Retry-After: %s\r\n' "$STUB_RETRY_AFTER"; } > "$hdr"
 [[ "${STUB_CODE:-200}" != 000 ]] || exit 7
 [[ -z "$out" || -z "${STUB_BODY:-}" ]] || cp "$STUB_BODY" "$out"
 printf '%s' "${STUB_CODE:-200}"
 STUB
 chmod +x "$TMP/bin/curl"
 export STUB_LOG="$TMP/stub"
+# The endpoint's state is the test's own, never ~/.claude, and starts empty at every read (section 10 keeps it).
+export CLAUDE_USAGE_STATE_FILE="$TMP/endpoint-state.json"
 
 # read_json <credentials> <state file> <endpoint body or ""> [code] [now]
 read_json() {
   rm -f "$STUB_LOG".*
+  [[ -n "${KEEP_STATE:-}" ]] || rm -rf "$CLAUDE_USAGE_STATE_FILE" "$CLAUDE_USAGE_STATE_FILE.lock"
   export STUB_BODY="$3" STUB_CODE="${4:-200}"
   RC=0
   OUT="$(PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$1" CLAUDE_JSON_FILE="$2" CLAUDE_USAGE_NOW="${5:-$NOW}" \
@@ -159,7 +163,7 @@ has '^5-hour  *37.5% used' "the five-hour window shows its percentage"
 has '^weekly  *61% used' "the weekly window"
 has '^Fable  *12% used' "a model's window"
 has '^credits  *4.25 of 100 USD' "the credits"
-RC=0; PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$FX/claude.json" CLAUDE_USAGE_NOW="$NOW" STUB_CODE=401 \
+rm -f "$CLAUDE_USAGE_STATE_FILE"; RC=0; PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$FX/claude.json" CLAUDE_USAGE_NOW="$NOW" STUB_CODE=401 \
   "$READER" --text > "$TMP/text" 2> /dev/null || RC=$?
 has 'from cache.* (17 h old)' "a cached reading says how old it is"
 has '^5-hour  *unknown' "a reset cached window reads as unknown"
@@ -201,12 +205,80 @@ STATUSLINE="$TMP/missing.json"
 read_json "$CRED" "$NOCACHE" "$FX/endpoint.json" 401
 assert_eq "no file, no cache: unknown, with the old reason (the missing payload adds no noise)" "$(j .five_hour.reason)" "the endpoint refused the token (401); no cachedUsageUtilization in ~/.claude.json"
 STATUSLINE="$FX/statusline.json"
-rm -f "$STUB_LOG".*; export STUB_BODY="$FX/endpoint.json" STUB_CODE=401
+rm -f "$STUB_LOG".* "$CLAUDE_USAGE_STATE_FILE"; export STUB_BODY="$FX/endpoint.json" STUB_CODE=401
 RC=0; PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$NOCACHE" CLAUDE_USAGE_NOW="$NOW" CLAUDE_STATUSLINE_FILE="$STATUSLINE" \
   "$READER" --text > "$TMP/text" 2> /dev/null || RC=$?
 has 'from statusline.* (10 min old)' "text output says the payload's age"
 has '^per model  *unknown' "and per model reads as unknown"
 unset STATUSLINE
+
+section "10 · A swarm's burst: a fresh answer is reused, and a 429 is waited out"
+CLOCK=1000000
+read_clock() { KEEP_STATE=1 CLAUDE_USAGE_CLOCK="$CLOCK" read_json "$@"; }
+rm -rf "$CLAUDE_USAGE_STATE_FILE" "$CLAUDE_USAGE_STATE_FILE.lock"
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "the first read asks the endpoint" "$(calls)" "1"
+assert_eq "and keeps the answer" "$(jq -r '.taken_at' "$CLAUDE_USAGE_STATE_FILE")" "$CLOCK"
+FIRST="$OUT"
+CLOCK=1000030
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "30 s later nobody asks again" "$(calls)" "0"
+assert_eq "it is still the endpoint's answer" "$(j .source)" "endpoint"
+assert_eq "with the figures of the first" "$(j .five_hour.used_percent)" "$(jq -r .five_hour.used_percent <<< "$FIRST")"
+assert_eq "and its own time, so the age shows" "$(j .snapshot_at)" "$(jq -r .snapshot_at <<< "$FIRST")"
+assert_eq "no note: nothing went wrong" "$(j '.note | tostring')" "null"
+CLOCK=1000061
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "after the minute it asks again" "$(calls)" "1"
+
+# A 429 with a Retry-After: nobody asks until it is over; the cache stands in and the note says why.
+rm -rf "$CLAUDE_USAGE_STATE_FILE"; CLOCK=2000000
+export STUB_RETRY_AFTER=90
+read_clock "$CRED" "$FX/claude.json" "" 429
+assert_eq "a 429 is asked once" "$(calls)" "1"
+assert_eq "the cache stands in" "$(j .source)" "cache"
+assert_eq "the note says 429 and for how long, then what was used" "$(j .note)" "the endpoint answered 429; not asking again for 90 s; using the copy Claude Code last stored"
+assert_eq "the state holds the end of the wait" "$(jq -r .blocked_until "$CLAUDE_USAGE_STATE_FILE")" "2000090"
+unset STUB_RETRY_AFTER
+CLOCK=2000040
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "inside the wait the endpoint is left alone" "$(calls)" "0"
+assert_eq "the note counts down" "$(j .note)" "the endpoint answered 429; not asking again for 50 s; using the copy Claude Code last stored"
+CLOCK=2000090
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "when it is over it asks again" "$(calls)" "1"
+assert_eq "and the endpoint answers" "$(j .source)" "endpoint"
+assert_eq "a good answer ends the wait" "$(jq -r .blocked_until "$CLAUDE_USAGE_STATE_FILE")" "null"
+
+# No Retry-After: the default; a huge one is capped.
+rm -rf "$CLAUDE_USAGE_STATE_FILE"; CLOCK=3000000
+read_clock "$CRED" "$FX/claude.json" "" 429
+assert_eq "no Retry-After: 120 s" "$(jq -r .blocked_until "$CLAUDE_USAGE_STATE_FILE")" "3000120"
+rm -rf "$CLAUDE_USAGE_STATE_FILE"; export STUB_RETRY_AFTER=999999
+read_clock "$CRED" "$FX/claude.json" "" 429
+assert_eq "a huge Retry-After is capped at 15 minutes" "$(jq -r .blocked_until "$CLAUDE_USAGE_STATE_FILE")" "3000900"
+unset STUB_RETRY_AFTER
+
+# A state file that is not ours is not trusted; a lock left by a dead caller does not block for ever.
+echo 'not json' > "$CLAUDE_USAGE_STATE_FILE"
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "a broken state file is no state" "$(calls)" "1"
+rm -rf "$CLAUDE_USAGE_STATE_FILE"; mkdir "$CLAUDE_USAGE_STATE_FILE.lock"; touch -d '10 minutes ago' "$CLAUDE_USAGE_STATE_FILE.lock"
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "a stale lock is cleared" "$(calls)" "1"
+assert_eq "and released" "$([[ -d "$CLAUDE_USAGE_STATE_FILE.lock" ]] && echo held || echo free)" "free"
+
+# Callers in a burst take turns: five at once make one request.
+rm -rf "$CLAUDE_USAGE_STATE_FILE"; rm -f "$STUB_LOG".*; CLOCK=4000000
+export STUB_BODY="$FX/endpoint.json" STUB_CODE=200
+for i in 1 2 3 4 5; do
+  ( PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$FX/claude.json" CLAUDE_USAGE_NOW="$NOW" CLAUDE_USAGE_CLOCK="$CLOCK" \
+      CLAUDE_STATUSLINE_FILE="$TMP/no-statusline.json" "$READER" > "$TMP/burst.$i" 2> /dev/null ) &
+done
+wait
+assert_eq "five callers at once: one request" "$(calls)" "1"
+assert_eq "and all five got the endpoint's answer" "$(cat "$TMP"/burst.* | jq -r .source | sort -u)" "endpoint"
+unset KEEP_STATE
 
 section "9 · Arguments"
 RC=0; "$READER" --bogus > /dev/null 2>&1 || RC=$?

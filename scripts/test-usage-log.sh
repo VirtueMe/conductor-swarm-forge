@@ -25,6 +25,8 @@ section() { echo ""; echo "── $1"; }
 source "$SCRIPTS_DIR/usage-log.sh"
 
 export CLAUDE_CREDENTIALS_FILE="$TMP/claude.json" CODEX_AUTH_FILE="$TMP/codex.json"
+# The endpoint's state is the test's own (never ~/.claude) and nothing is reused: every read asks the stub (#173).
+export CLAUDE_USAGE_STATE_FILE="$TMP/endpoint-state.json" CLAUDE_USAGE_FRESH_SECONDS=0
 unset ANTHROPIC_API_KEY
 LOG="$TMP/usage.jsonl"
 SECRET="sk-test-do-not-print-0123456789"

@@ -948,6 +948,18 @@ the Codex reader: `snapshot_at`, `source`, `age_seconds`, `checked_version`, `no
   `cachedUsageUtilization` in `~/.claude.json`: the same shape, no token and no network, but a copy from
   whenever Claude Code last fetched, with its age in `age_seconds`. `note` says why the endpoint was not
   used (no login, an expired token, a 401, unreachable, a shape it does not know).
+- **A swarm reads in bursts, and the endpoint answers 429 to that** (#173: in the first real swarm 56
+  of 87 readings fell back to a 70-hour-old copy). So `claude-usage.sh` keeps what the endpoint last
+  said in `~/.claude/usage-endpoint-state.json` (`CLAUDE_USAGE_STATE_FILE`). An answer is reused for a
+  minute (`CLAUDE_USAGE_FRESH_SECONDS`) by every caller, still as `source: "endpoint"` with its own
+  `snapshot_at` and `age_seconds`; callers take turns on a lock next to the file, so a burst of
+  readings costs one request. After a 429 nobody asks until its `Retry-After` has passed (seconds;
+  default 120, capped at 900; `CLAUDE_USAGE_BACKOFF_SECONDS`), and the fallbacks stand in with the note
+  `the endpoint answered 429; not asking again for N s; using ...`. `usage-summary.sh` says how many
+  of a pool's readings were live (`from cache, 70 h old, 1 of 87 readings live`), so a stale run is
+  visible. Not known: the endpoint's real limit, and whether it sends `Retry-After` at all (the
+  default covers that). A reused answer is up to a minute old, so a run shorter than that shows no
+  difference, which the whole-point percentages mostly did anyway.
 - **The status line payload** is the second source, `source: "statusline"`. Claude Code hands the
   configured `statusLine` command a JSON object with `rate_limits` (`five_hour` and `seven_day`, each
   `used_percentage` and `resets_at`), but only a command that saves it makes it readable later.
