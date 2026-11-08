@@ -231,6 +231,8 @@ CURL_EOF
 chmod +x "$TMP/bin/curl"
 export STUB_CLAUDE_BODY="$TMP/claude-body.json" CLAUDE_USAGE_NOW=1793865600
 export CLAUDE_CREDENTIALS_FILE="$FX/../claude-usage/credentials.json"
+# The endpoint's state is the test's own (never ~/.claude) and nothing is reused: every read asks the stub (#173).
+export CLAUDE_USAGE_STATE_FILE="$TMP/endpoint-state.json" CLAUDE_USAGE_FRESH_SECONDS=0
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 reset
 cp "$FX/../claude-usage/endpoint.json" "$STUB_CLAUDE_BODY"

@@ -10,6 +10,12 @@ set -euo pipefail
 #                                 (default ~/.claude/statusline-rate-limits.json)
 #        CLAUDE_USAGE_URL         the usage endpoint (default https://api.anthropic.com/api/oauth/usage)
 #        CLAUDE_USAGE_NOW         the Unix time to judge staleness against, as --now (for tests)
+#        CLAUDE_USAGE_STATE_FILE  what the endpoint last said, and when it told us to wait
+#                                 (default ~/.claude/usage-endpoint-state.json)
+#        CLAUDE_USAGE_FRESH_SECONDS  how long an endpoint answer is reused (default 60)
+#        CLAUDE_USAGE_BACKOFF_SECONDS  how long to leave the endpoint alone after a 429 that sends
+#                                 no Retry-After (default 120; a Retry-After is honoured up to 900)
+#        CLAUDE_USAGE_CLOCK       the real Unix time the state file is judged by (for tests)
 #
 # Prints one JSON object (--text: readable lines instead):
 #   snapshot_at, source ("endpoint", "statusline", "cache" or null), age_seconds, checked_version, note
@@ -31,6 +37,11 @@ set -euo pipefail
 #   3. cache     cachedUsageUtilization in ~/.claude.json: the same shape, no token, no network, but a
 #                copy from whenever Claude Code last fetched. age_seconds says how old; a window that
 #                has reset since is unknown, because its stored percentage no longer applies.
+# A swarm reads in bursts (every worker start and end takes a reading) and the endpoint answers 429
+# to that (#173). So an answer is kept in the state file and reused for a minute by every caller (the
+# callers take turns, so a burst costs one request), and after a 429 nobody asks again until the
+# Retry-After has passed; the fallbacks stand in and the note says why. An answer reused this way is
+# still the endpoint's: snapshot_at and age_seconds say when it was taken.
 # The first source that gives a usable answer wins; the other is not mixed in. When the endpoint was
 # skipped or failed, note says why (no token, an expired token, a 401, unreachable, a changed shape).
 # With no usable source every figure is unknown and the exit status is still 0: that is an answer,
@@ -50,6 +61,9 @@ STATE_FILE="${CLAUDE_JSON_FILE:-$HOME/.claude.json}"
 STATUSLINE_FILE="${CLAUDE_STATUSLINE_FILE:-$HOME/.claude/statusline-rate-limits.json}"
 URL="${CLAUDE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
 NOW="${CLAUDE_USAGE_NOW:-}"
+STATE="${CLAUDE_USAGE_STATE_FILE:-$HOME/.claude/usage-endpoint-state.json}"
+FRESH="${CLAUDE_USAGE_FRESH_SECONDS:-60}"
+BACKOFF="${CLAUDE_USAGE_BACKOFF_SECONDS:-120}"
 FORMAT=json
 
 usage() { sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -124,9 +138,33 @@ answer() { # <body json or null> <note or ""> <taken at or ""> [lacks json]
     '{ body: $body, note: (if $note == "" then null else $note end), at: (if $at == "" then null else ($at | tonumber) end), lacks: $lacks }'
 }
 
-# Tries the endpoint. <dir> is a scratch directory for the response.
+# What the state file says about the endpoint, as an answer or nothing: a fresh endpoint answer is
+# reused, and a 429 not yet over is a reason not to ask. The file is ours and small; one that does not
+# parse is the same as none.
+clock() { printf '%s' "${CLAUDE_USAGE_CLOCK:-$(date +%s)}"; }
+remembered() { # -> an answer, or nothing
+  local now st
+  [[ -r "$STATE" ]] || return 0
+  now="$(clock)"
+  st="$(jq -c 'select(type == "object")' "$STATE" 2> /dev/null || true)"
+  [[ -n "$st" ]] || return 0
+  if [[ "$(jq -r --argjson now "$now" --argjson fresh "$FRESH" \
+        '((.taken_at | type) == "number") and (.body | type) == "object" and (.taken_at <= $now) and ($now - .taken_at < $fresh)' <<< "$st")" == true ]]; then
+    answer "$(jq -c .body <<< "$st")" "" "$(jq -r '.taken_at | floor' <<< "$st")"
+  elif [[ "$(jq -r --argjson now "$now" '((.blocked_until | type) == "number") and .blocked_until > $now' <<< "$st")" == true ]]; then
+    answer null "the endpoint answered 429; not asking again for $(( $(jq -r '.blocked_until | floor' <<< "$st") - now )) s" ""
+  fi
+}
+remember() { # <state json>  (best effort, atomic)
+  local tmp
+  { mkdir -p "$(dirname "$STATE")" && tmp="$(mktemp "$STATE.XXXXXX")" && printf '%s\n' "$1" > "$tmp" && mv -f "$tmp" "$STATE"; } 2> /dev/null || true
+}
+
+# Tries the endpoint. <dir> is a scratch directory for the response. Callers take turns on a lock
+# next to the state file, and look at the state again once it is theirs: whoever went first has
+# probably left an answer.
 fetch_endpoint() { # <dir>
-  local token expires body code taken
+  local token expires mem lock="$STATE.lock" tries=0
   if [[ ! -r "$CREDENTIALS" ]]; then answer null "no OAuth login on this machine" ""; return 0; fi
   token="$(jq -r '.claudeAiOauth.accessToken // empty | select(type == "string")' "$CREDENTIALS" 2> /dev/null || true)"
   if [[ -z "$token" ]]; then answer null "no OAuth token in the credentials file" ""; return 0; fi
@@ -137,18 +175,48 @@ fetch_endpoint() { # <dir>
     answer null "the OAuth token has expired (Claude Code refreshes it when it runs)" ""; return 0
   fi
   command -v curl > /dev/null 2>&1 || { answer null "curl is not installed" ""; return 0; }
-  body="$1/body"
-  code="$(printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\n' "$token" \
-    | curl -sS --max-time 10 -K - -o "$body" -w '%{http_code}' "$URL" 2> /dev/null)" || code=000
-  taken="$(date +%s)"   # when the endpoint answered: the reading's own time, not the clock it is judged by
+
+  mem="$(remembered)"
+  if [[ -n "$mem" ]]; then printf '%s\n' "$mem"; return 0; fi
+  mkdir -p "$(dirname "$STATE")" 2> /dev/null || true
+  until mkdir "$lock" 2> /dev/null; do
+    # A lock nobody has touched for a minute belongs to a caller that died.
+    if [[ -n "$(find "$lock" -maxdepth 0 -mmin +1 2> /dev/null)" ]]; then rmdir "$lock" 2> /dev/null || true; continue; fi
+    tries=$(( tries + 1 ))
+    # Not ours after ~12 s: ask anyway rather than wait for ever.
+    if (( tries > 60 )); then lock=""; break; fi
+    sleep 0.2
+  done
+  mem="$(remembered)"
+  if [[ -n "$mem" ]]; then [[ -z "$lock" ]] || rmdir "$lock" 2> /dev/null || true; printf '%s\n' "$mem"; return 0; fi
+  request_endpoint "$1" "$token"
+  [[ -z "$lock" ]] || rmdir "$lock" 2> /dev/null || true
+  return 0
+}
+
+request_endpoint() { # <dir> <token>
+  local body headers code taken wait
+  body="$1/body"; headers="$1/headers"
+  code="$(printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\n' "$2" \
+    | curl -sS --max-time 10 -K - -D "$headers" -o "$body" -w '%{http_code}' "$URL" 2> /dev/null)" || code=000
+  taken="$(clock)"   # when the endpoint answered: the reading's own time, not the clock it is judged by
   case "$code" in
     200) ;;
     401|403) answer null "the endpoint refused the token ($code)" ""; return 0 ;;
     000) answer null "the endpoint could not be reached" ""; return 0 ;;
+    429)
+      # Retry-After in seconds, if it came as that (an HTTP date is not parsed: the default stands).
+      wait="$(awk 'tolower($1) == "retry-after:" { v = $2; gsub(/[^0-9]/, "", v); print v; exit }' "$headers" 2> /dev/null || true)"
+      [[ "$BACKOFF" =~ ^[0-9]+$ ]] || BACKOFF=120
+      [[ "$wait" =~ ^[0-9]+$ ]] || wait="$BACKOFF"
+      (( wait <= 900 )) || wait=900
+      remember "$(jq -nc --argjson until "$(( taken + wait ))" '{ blocked_until: $until }')"
+      answer null "the endpoint answered 429; not asking again for $wait s" ""; return 0 ;;
     *) answer null "the endpoint answered $code" ""; return 0 ;;
   esac
   # The shape: an object with at least one of the windows. Anything else has changed under us.
   if jq -e 'type == "object" and ((.five_hour | type) == "object" or (.seven_day | type) == "object")' "$body" > /dev/null 2>&1; then
+    remember "$(jq -nc --argjson taken "$taken" --slurpfile body "$body" '{ taken_at: $taken, body: $body[0], blocked_until: null }')"
     answer "$(cat "$body")" "" "$taken"
   else
     answer null "the endpoint answered in a shape this reader does not know" ""

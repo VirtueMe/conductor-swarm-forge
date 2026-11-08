@@ -17,6 +17,9 @@ TMP="$(mktemp -d)"
 # user's own tmux session.
 export TMUX_TMPDIR="$TMP/tmux"; mkdir -p "$TMUX_TMPDIR"
 trap 'rm -rf "$TMP"' EXIT
+# Claude Code's sign-in and state are the test's own, never ~/.claude: no test reaches the usage endpoint.
+export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json" CLAUDE_JSON_FILE="$TMP/no-claude.json" CLAUDE_STATUSLINE_FILE="$TMP/no-claude-statusline.json"
+export CLAUDE_USAGE_STATE_FILE="$TMP/endpoint-state.json"
 
 FAILS=0
 ok()   { echo "   ✓  $1"; }

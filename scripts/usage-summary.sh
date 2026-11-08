@@ -135,6 +135,7 @@ jq -R 'fromjson? // empty' "$FILE" \
                (if $p == claude_pool
                 then "from " + ($l.source // "unknown") + (if $l.source == "cache" then ", " + ((($l.age_seconds // 0) / 3600) | floor | tostring) + " h old"
                                            elif $l.source == "statusline" then ", " + ((($l.age_seconds // 0) / 60) | floor | tostring) + " min old" else "" end)
+                  + ", " + ([$rs[] | select(.source == "endpoint")] | length | tostring) + " of " + ($rs | length | tostring) + " readings live"
                 else "plan " + ($l.plan_type // "-") + ", Codex " + ($l.codex_version // "-") end)] | @tsv),
              window_rows($rs; "five_hour"; "5-hour"), window_rows($rs; "weekly"; "weekly"),
              (if $p == claude_pool then

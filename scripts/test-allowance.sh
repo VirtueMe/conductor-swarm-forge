@@ -30,6 +30,8 @@ printf '{"auth_mode":"chatgpt"}\n' > "$CODEX_AUTH_FILE"
 export CODEX_USAGE_NOW=1793790000        # between the five-hour window opening (1793782000) and its reset
 # Claude's own sign-in and state are the test's, never ~/.claude, and no API key is in the environment.
 export CLAUDE_CREDENTIALS_FILE="$SCRIPTS_DIR/../tests/claude-usage/credentials.json"
+# The endpoint's state is the test's own (never ~/.claude) and nothing is reused: every read asks the stub (#173).
+export CLAUDE_USAGE_STATE_FILE="$TMP/endpoint-state.json" CLAUDE_USAGE_FRESH_SECONDS=0
 export CLAUDE_JSON_FILE="$TMP/no-claude.json"
 export CLAUDE_STATUSLINE_FILE="$TMP/no-claude-statusline.json"
 export CLAUDE_USAGE_NOW=1793865600       # 2026-11-05 08:00 UTC, before the Claude windows reset (09:10, and 11-07 04:00)
