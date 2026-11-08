@@ -26,6 +26,10 @@ done
 
 [[ -z "$TITLE" ]] && usage
 
+# A stray relative default (a worker started in its own worktree) must not quietly make a new, empty
+# conductor directory there: the loop watches the project's, and would never see what is written (#181).
+[[ -d "$CONDUCTOR_DIR" ]] || { echo "$(basename "$0"): no conductor directory at '$CONDUCTOR_DIR' (working directory $(pwd)); set CONDUCTOR_DIR to the project's .conductor" >&2; exit 1; }
+
 TASKS_DIR="$CONDUCTOR_DIR/tasks"
 WORK_DIR="$CONDUCTOR_DIR/work"
 
