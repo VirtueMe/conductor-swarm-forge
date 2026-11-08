@@ -328,6 +328,18 @@ start -- --lang bash --test-cmd 'make test "quoted arg"'
 assert_eq "a test command with quotes still gives valid JSON" "$(jq -e . "$TARGET/.claude/settings.json" > /dev/null && echo ok)" "ok"
 assert_eq "and is allowed as written" "$(allow | grep -cxF 'Bash(make test "quoted arg")')" "1"
 
+section "16b · Workers can read the project and call scripts with a CONDUCTOR_DIR= prefix without asking (#182)"
+start -- --lang python --test-cmd "python3 -m unittest discover"
+SET="$TARGET/.claude/settings.json"
+PROJ_REAL="$(cd "$TARGET" && pwd -P)"
+assert_eq "the project root is an additional directory" "$(jq -r --arg d "$PROJ_REAL" '.permissions.additionalDirectories | index($d) != null' "$SET")" "true"
+assert_eq "so is the tool's scripts directory" "$(jq -r --arg d "$ROOT_DIR/scripts" '.permissions.additionalDirectories | index($d) != null' "$SET")" "true"
+assert_eq "a script called with this swarm's CONDUCTOR_DIR prefix is allowed" "$(allow | grep -cxF "Bash(CONDUCTOR_DIR=$PROJ_REAL/.conductor $ROOT_DIR/scripts/*)")" "1"
+assert_eq "and so is the bash form" "$(allow | grep -cxF "Bash(CONDUCTOR_DIR=$PROJ_REAL/.conductor bash $ROOT_DIR/scripts/*)")" "1"
+assert_eq "no rule lets any CONDUCTOR_DIR through" "$(allow | grep -c 'CONDUCTOR_DIR=\*')" "0"
+assert_eq "a start again does not repeat the directories" "$(start -- --lang python --test-cmd "python3 -m unittest discover"; jq -r '.permissions.additionalDirectories | length - (unique | length)' "$SET")" "0"
+assert_eq "the file is still valid JSON with the deny list" "$(jq -r '.permissions.deny | length' "$SET")" "5"
+
 section "17 · Trust: a note by default, and --trust-project only when asked"
 export CLAUDE_JSON_FILE="$TMP/claude-state.json"
 printf '{"numStartups":1,"projects":{}}' > "$CLAUDE_JSON_FILE"
