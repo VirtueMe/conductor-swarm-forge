@@ -160,6 +160,9 @@ jobs:
       - name: test-conductor-dir
         run: bash scripts/test-conductor-dir.sh
 
+      - name: test-validator-skill
+        run: bash scripts/test-validator-skill.sh
+
       - name: test-handler-replay
         run: bash scripts/test-handler-replay.sh
 

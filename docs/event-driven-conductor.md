@@ -1125,6 +1125,12 @@ what to do about it, and the other tasks go on. Not covered: the architect brief
 that tests belong with or before the code, and a restart runs the parked task's validation once more
 (the startup reconcile starts the stage of a card with no window), which parks it again.
 
+The validator no longer counts "no tests exist yet" as a failure (#185): when its working directory has no
+test file at all it signals **passed** with the note `No tests exist yet in this worktree; nothing was
+validated.`, so the card moves on and the reviewer sees that nothing ran. Test files that exist but are not
+run (discovery or an import error) are still a failure. The loop limit above stays as the backstop for a
+failure that really cannot be fixed.
+
 ## Spike results
 
 The spike (#73) ran one real handler, `on-review-approved`, under each harness
