@@ -225,9 +225,18 @@ fi
 # and the command is only known now (it may be detected). The command as written, the same command with
 # other arguments (python3 -m unittest discover -> python3 -m unittest *) and, for python, its runners.
 # python3, not jq: a default start does not need jq, and the adapters already need python3.
-if ! python3 -I - ".claude/settings.json" "${TEST_CMD:-}" "${LANG:-}" << 'PYEOF'
+# Two more things the first real runs showed (#182). A worker's window starts in its own worktree, so the
+# project root it belongs to is outside its working directory: the root (and the scripts' directory) are
+# added as additional directories, or the first `find` or `cat` of the project asks. And the briefings tell
+# every worker to call a script as `CONDUCTOR_DIR=<abs> <scripts>/x.sh`; a command that starts with that
+# assignment does not match `Bash(<scripts>/*)`, so the same call is allowed in that form (this swarm's
+# conductor dir only, not any CONDUCTOR_DIR). Each path in its logical and its physical spelling.
+if ! python3 -I - ".claude/settings.json" "${TEST_CMD:-}" "${LANG:-}" "$PWD" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" << 'PYEOF'
 import json, os, sys
-path, test_cmd, lang = sys.argv[1], sys.argv[2], sys.argv[3]
+path, test_cmd, lang, project, conductor_dir, scripts = sys.argv[1:7]
+def spellings(p):
+    p = os.path.abspath(os.path.join(project, p))
+    return list(dict.fromkeys([p, os.path.realpath(p)]))
 words = test_cmd.split()
 extra = []
 if test_cmd:
@@ -237,10 +246,15 @@ if words:
     extra.append(f"Bash({' '.join(prefix)} *)")
 if lang.lower() == "python":
     extra += ["Bash(python3 *)", "Bash(python *)"]
+for c in spellings(conductor_dir):
+    for sc in spellings(scripts):
+        extra += [f"Bash(CONDUCTOR_DIR={c} {sc}/*)", f"Bash(CONDUCTOR_DIR={c} bash {sc}/*)"]
 with open(path) as f:
     settings = json.load(f)
 allow = settings["permissions"]["allow"]
 settings["permissions"]["allow"] = allow + [e for e in dict.fromkeys(extra) if e not in allow]
+dirs = settings["permissions"].setdefault("additionalDirectories", [])
+settings["permissions"]["additionalDirectories"] = dirs + [d for d in dict.fromkeys(spellings(".") + spellings(scripts)) if d not in dirs]
 with open(path + ".new", "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
@@ -248,7 +262,7 @@ os.replace(path + ".new", path)
 PYEOF
 then
   rm -f ".claude/settings.json.new"
-  echo "Warning: could not add the test command to .claude/settings.json; the validator may ask for permission" >&2
+  echo "Warning: could not finish .claude/settings.json (the test command, the project directories); workers may ask for permission" >&2
 fi
 # Claude Code asks "do you trust this folder?" the first time it starts in a new directory, and an
 # interactive window that nobody answers is a stalled swarm. Say so before launching. --trust-project
