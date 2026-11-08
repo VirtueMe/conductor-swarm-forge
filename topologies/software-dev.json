@@ -49,7 +49,9 @@
       { "when": { "type": ["chore", "spike"] }, "to": "@merge" },
       { "to": "review" }
     ],
-    "validation-failed": [ { "to": "in-progress" } ],
+    "validation-failed": [ { "_order": "a task that has failed validation this many times in a row is not sent back again: the coder cannot fix what is not the code (#185). count.validation-failed is the number of failed validations in a row, counted by the handler.",
+                             "when": { "count": { "signal": "validation-failed", "gte": 3 } }, "to": "@escalate" },
+                           { "to": "in-progress" } ],
     "review-approved":   [ { "to": "@merge" } ],
     "review-rejected":   [ { "to": "in-progress" } ],
     "merge-success":     [ { "_integration": "release-merge-pending is git-specific (lock-based); to be partitioned behind the integration boundary in #5.",

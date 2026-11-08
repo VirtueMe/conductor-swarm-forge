@@ -317,6 +317,42 @@ progress_note() { # <task> <label> <artifact>
   task-signal.sh --task "$1" --type progress --notes "conductor: $2 — see $3"
 }
 
+# How many validations of a task have failed in a row, counting back from the latest: the artifacts
+# validation-*.md in work/<task>/ sort by their timestamped names, and a pass ends the run. This is the
+# `count.validation-failed` guard of the topology's validation-failed rule (#185): a failure the coder
+# cannot fix (the tests are a later task, say) otherwise went round for ever.
+failed_validations() { # <task>
+  local f n=0
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    [[ "$(fm_field "$f" outcome)" == failed ]] || break
+    n=$(( n + 1 ))
+  done < <(find "$CONDUCTOR_DIR/work/$1" -maxdepth 1 -name 'validation-*.md' 2> /dev/null | sort -r)
+  echo "$n"
+}
+
+# A task the topology sends to @escalate after repeated validation failures: the card stays in
+# validation with no worker, and the architect and the person are told, once per call. Report only:
+# nothing here decides what to do about it. The notice says how to send the card back.
+escalate_validation_loop() { # <task> <failures> <artifact>
+  local id="$1" n="$2" art="$3" ts title note body
+  ts="$(date +%Y%m%d-%H%M%S)"
+  title="$(fm_field "$CONDUCTOR_DIR/tasks/$id.md" title 2> /dev/null || true)"
+  note="$(fm_body "$art" 2> /dev/null | head -c 600 | tr '\000-\037\177' ' ' || true)"
+  body="Task $id${title:+ ($title)} failed validation $n times in a row. It is parked in validation with no worker: sending it back to the coder has not helped, and would only go round again.
+
+Last failure: ${note:-see $art}
+
+Look at the failures in $CONDUCTOR_DIR/work/$id/ (validation-*.md). Common causes: the tests are a later task, so there is nothing for validation to run yet; a test that cannot pass; a test command that does not fit the task.
+To send it back anyway: task-move.sh $id in-progress && stage-start.sh $id in-progress"
+  mkdir -p "$CONDUCTOR_DIR/architect-inbox" "$CONDUCTOR_DIR/human-inbox"
+  { printf -- '---\ntype: validation-loop\ntask-id: %s\nfailures: %s\ntimestamp: %s\n---\n%s\n' "$id" "$n" "$ts" "$body"; } > "$CONDUCTOR_DIR/architect-inbox/validation-loop-$id-$ts.md"
+  { printf -- '---\ntype: validation-loop\ntask-id: %s\nfailures: %s\ntimestamp: %s\n---\n%s\n' "$id" "$n" "$ts" "$body"; } > "$CONDUCTOR_DIR/human-inbox/validation-loop-$id-$ts.md"
+  task-signal.sh --task "$id" --type progress --notes "conductor: parked after $n validation failures in a row — see $art" > /dev/null
+  # The loop shows a script handler's answer in conductor.log, after "finished".
+  [[ -z "${DISPATCH_ANSWER_FILE:-}" ]] || printf 'task %s parked in validation after %s failed validations in a row; the architect and the human inbox have been told\n' "$id" "$n" > "$DISPATCH_ANSWER_FILE" 2> /dev/null || true
+}
+
 route_task() { # <task> <event> [guard=value...]
   local id="$1" event="$2"
   shift 2

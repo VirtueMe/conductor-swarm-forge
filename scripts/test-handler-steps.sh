@@ -484,6 +484,48 @@ assert_eq "and the command that failed is on stderr, with its exit status" "$(gr
 RC=0; STEPS="$SCRIPTS_DIR/handler-steps.sh" "$TMP/failing-handler.sh" handled > /dev/null 2> "$TMP/e.err" || RC=$?
 assert_eq "failures the handler handles itself (|| true, if, &&) are not reported" "$RC $(wc -c < "$TMP/e.err" | tr -d ' ')" "0 0"
 
+section "F · Validation failures in a row, and the notice when a task is parked (#185)"
+# failed_validations counts the failed validation artifacts back from the newest, up to the first pass.
+STEPS_LIB="$SCRIPTS_DIR/handler-steps.sh"
+vfile() { # <task> <timestamp> <outcome>
+  mkdir -p "$CONDUCTOR_DIR/work/$1"
+  printf -- '---\ntype: validation\ntask-id: %s\ntimestamp: %s\noutcome: %s\n---\nNO TESTS RAN: found no tests.\n' "$1" "$2" "$3" > "$CONDUCTOR_DIR/work/$1/validation-$2.md"
+}
+# shellcheck source=scripts/handler-steps.sh
+count_for() { ( source "$STEPS_LIB"; failed_validations "$1" ); }
+rm -rf "$CONDUCTOR_DIR/work/0009"
+assert_eq "no validations: 0" "$(count_for 0009)" "0"
+vfile 0009 20261108-100000 failed
+assert_eq "one failure: 1" "$(count_for 0009)" "1"
+vfile 0009 20261108-110000 failed; vfile 0009 20261108-120000 failed
+assert_eq "three in a row: 3" "$(count_for 0009)" "3"
+vfile 0009 20261108-130000 passed
+assert_eq "a pass as the newest ends the run: 0" "$(count_for 0009)" "0"
+vfile 0009 20261108-140000 failed
+assert_eq "failures before a pass do not count" "$(count_for 0009)" "1"
+# other artifacts in work/ are not validations
+printf -- '---\ntype: signal\noutcome: failed\n---\n' > "$CONDUCTOR_DIR/work/0009/signal-20261108-150000.md"
+assert_eq "a signal artifact is not counted" "$(count_for 0009)" "1"
+
+# the notice: one file for the architect, one for the human, the card is not touched
+export DISPATCH_ANSWER_FILE="$TMP/answer.txt"
+mkdir -p "$CONDUCTOR_DIR/tasks"
+printf -- '---\nid: 0009\ntitle: Implement conversion module\n---\n' > "$CONDUCTOR_DIR/tasks/0009.md"
+: > "$STUB_LOG"
+# shellcheck source=scripts/handler-steps.sh
+( source "$STEPS_LIB"; escalate_validation_loop 0009 3 "$CONDUCTOR_DIR/work/0009/validation-20261108-140000.md" )
+A="$(find "$CONDUCTOR_DIR/architect-inbox" -name 'validation-loop-0009-*.md')"; H="$(find "$CONDUCTOR_DIR/human-inbox" -name 'validation-loop-0009-*.md')"
+assert_eq "one notice in the architect's inbox" "$(printf '%s\n' "$A" | grep -c .)" "1"
+assert_eq "and one in the human's" "$(printf '%s\n' "$H" | grep -c .)" "1"
+assert_eq "typed validation-loop, which the architect prompt maps to a skill" "$(grep -c '^type: validation-loop$' "$A")" "1"
+assert_eq "naming the task and the failures" "$(grep -c '^task-id: 0009$' "$A") $(grep -c '^failures: 3$' "$A")" "1 1"
+assert_eq "the title and the last failure are in the text" "$(grep -c 'Implement conversion module' "$H") $(grep -c 'NO TESTS RAN' "$H")" "1 1"
+assert_eq "it says how to send the card back" "$(grep -c 'task-move.sh 0009 in-progress && stage-start.sh 0009 in-progress' "$H")" "1"
+assert_eq "a progress note was written, nothing was moved or started" "$(grep -c '^task-signal.*--type progress.*parked after 3 validation failures' "$STUB_LOG") $(grep -c '^task-move\|^stage-start' "$STUB_LOG" || true)" "1 0"
+assert_eq "the loop's log line is left for it to show" "$(grep -c 'task 0009 parked in validation after 3 failed validations' "$DISPATCH_ANSWER_FILE")" "1"
+unset DISPATCH_ANSWER_FILE
+rm -rf "$CONDUCTOR_DIR/work/0009" "$CONDUCTOR_DIR/architect-inbox" "$CONDUCTOR_DIR/human-inbox" "$CONDUCTOR_DIR/tasks/0009.md"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1
