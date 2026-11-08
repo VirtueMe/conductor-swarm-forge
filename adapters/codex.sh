@@ -98,7 +98,13 @@ adapter_launch() {
   local params_json="${5:-}"
   local param_flags
   param_flags=$(adapter_params_to_flags "$params_json")
-  local cmd="cd '$root_dir/$worktree' && codex ${param_flags}"
+  # Every script a worker calls resolves the project's state through CONDUCTOR_DIR, and the window starts
+  # in its own worktree, where the default (a relative .conductor) is a different, empty place: the
+  # architect's cards once landed there and the loop saw nothing (#181). So the window gets the absolute one.
+  local state_dir="${CONDUCTOR_DIR:-.conductor}"
+  [[ "$state_dir" == /* ]] || state_dir="$root_dir/$state_dir"
+  local cmd
+  cmd="cd '$root_dir/$worktree' && export CONDUCTOR_DIR=$(printf '%q' "$state_dir") && codex ${param_flags}"
 
   if tmux has-session -t "$session" 2>/dev/null; then
     tmux new-window -t "$session" -n "$window_name" "$cmd"

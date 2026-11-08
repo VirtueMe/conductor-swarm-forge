@@ -149,7 +149,13 @@ adapter_launch() {
   local param_flags permission_flags
   param_flags=$(adapter_params_to_flags "$params_json") || return 2
   permission_flags=$(adapter_permission_flags "$params_json" "$root_dir") || return 2
-  local cmd="cd '$root_dir/$worktree' && claude \
+  # Every script a worker calls resolves the project's state through CONDUCTOR_DIR, and the window starts
+  # in its own worktree, where the default (a relative .conductor) is a different, empty place: the
+  # architect's cards once landed there and the loop saw nothing (#181). So the window gets the absolute one.
+  local state_dir="${CONDUCTOR_DIR:-.conductor}"
+  [[ "$state_dir" == /* ]] || state_dir="$root_dir/$state_dir"
+  local cmd
+  cmd="cd '$root_dir/$worktree' && export CONDUCTOR_DIR=$(printf '%q' "$state_dir") && claude \
     ${permission_flags} \
     ${param_flags} \
     --append-system-prompt-file '$briefing' \
