@@ -93,7 +93,7 @@ no run is paused and no dispatch refused. The behaviour, and how a brief tighten
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `pool` | enum | yes | One of the four pools. |
-| `usd` / `percent` | number > 0 | one of them | The unit follows the pool: `usd` on `api:*`, `percent` (of the weekly allowance, what the runs' own lines used) on `subscription:*`. The schema rejects the wrong one. |
+| `usd` / `percent` | number > 0 | one of them | The unit follows the pool: `usd` on `api:*`, `percent` (of the weekly allowance: how far the weekly window rose over the period, from the live readings; the runs' own points when that cannot be measured) on `subscription:*`. The schema rejects the wrong one. |
 | `period` | `run` · `week` | no | `run` (the default): everything in the usage log. `week`: the last seven days. |
 | `warn_at` | number 1–100 | no | Percent of the budget at which the conductor log warns. Default 80. |
 | `caps` | object[] | no | Narrower budgets inside the pool. Each names a `role`, an `adapter`, a `model`, or a combination, and an amount in the pool's unit. |

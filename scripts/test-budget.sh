@@ -155,5 +155,82 @@ line 2026-11-06T10:00:00Z api:openai coder codex 2.00 -
 assert_eq "going over is a new state: warned again" "$(grep -c 'over' "$TMP/w4")" "1"
 assert_eq "the log's usage lines are unchanged by records" "$(jq -c 'select(.record == null)' "$LOG" | wc -l | tr -d ' ')" "3"
 
+section "11 · A subscription budget is the rise of the weekly window, not the sum of per-run points (#174)"
+# reading <ts> <weekly used%|-> <resets_at epoch> <source|-> : an allowance record on the Anthropic pool
+reading() {
+  jq -nc --arg ts "$1" --arg w "$2" --argjson r "$3" --arg src "$4" '
+    { record: "allowance", pool: "subscription:anthropic", moment: "x", ts: $ts, snapshot_at: $ts,
+      source: (if $src == "-" then null else $src end),
+      weekly: (if $w == "-" then {state: "unknown", used_percent: null, resets_at: null}
+               else {state: "known", used_percent: ($w | tonumber), resets_at: $r} end) }' >> "$LOG"
+}
+WEEK_A=1794024000; WEEK_B=1794628800
+cat > "$BUDGETS" <<'EOF'
+[{"pool":"subscription:anthropic","percent":8,"period":"run","warn_at":50,
+  "caps":[{"role":"coder","percent":4}]}]
+EOF
+: > "$LOG"
+# two runs, none attributed (workers overlapped): the old figure was 0, the real rise was 3 points
+line 2026-11-06T09:00:00Z subscription:anthropic coder claude-code 0.5 -
+line 2026-11-06T09:10:00Z subscription:anthropic coder claude-code 0.5 -
+reading 2026-11-06T08:55:00Z 1 $WEEK_A endpoint
+reading 2026-11-06T09:30:00Z 2 $WEEK_A endpoint
+reading 2026-11-06T10:30:00Z 4 $WEEK_A endpoint
+assert_eq "spent is last minus first of the window" "$(field subscription:anthropic pool .spent)" "3"
+assert_eq "on the window" "$(field subscription:anthropic pool .basis)" "window"
+assert_eq "from and to are shown" "$(field subscription:anthropic pool '[.from, .to] | @csv')" "1,4"
+assert_eq "the share of the budget" "$(field subscription:anthropic pool .percent)" "37.5"
+assert_eq "no run is left 'with no points' on this basis" "$(field subscription:anthropic pool .unmeasured)" "0"
+assert_eq "a role cap stays on the runs" "$(field subscription:anthropic role=coder .basis)" "runs"
+assert_eq "and on the runs' own points" "$(field subscription:anthropic role=coder .unmeasured)" "2"
+
+# a stale copy is not a reading of the window now: it is not used
+reading 2026-11-06T11:00:00Z 40 $WEEK_A cache
+assert_eq "a cached copy is not a live reading" "$(field subscription:anthropic pool .spent)" "3"
+# an unknown figure is not either
+reading 2026-11-06T11:05:00Z - 0 endpoint
+assert_eq "an unknown weekly figure is skipped" "$(field subscription:anthropic pool .spent)" "3"
+
+# one live reading is not a rise
+: > "$LOG"
+line 2026-11-06T09:00:00Z subscription:anthropic coder claude-code 0.5 2
+reading 2026-11-06T09:30:00Z 2 $WEEK_A endpoint
+assert_eq "one reading: not measurable, back to the runs' floor" "$(field subscription:anthropic pool .basis)" "runs"
+assert_eq "with its reason" "$(field subscription:anthropic pool .reason)" "fewer than two live weekly readings in the period"
+assert_eq "and the floor of the runs' points" "$(field subscription:anthropic pool .spent)" "2"
+# no readings at all: as before
+: > "$LOG"
+line 2026-11-06T09:00:00Z subscription:anthropic coder claude-code 0.5 2
+assert_eq "no readings: the floor, as before" "$(field subscription:anthropic pool .spent)" "2"
+
+# the window reset in between: the two halves are different windows
+: > "$LOG"
+line 2026-11-06T09:00:00Z subscription:anthropic coder claude-code 0.5 2
+reading 2026-11-06T08:00:00Z 20 $WEEK_A endpoint
+reading 2026-11-06T10:00:00Z 3 $WEEK_B endpoint
+assert_eq "a window that reset in between is not measured" "$(field subscription:anthropic pool .reason)" "the weekly window reset during the period"
+assert_eq "the floor stands" "$(field subscription:anthropic pool .spent)" "2"
+
+# the week period only looks at readings of the last seven days
+cat > "$BUDGETS" <<'EOF'
+[{"pool":"subscription:anthropic","percent":8,"period":"week","warn_at":50}]
+EOF
+: > "$LOG"
+reading 2026-10-20T08:00:00Z 1 $WEEK_A endpoint
+reading 2026-11-05T08:00:00Z 2 $WEEK_A endpoint
+reading 2026-11-06T08:00:00Z 5 $WEEK_A endpoint
+assert_eq "an older reading is outside the period" "$(field subscription:anthropic pool .spent)" "3"
+
+section "12 · The warning uses the same figure and says what it counts"
+cat > "$BUDGETS" <<'EOF'
+[{"pool":"subscription:anthropic","percent":8,"period":"run","warn_at":50}]
+EOF
+: > "$LOG"
+reading 2026-11-06T08:00:00Z 1 $WEEK_A endpoint
+reading 2026-11-06T10:00:00Z 6 $WEEK_A endpoint
+"$B" warn --file "$LOG" --budgets "$BUDGETS" --now "$NOW" > "$TMP/w5" 2>&1
+assert_eq "5 of 8 is a warning" "$(grep -c 'budget subscription:anthropic: 5% of 8%' "$TMP/w5")" "1"
+assert_eq "it says the window rose and that this includes hand use" "$(grep -c 'the weekly window rose 1% to 6%, which includes use by hand' "$TMP/w5")" "1"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All budget checks passed."; else echo "$FAILS check(s) failed." >&2; exit 1; fi

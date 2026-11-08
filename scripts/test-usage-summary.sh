@@ -375,6 +375,15 @@ has 'api:anthropic  *run  *\$6.00 of \$10.00  *60%  *ok' "the dollar pool: spent
 has '  role=coder  *run  *\$6.00 of \$5.00  *120%  *over' "a cap under its pool, over"
 has 'subscription:anthropic  *week  *12% of 40%  *30%  *ok' "the subscription pool is in allowance percent"
 has '1 with no cost' "lines with no cost are counted, not called free"
+has 'the points of the runs, a floor: fewer than two live weekly readings in the period' "no readings: the row says it is the runs' floor, and why"
+# with two live readings of one window the pool is measured by its rise, and says what that includes
+{ cat "$BL"
+  jq -nc '{record:"allowance",pool:"subscription:anthropic",moment:"x",ts:"2026-11-06T09:00:00Z",snapshot_at:"2026-11-06T09:00:00Z",source:"endpoint",weekly:{state:"known",used_percent:2,resets_at:1794024000}}'
+  jq -nc '{record:"allowance",pool:"subscription:anthropic",moment:"x",ts:"2026-11-06T11:00:00Z",snapshot_at:"2026-11-06T11:00:00Z",source:"endpoint",weekly:{state:"known",used_percent:9,resets_at:1794024000}}'
+} > "$BL.rise"
+run --file "$BL.rise" --budgets "$BB" --by budget
+has 'subscription:anthropic  *week  *7% of 40%  *18%  *ok' "the pool is measured by the rise of the window"
+has 'the weekly window rose 2% to 9%; includes use by hand' "and says what the figure includes"
 lacks '^By ' "--by budget shows nothing else"
 run --file "$BL"
 lacks '^Budgets ' "no budgets file: no section"

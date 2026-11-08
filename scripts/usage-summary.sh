@@ -320,13 +320,16 @@ jq -R 'fromjson? // empty' "$FILE" \
 # Spent against budget, from the budgets in effect (budget.sh). Report only.
 if [[ -s "$BUDGETS" && ( -z "$BY" || ",$BY," == *,budget,* ) ]]; then
   "$SCRIPTS_DIR/budget.sh" status --file "$FILE" --budgets "$BUDGETS" \
-    | jq -r '.[] | [.pool, .scope, .period, .unit, .spent, .budget, .percent, .state, .unmeasured] | @tsv' \
+    | jq -r '.[] | [.pool, .scope, .period, .unit, .spent, .budget, .percent, .state, .unmeasured, (.basis // "runs"), (.from // "-"), (.to // "-"), (.reason // "-")] | @tsv' \
     | awk -F'\t' '
-      NR == 1 { printf "\nBudgets (spent against budget; report only. Spent is a floor: a line with no cost, or no allowance points, is counted below and not in it)\n" }
+      NR == 1 { printf "\nBudgets (spent against budget; report only. In dollars and on a run basis spent is a floor: a line with no cost, or no allowance points, is counted below and not in it)\n" }
       {
         usd = ($4 == "usd")
         amount = usd ? sprintf("$%.2f of $%.2f", $5, $6) : sprintf("%s%% of %s%%", $5, $6)
         name = ($2 == "pool") ? $1 : "  " $2
-        printf "  %-34s %-5s %-22s %5.0f%%  %s%s\n", name, $3, amount, $7, $8, ($9 > 0 ? "  [" $9 " with no " (usd ? "cost" : "points") "]" : "")
+        note = ""
+        if ($10 == "window") note = "  [the weekly window rose " $11 "% to " $12 "%; includes use by hand]"
+        else if (!usd && $2 == "pool") note = "  [the points of the runs, a floor: " $13 "]"
+        printf "  %-34s %-5s %-22s %5.0f%%  %s%s%s\n", name, $3, amount, $7, $8, ($9 > 0 ? "  [" $9 " with no " (usd ? "cost" : "points") "]" : ""), note
       }'
 fi

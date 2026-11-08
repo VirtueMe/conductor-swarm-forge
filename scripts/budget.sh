@@ -11,8 +11,13 @@ set -euo pipefail
 # A budget is declared per pool in the workforce file ("budgets", docs/workforce-schema.md):
 #   {"pool": "api:anthropic", "usd": 50, "period": "week", "warn_at": 80,
 #    "caps": [{"role": "coder", "usd": 20}]}
-# The unit follows the pool: usd (real dollars) for an api pool, percent (points of the weekly
-# allowance that the runs' own lines used) for a subscription pool. period is "run" (the whole
+# The unit follows the pool: usd (real dollars) for an api pool, percent of the weekly allowance
+# for a subscription pool. On a subscription the pool's spent is how far the weekly window rose over
+# the period, from the allowance readings in the log (the first and the last live reading of one
+# window), because that covers the whole swarm, needs no attribution and survives overlapping
+# workers (#174). It is the account's rise, so it also counts what a person did by hand in the same
+# window. When it cannot be measured (fewer than two live readings, or the window reset in between)
+# spent is the floor of the runs' own points, as before, and the row says why. period is "run" (the whole
 # log, the default) or "week" (the last seven days). A cap narrows the budget to the lines of a
 # role, an adapter (the line's harness) or a model, or a combination.
 #
@@ -25,9 +30,12 @@ set -euo pipefail
 #         It can lower the amount of a budget the workforce has, and never raise it or add one: the
 #         workforce is the ceiling. What it did not take is said on stderr.
 # status  Prints one row per budget and per cap, as a JSON array: pool, scope, unit, period,
-#         budget, spent, percent, state (ok, warn at warn_at percent, over at 100) and unmeasured,
-#         the lines in the group that have no cost (or, on a subscription, no points) and so are not
-#         in spent. Spent is a floor, as in usage-summary.sh. No budgets file: [].
+#         budget, spent, percent, state (ok, warn at warn_at percent, over at 100), basis ("window":
+#         the rise of the weekly window, with from, to, since and until; or "runs": the sum of the runs'
+#         own points, with reason when the rise could not be measured) and unmeasured, the lines in
+#         the group that have no cost (or, on a run basis, no points) and so are not in spent. A
+#         role, adapter or model cap is always on the runs. Spent on a runs basis is a floor, as in
+#         usage-summary.sh. No budgets file: [].
 # warn    Writes one line to stdout for each budget or cap that is now warn or over and has not
 #         been warned about in this period, and appends a {"record": "budget_warning"} to the
 #         usage log so that it is not said again. The log is the memory; there is no other state.
@@ -49,15 +57,34 @@ status_rows() { # <usage file> <budgets file> <now or empty>
       def capmatch($c): ($c.role == null or $c.role == .role) and ($c.adapter == null or $c.adapter == .harness) and ($c.model == null or $c.model == .model);
       def scope_of($c): [(if $c.role then "role=" + $c.role else empty end), (if $c.adapter then "adapter=" + $c.adapter else empty end), (if $c.model then "model=" + $c.model else empty end)] | join(",");
       def r4: . * 10000 | round / 10000;
+      # The rise of the weekly window over the period for a subscription pool: first to last live
+      # reading of the one window. Not measurable with fewer than two, or when the window changed.
+      def rise($b):
+        [$lines[] | select(.record == "allowance" and .pool == $b.pool
+                           and (($b.period // "run") == "run" or .ts >= $cutoff)
+                           and (.source == "endpoint" or .source == null)
+                           and .weekly.state == "known" and (.weekly.used_percent | type) == "number" and (.weekly.resets_at | type) == "number")]
+        | sort_by(.snapshot_at // .ts) as $rs
+        | if ($rs | length) < 2 then { basis: "runs", reason: "fewer than two live weekly readings in the period" }
+          elif ([$rs[].weekly.resets_at] | (max - min)) > 120 then { basis: "runs", reason: "the weekly window reset during the period" }
+          elif $rs[-1].weekly.used_percent < $rs[0].weekly.used_percent then { basis: "runs", reason: "the weekly figure fell within one window" }
+          else { basis: "window", spent: ($rs[-1].weekly.used_percent - $rs[0].weekly.used_percent),
+                 from: $rs[0].weekly.used_percent, to: $rs[-1].weekly.used_percent,
+                 since: ($rs[0].snapshot_at // $rs[0].ts), until: ($rs[-1].snapshot_at // $rs[-1].ts) } end;
       def mkrow($b; $scope; $amount; $rows):
         unit_of($b.pool) as $u
-        | ($rows | map(if $u == "usd" then (.cost_usd // .estimated_cost_usd // 0) else (.allowance.weekly.points // 0) end) | add // 0 | r4) as $spent
-        | ($rows | map(select(if $u == "usd" then (.cost_usd == null and .estimated_cost_usd == null) else (.allowance.weekly.points == null) end)) | length) as $unm
+        | (if $u == "percent" and $scope == "pool" then rise($b) else { basis: "runs" } end) as $m
+        | ($rows | map(if $u == "usd" then (.cost_usd // .estimated_cost_usd // 0) else (.allowance.weekly.points // 0) end) | add // 0 | r4) as $floor
+        | (if $m.basis == "window" then ($m.spent | r4) else $floor end) as $spent
+        | (if $m.basis == "window" then 0
+           else ($rows | map(select(if $u == "usd" then (.cost_usd == null and .estimated_cost_usd == null) else (.allowance.weekly.points == null) end)) | length) end) as $unm
         | (if $amount > 0 then ($spent / $amount * 100 | r4) else 0 end) as $pct
         | { pool: $b.pool, scope: $scope, unit: $u, period: ($b.period // "run"), budget: $amount, spent: $spent, percent: $pct,
             warn_at: ($b.warn_at // 80),
             state: (if $pct >= 100 then "over" elif $pct >= ($b.warn_at // 80) then "warn" else "ok" end),
-            unmeasured: $unm };
+            basis: $m.basis, unmeasured: $unm }
+          + (if $m.basis == "window" then { from: $m.from, to: $m.to, since: $m.since, until: $m.until } else {} end)
+          + (if $m.reason then { reason: $m.reason } else {} end);
       ($budgets[0] // [])
     | map(. as $b
         | ($lines | map(select(.record == null and .pool == $b.pool and (($b.period // "run") == "run" or .ts >= $cutoff)))) as $rows
@@ -111,7 +138,8 @@ cmd_warn() {
     if [[ "$unit" == usd ]]; then
       printf '%sbudget %s%s: $%.2f of $%.2f (%s%%%s)\n' "$([[ $state == over ]] && echo 'over ')" "$pool" "$([[ $scope != pool ]] && echo " ($scope)")" "$spent" "$budget" "$pct" "$([[ $state == warn ]] && echo ", warn at $warn_at%")"
     else
-      printf '%sbudget %s%s: %s%% of %s%% of the weekly allowance (%s%%%s)\n' "$([[ $state == over ]] && echo 'over ')" "$pool" "$([[ $scope != pool ]] && echo " ($scope)")" "$spent" "$budget" "$pct" "$([[ $state == warn ]] && echo ", warn at $warn_at%")"
+      printf '%sbudget %s%s: %s%% of %s%% of the weekly allowance (%s%%%s)%s\n' "$([[ $state == over ]] && echo 'over ')" "$pool" "$([[ $scope != pool ]] && echo " ($scope)")" "$spent" "$budget" "$pct" "$([[ $state == warn ]] && echo ", warn at $warn_at%")" \
+        "$([[ $(jq -r .basis <<< "$row") == window ]] && echo ", the weekly window rose $(jq -r .from <<< "$row")% to $(jq -r .to <<< "$row")%, which includes use by hand" || echo ", the runs' own points")"
     fi
     jq -nc --arg ts "$ts" --argjson r "$row" '{record: "budget_warning", ts: $ts, pool: $r.pool, scope: $r.scope, state: $r.state, unit: $r.unit, budget: $r.budget, spent: $r.spent}' >> "$file" 2> /dev/null || true
   done <<< "$due"
