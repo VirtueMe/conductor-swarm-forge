@@ -83,7 +83,7 @@ card, then spawn a worker or notify a human, then `task-list.sh`.
 | `on-review-approved` | no | guard `locks` |
 | `on-merge-success` | no | `then`-effects: unblock dependents, release merge-pending, check project done; ends by closing the conductor's own window |
 | `on-human-decision` | no | the decision is read from the artifact |
-| `on-validation-failed` | summary only | "paste key failure lines" into a progress note |
+| `on-validation-failed` | summary only | "paste key failure lines" into a progress note; counts the failures in a row for the `count` guard |
 | `on-review-rejected` | summary only | "paste the key findings" into a progress note |
 | `on-merge-conflict` | summary only | note, plus `release-merge-pending` |
 | `on-signal-blocked` | **yes** | picks the `assess` guard (`hard-dependency` vs anything else) |
@@ -1103,6 +1103,27 @@ person's behalf. `CONDUCTOR_WINDOW_WATCH=off` turns it off. Not verified: that t
 cover every Claude Code prompt in every version (only the "numbered menu" shape is assumed, from
 the permission and trust dialogs), and whether Claude Code rings the terminal bell when it waits;
 the watch does not depend on either.
+
+## A task that keeps failing validation
+
+A failed validation sends the card back to the coder. When the failure is not the coder's to fix, it
+went round for ever: in the second real run task 0002 had 11 validation failures and 24 assignments
+because its tests were a later task, so validation found none and failed every time (#185). Now the
+topology's `validation-failed` rule has a `count` guard first: after `gte` failed validations in a row
+(3 by default; edit the project's `topology.json` to change it) the destination is `@escalate`.
+
+`on-validation-failed` counts the failures (`failed_validations` in `handler-steps.sh`: the newest
+`validation-*.md` artifacts of the task with `outcome: failed`, up to the first pass) and passes
+`count.validation-failed=<n>` to the route. On `@escalate` it moves nothing and starts nothing: the card
+stays in `validation` with no worker, and `escalate_validation_loop` leaves a notice in `architect-inbox/`
+and `human-inbox/` (`validation-loop-<task>-<timestamp>.md`, `type: validation-loop`) saying how many
+times it failed, the last failure, and how to send it back (`task-move.sh <id> in-progress &&
+stage-start.sh <id> in-progress`). The loop's log shows `task 0002 parked in validation after 3 failed
+validations in a row`. The architect has a skill for the notice (`skills/architect/on-validation-loop.md`)
+that tells the human what it sees and creates nothing unasked. Report only: the swarm does not decide
+what to do about it, and the other tasks go on. Not covered: the architect briefing still does not say
+that tests belong with or before the code, and a restart runs the parked task's validation once more
+(the startup reconcile starts the stage of a card with no window), which parks it again.
 
 ## Spike results
 

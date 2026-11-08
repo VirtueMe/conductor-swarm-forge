@@ -6,8 +6,9 @@
 #
 #   1. close the finishing worker's tmux window
 #   2. write a progress note for the next worker
-#   3. ask the topology where validation-failed sends the task (no guards: the rework
-#      loopback), and move it
+#   3. ask the topology where validation-failed sends the task: the rework loopback, unless the
+#      task has failed validation too many times in a row (the topology's count guard, #185), in
+#      which case it is parked in validation and the architect and the person are told
 #   4. start the destination stage
 #
 # The skill has the model summarise the failure in the note. A script cannot, so the note points
@@ -26,5 +27,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../handler-steps.sh"
 : "${ARTIFACT:?on-validation-failed: ARTIFACT is not set}"
 
 close_worker_window "$TASK_ID"
+# The topology may send a task that keeps failing to @escalate (#185): count the failures in a row.
+failures="$(failed_validations "$TASK_ID")"
+dest="$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" validation-failed "count.validation-failed=$failures")"
+if [[ "$dest" == @escalate ]]; then
+  escalate_validation_loop "$TASK_ID" "$failures" "$ARTIFACT"
+  exit 0
+fi
 progress_note "$TASK_ID" "validation failed" "${ARTIFACT#"$CONDUCTOR_DIR"/}"
-route_task "$TASK_ID" validation-failed
+route_task "$TASK_ID" validation-failed "count.validation-failed=$failures"
