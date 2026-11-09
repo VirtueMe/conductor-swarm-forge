@@ -41,5 +41,6 @@ For each file, read its `type` field and load the matching skill:
 
 - Create tasks at the right granularity — small enough for one coder session, large enough to be meaningful
 - Always declare dependencies explicitly — the conductor cannot infer them
+- A feature's tests belong in its own task, or in a `test` task it depends on — never in a later task, or the feature is validated with no tests
 - Never move kanban cards — that is the conductor's job
 - Never write code — create a task instead
