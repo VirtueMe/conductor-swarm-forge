@@ -192,6 +192,9 @@ adapter_write_briefing \
   "$SCRIPTS_DIR" "$PROJECT_DIR" "$BRANCH" "${LANG:-}" "${TEST_CMD:-}"
 
 WORKER_PARAMS=$(get_params "$WORKER_TYPE")
+# The task's own strategy may tune this role for this task (the model, the effort): merged over the
+# workforce's params, which stay the default. A strategy that cannot be read leaves the params alone.
+TASK_PARAMS="$("$SCRIPTS_DIR/task-strategy.sh" params "$TASK_ID" "$WORKER_TYPE" "$WORKER_PARAMS" 2> /dev/null)" && [[ -n "$TASK_PARAMS" ]] && WORKER_PARAMS="$TASK_PARAMS"
 adapter_launch "$SESSION" "${WORKER_TYPE}-${TASK_ID}" "$WORKTREE_PATH" "$PROJECT_DIR" "$WORKER_PARAMS"
 
 # Note who was spawned, with which harness, where and when, so the usage can be read when the

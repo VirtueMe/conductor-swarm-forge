@@ -31,6 +31,8 @@
     "merging":    { "mode": "auto", "role": "merger",    "skill": "merger/merge" }
   },
 
+  "skippable": { "validation": "validation-passed" },
+
   "transitions": {
     "new-task": [
       { "_order": "a design task is written by the architect, in the task description, so there is nothing for a coder to do: it is done on arrival, whatever it depends on, and its dependents are unblocked.",

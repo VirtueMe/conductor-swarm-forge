@@ -21,6 +21,7 @@ consistent with `workforces/*.json`). The active topology is selected with
 | `working_stages` | object | Stages where work happens — maps stage → executor |
 | `transitions` | object | Event → ordered list of guarded rules (the edges) |
 | `conductor_skills` | object | *(optional)* Maps artifact event types to conductor skills |
+| `skippable` | object | *(optional)* Working stages a task's strategy may skip, each mapped to the event that sends the task on as if the stage had passed (`"validation": "validation-passed"`). A stage not listed is a floor step that no strategy can skip. See [Strategy](event-driven-conductor.md#strategy) |
 | `integration_macros` | object | Reusable rule groups specific to the integration model |
 
 Stages listed in `stages` but absent from `working_stages` (e.g. `backlog`,

@@ -19,8 +19,8 @@ set -euo pipefail
 #             (the merger notes both: the base tip it rebased onto, and the branch tip). The commits
 #             stay reachable after the branch is deleted, so this does not depend on the branch.
 #             null with a reason when the merger left no sha or git cannot read it: never zero.
-#   weight    the planned weight of the task, from `weight:` in the task file (the strategist's
-#             estimate, #188), null until something writes one
+#   weight    the planned weight of the task: `weight` in its strategy (task-strategy.sh, the
+#             strategist's estimate, #188), else `weight:` in the task file, else null
 #   type, title, merged_at
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -98,8 +98,11 @@ if [[ -s "$USAGE_LOG" ]]; then
 fi
 
 weight=null; type=null; title=null
+# The strategy's planned weight wins; the task file's own `weight:` is the fallback.
+w="$("$SCRIPTS_DIR/task-strategy.sh" weight "$task" 2> /dev/null || true)"
+[[ -n "$w" || ! -f "$task_file" ]] || w="$(fm_field "$task_file" weight 2> /dev/null || true)"
+[[ -z "$w" ]] || weight="$(jq -Rn --arg w "$w" '$w | tonumber? // $w')"
 if [[ -f "$task_file" ]]; then
-  w="$(fm_field "$task_file" weight 2> /dev/null || true)"; [[ -z "$w" ]] || weight="$(jq -Rn --arg w "$w" '$w | tonumber? // $w')"
   t="$(fm_field "$task_file" type 2> /dev/null || true)"; [[ -z "$t" ]] || type="$(jq -Rn --arg t "$t" '$t')"
   ti="$(fm_field "$task_file" title 2> /dev/null || true)"; [[ -z "$ti" ]] || title="$(jq -Rn --arg t "$ti" '$t')"
 fi

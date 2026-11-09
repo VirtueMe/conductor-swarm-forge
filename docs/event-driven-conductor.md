@@ -1071,6 +1071,48 @@ exit status is 1 when there is an error, 0 otherwise (warnings do not count).
 heuristic and a cheap one, which is why it is an error the architect can answer by adding the sentence, not a gate.
 What it cannot judge is whether the plan covers the brief: that takes a model, and is left to the strategist.
 
+## Strategy
+
+A task can carry a **strategy**: which steps to skip and which model each role uses for it, as data the scripted
+conductor executes. The conductor stays deterministic and spends no tokens on it. Whoever writes the strategy
+decides (the strategist role, #188, or a person); `scripts/task-strategy.sh` reads it, checks it and answers the
+conductor's two questions. A task with no strategy runs exactly as before.
+
+The file is `$CONDUCTOR_DIR/strategy/<task>.json`:
+
+```json
+{ "skip":    { "validation": "docs only: no test applies" },
+  "workers": { "reviewer": { "model": "claude-sonnet-4-6" } },
+  "weight":  3 }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `skip` | stage → the reason. The reason is required: it is written on the card (a `progress` artifact, `conductor: skipped validation — <reason>`) before the step is skipped, and a skip that cannot be recorded is not made: the step runs |
+| `workers` | role → tuning merged over the workforce's `params` for that role, for this task only. Only `model` and `effort` can be set: the adapter and the pool stay the workforce's, so what a worker is billed to does not change with a strategy |
+| `weight` | the planned weight, a number. `task-record.sh` files the task's cost under it (it falls back to `weight:` in the task file) |
+
+**The floor.** The topology decides what may be skipped, not the strategy: its `skippable` map lists the working
+stages that can be skipped, each with the event that sends the task on as if the stage had passed. In
+`software-dev` that is `validation` only, so **review and merging can never be skipped**: `task-strategy.sh skip`
+prints nothing for them even if a file says otherwise, and `task-strategy.sh validate` rejects the file. A topology
+with no `skippable` key has no skippable step. The event a skip resumes with is routed on the card's type and the
+locks guard only, as `validation-passed` is.
+
+**How the conductor uses it.**
+
+- `route_task` (`scripts/handler-steps.sh`): when the destination it resolved is a stage the strategy skips, it
+  writes the reason on the card and routes the skip event instead. A chain of skips is cut after four, and the
+  step then runs.
+- `worker-spawn.sh` merges the task's `workers` entry over the role's params before launching. The merged params
+  are what `worker-usage.sh` records, so a usage line shows the model that was asked for.
+- A strategy that is not JSON or not an object reads as no strategy: the conductor carries on, and
+  `task-strategy.sh validate <task>` is where the fault shows. Commands: `show`, `validate`, `skip`, `params`, `weight`.
+
+Defaults stay where they were: the workforce names a model per role, and a strategy overrides it only for the task
+it is written for. Nothing here chooses a model from the usage data (#189); a strategist may, and treats a few rows
+as a hint.
+
 ## Startup reconcile
 
 `skills/conductor/startup.md` used to be two things: steps 1 to 6 reconciled the board with
