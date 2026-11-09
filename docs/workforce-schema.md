@@ -35,7 +35,7 @@ Each member binds one role to an adapter and, optionally, a tuning bag:
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `role` | string | yes | Topology role this member runs. Must match a working-stage `role` in the active topology (`conductor` and `architect` are always present). |
+| `role` | string | yes | Topology role this member runs. Must match a working-stage `role` in the active topology (`conductor` and `architect` are always present). `strategist` is optional and bound to no stage: when the workforce has one and a brief is given, `swarm-start` briefs and launches it and holds the plan (`scripts/plan-hold.sh`) until the strategist releases it (#188). |
 | `adapter` | enum | yes | Agent backend: `claude-code` · `codex` · `pi`. Resolves to `adapters/<adapter>.sh`; `swarm-start` fails fast if the file is missing. |
 | `params` | object | no | Launch-time tuning bag (below). Omit it to run the adapter on its defaults. |
 | `pool` | enum | no | What the member's work is billed to, as `<billing>:<vendor>`: `api:anthropic` · `subscription:anthropic` · `api:openai` · `subscription:openai`. `claude-code` takes an anthropic pool, `codex` an openai pool, `pi` any but `subscription:anthropic`. See [Pool](#pool). |

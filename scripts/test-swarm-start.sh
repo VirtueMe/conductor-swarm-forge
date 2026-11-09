@@ -257,6 +257,22 @@ start --tool "$FAKE" -- --workforce mixed --brief "$TMP/brief.md"
 case "$(window conductor)" in *"&& claude "*) ok "claude-code conductor with a pi architect: the conductor window starts claude" ;; *) fail "conductor window: $(window conductor | cut -c1-200)" ;; esac
 case "$(window architect)" in *"&& pi "*) ok "and the architect window starts pi" ;; *) fail "architect window: $(window architect | cut -c1-200)" ;; esac
 
+section "11b · A strategist in the workforce holds the plan"
+# With a brief and a strategist member: the strategist is briefed and launched, and the plan is held. Without
+# a strategist member, or without a brief, no hold: the tasks start as the architect creates them.
+start --tool "$FAKE" -- --brief "$TMP/brief.md"
+assert_eq "exit 0" "$RC" "0"
+assert_eq "the plan is held" "$([[ -f "$TARGET/.conductor/plan-hold" ]] && echo yes || echo no)" "yes"
+case "$(window strategist)" in *"&& claude "*) ok "the strategist window starts claude" ;; *) fail "strategist window: $(window strategist | cut -c1-200)" ;; esac
+assert_eq "the strategist is briefed" "$([[ -f "$TARGET/.worktrees/strategist/AGENTS.md" ]] && echo yes || echo no)" "yes"
+assert_eq "its inbox exists" "$([[ -d "$TARGET/.conductor/strategist-inbox" ]] && echo yes || echo no)" "yes"
+mixed claude-code claude-code
+start --tool "$FAKE" -- --workforce mixed --brief "$TMP/brief.md"
+assert_eq "no strategist member: no hold" "$([[ -f "$TARGET/.conductor/plan-hold" ]] && echo yes || echo no)" "no"
+assert_eq "and no strategist window" "$(window strategist)" ""
+start --tool "$FAKE" --
+assert_eq "no brief: no hold" "$([[ -f "$TARGET/.conductor/plan-hold" ]] && echo yes || echo no)" "no"
+
 section "12 · node is needed for the kanban board only"
 # A PATH like section 7's, without node or npm. A language that needs neither (bash), so the only
 # thing that could ask for node is the kanban server.

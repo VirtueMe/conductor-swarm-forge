@@ -199,11 +199,16 @@ backlog_dest() { # <task>
   topology-load.sh route "$CONDUCTOR_DIR/topology.json" new-task "type=$type" deps=all-done
 }
 
+# Whether the plan hold (plan-hold.sh, #188) is on: while it is, no card leaves backlog for a working
+# stage. A card that would go to done (a design task) is not held: nobody works on it.
+plan_held() { [[ -f "$CONDUCTOR_DIR/plan-hold" ]]; }
+
 # Take a card out of backlog, its dependencies being done: move it where the topology says and start
 # the stage. A card that lands in done (a design task) unblocks its own dependents in turn.
 release_backlog_card() { # <task>
   local dest
   dest="$(backlog_dest "$1")" || return 1
+  if [[ "$dest" != "done" ]] && plan_held; then return 0; fi
   task-move.sh "$1" "$dest" || return 1
   stage-start.sh "$1" "$dest" || return 1
   if [[ "$dest" == "done" ]]; then unblock_dependents "$1"; fi
@@ -255,6 +260,7 @@ unblock_ready() {
     deps="$(deps_done "$id")" || return 1
     [[ "$deps" == all-done ]] || continue
     dest="$(backlog_dest "$id")" || return 1
+    if [[ "$dest" != "done" ]] && plan_held; then continue; fi
     task-move.sh "$id" "$dest" || return 1
     if [[ "$dest" == "done" ]]; then unblock_dependents "$id" || return 1; fi
   done
@@ -262,6 +268,7 @@ unblock_ready() {
 
 stranded_backlog() {
   local card id deps
+  plan_held && return 0   # a held card is waiting for the strategist, not stranded
   for card in "$CONDUCTOR_DIR"/kanban/backlog/*.md; do
     [[ -f "$card" ]] || continue
     id="$(basename "$card" .md)"

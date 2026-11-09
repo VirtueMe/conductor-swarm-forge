@@ -146,7 +146,8 @@ fi
 mkdir -p \
   "$CONDUCTOR_DIR/tasks" \
   "$CONDUCTOR_DIR/work" \
-  "$CONDUCTOR_DIR/architect-inbox"
+  "$CONDUCTOR_DIR/architect-inbox" \
+  "$CONDUCTOR_DIR/strategist-inbox"
 
 # Cursor file for the conductor's batch-drain loop — initialised to now so the
 # startup scan owns pre-existing artifacts and the poll loop owns what comes after.
@@ -361,6 +362,31 @@ if [[ -n "$BRIEF_FILE" ]]; then
   echo "Architect briefed from: $(basename "$BRIEF_FILE") (adapter: $ARCH_ADAPTER_NAME)"
 fi
 
+# ── Strategist briefing ───────────────────────────────────────────────────────
+
+# A workforce with a strategist member holds the plan (plan-hold.sh) until the strategist has checked it
+# and released it (#188). Without one nothing changes: no hold, and the tasks start as the architect
+# creates them. Only with a brief: the strategist judges the architect's plan.
+HAS_STRATEGIST=false
+if [[ -n "$BRIEF_FILE" ]] && python3 -c 'import json,sys; sys.exit(0 if any(m["role"] == "strategist" for m in json.load(open(sys.argv[1]))["members"]) else 1)' "$WORKFORCE"; then
+  HAS_STRATEGIST=true
+  STRAT_ADAPTER_NAME=$(wf_field "$WORKFORCE" "strategist" adapter)
+  STRAT_ADAPTER_FILE="$ADAPTERS_DIR/${STRAT_ADAPTER_NAME}.sh"
+  [[ -f "$STRAT_ADAPTER_FILE" ]] || { echo "Strategist adapter not found: $STRAT_ADAPTER_FILE" >&2; exit 1; }
+  STRAT_PARAMS=$(wf_field "$WORKFORCE" "strategist" params)
+
+  STRAT_SKILL=$(cat "$PROMPTS_DIR/strategist.prompt")
+  STRAT_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG: %s' \
+    "$TARGET_DIR/$CONDUCTOR_DIR/skills" "$TARGET_DIR" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" "${LANG:-unknown}")"
+
+  mkdir -p ".worktrees/strategist"
+  adapter_call "$STRAT_ADAPTER_FILE" adapter_write_briefing \
+    ".worktrees/strategist" "strategist" "$STRAT_SKILL" "$STRAT_BODY" \
+    "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"
+  "$SCRIPTS_DIR/plan-hold.sh" hold > /dev/null
+  echo "Strategist briefed (adapter: $STRAT_ADAPTER_NAME); the plan is held until it releases it"
+fi
+
 # ── Kanban board ──────────────────────────────────────────────────────────────
 
 if [[ "$KANBAN_SERVER" == true ]]; then
@@ -428,6 +454,7 @@ else
     adapter_call "$ADAPTER_FILE" adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR" "$CONDUCTOR_PARAMS"
   fi
   [[ -n "$BRIEF_FILE" ]] && adapter_call "$ARCH_ADAPTER_FILE" adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR" "${ARCH_PARAMS:-}"
+  [[ "$HAS_STRATEGIST" == true ]] && adapter_call "$STRAT_ADAPTER_FILE" adapter_launch "$SESSION" "strategist" ".worktrees/strategist" "$TARGET_DIR" "${STRAT_PARAMS:-}"
 
   # Kill kanban server automatically when the tmux session closes
   if [[ "$KANBAN_SERVER" == true ]]; then

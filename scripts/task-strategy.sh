@@ -42,11 +42,17 @@ command -v jq > /dev/null 2>&1 || { echo "task-strategy.sh needs jq" >&2; exit 3
 
 file_of() { echo "$CONDUCTOR_DIR/strategy/$1.json"; }
 
+# What the conductor reads: once the plan is released (plan-hold.sh) the copy taken then, so editing a
+# draft afterwards changes nothing; before that (or with no hold at all) the file itself.
+live_file_of() {
+  if [[ -f "$CONDUCTOR_DIR/plan-released" ]]; then echo "$CONDUCTOR_DIR/strategy-released/$1.json"; else file_of "$1"; fi
+}
+
 # The strategy as JSON: the file, or {} when there is none or it is not an object. A file that is not
 # JSON reads as {} here (the conductor must carry on) and is reported by validate.
 read_strategy() { # <task>
   local f
-  f="$(file_of "$1")"
+  f="$(live_file_of "$1")"
   [[ -s "$f" ]] && jq -ec 'if type == "object" then . else empty end' "$f" 2> /dev/null || echo '{}'
 }
 

@@ -90,3 +90,16 @@ one of those). It does not judge whether the plan covers the brief: reread the b
 ### 5. Announce completion
 
 Write a brief summary of what you created and why the dependency structure is as it is. This becomes the project record.
+
+### 6. Hand the plan to the strategist (only if the plan is held)
+
+```bash
+plan-hold.sh status
+```
+If it prints `held`, a strategist is judging the plans of this run and nothing starts until it releases the plan. Tell it the plan is complete:
+```bash
+mkdir -p "$CONDUCTOR_DIR/strategist-inbox"
+printf -- '---\ntype: plan-ready\ntimestamp: %s\n---\n%s\n' "$(date +%Y%m%d-%H%M%S)" "<your summary from step 5>" \
+  > "$CONDUCTOR_DIR/strategist-inbox/plan-ready-$(date +%Y%m%d-%H%M%S).md"
+```
+If it prints `released` there is no strategist, and the conductor has already started the tasks that had no dependencies.
