@@ -21,6 +21,8 @@
 #   topology-load.sh route           <name|path> <event> [guard=value...] # resolve a transition to its destination stage
 #   topology-load.sh conductor-skill <name|path> <type> [<outcome>]       # resolve the conductor skill for an artifact event (empty = ignore)
 #   topology-load.sh integration     <name|path>                          # print the integration model (git|shared-doc|none)
+#   topology-load.sh skippable       <name|path>                          # the stages a task's strategy may skip, one per line
+#   topology-load.sh skip-event      <name|path> <stage>                  # the event that routes on as if the stage had passed (empty if not skippable)
 #
 # A bare <name> resolves to topologies/<name>.json under the tool root; a value
 # containing a slash or ending in .json is treated as a path.
@@ -104,6 +106,17 @@ if not isinstance(conductor_skills, dict):
     err("conductor_skills must be an object (string → skill-path)")
 elif any(not isinstance(v, str) for v in conductor_skills.values()):
     err("conductor_skills values must be strings (skill paths)")
+
+# --- skippable (optional) — stage → the event that routes onward as if it had passed ---
+skippable = t.get("skippable", {})
+if not isinstance(skippable, dict):
+    err("skippable must be an object (working stage -> event)")
+else:
+    for st, ev in skippable.items():
+        if st not in working or "role" not in working[st]:
+            err(f"skippable '{st}' is not a working stage with a role")
+        if not isinstance(ev, str) or ev not in transitions:
+            err(f"skippable '{st}': event '{ev}' is not a transition")
 
 SPECIAL_DESTS = {"@escalate", "@stay"}
 INTEGRATIONS = {"git", "shared-doc", "none"}
@@ -235,7 +248,7 @@ print(f"Topology check passed: {t['name']}")
 PY
     ;;
 
-  stages|roles|entry-role|entry-stage|role|mode|skill|route|conductor-skill|integration)
+  stages|roles|entry-role|entry-stage|role|mode|skill|route|conductor-skill|integration|skippable|skip-event)
     # Read-only queries over the topology. All four share ONE rule evaluator
     # (when_matches/first_match) — skill-selection rules and transition rules are
     # the same construct (guarded, first-match), so they must not drift.
@@ -347,6 +360,22 @@ elif cmd == "role":
     spec = t["working_stages"].get(rest[0])
     if spec and "role" in spec:
         print(spec["role"])
+
+elif cmd == "skippable":
+    # The stages a task's strategy may skip. A stage not listed here is a floor step: no strategy
+    # can skip it, whatever it says (review and merging in software-dev). Empty if the topology
+    # lists none, which is every topology from before this key.
+    for st in t.get("skippable", {}):
+        print(st)
+
+elif cmd == "skip-event":
+    # The event that sends a task on as if <stage> had passed (validation -> validation-passed).
+    # Prints nothing for a stage that may not be skipped.
+    if not rest:
+        die("skip-event: missing <stage>")
+    ev = t.get("skippable", {}).get(rest[0])
+    if ev:
+        print(ev)
 
 elif cmd == "mode":
     # Mode of a working stage: "auto" (default) or "manual". Prints nothing and

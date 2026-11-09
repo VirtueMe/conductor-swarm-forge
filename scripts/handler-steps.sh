@@ -357,17 +357,37 @@ route_task() { # <task> <event> [guard=value...]
   local id="$1" event="$2"
   shift 2
   ROUTED_DEST=""
-  local dest
-  if ! dest="$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" "$event" "$@")" || [[ -z "$dest" ]]; then
-    echo "route_task: no route for $event${*:+ ($*)}" >&2
-    return 1
-  fi
-  # @escalate and @stay come back from the topology as they are: they mean "do not move the
-  # card", which is a judgment this handler does not make.
-  if [[ "$dest" == @* ]]; then
-    echo "route_task: $event routes to $dest, which is not a stage; this handler cannot move the task" >&2
-    return 1
-  fi
+  local dest reason skip_event ctype lock gs hops=0
+  local guards=("$@")
+  while :; do
+    if ! dest="$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" "$event" ${guards[@]+"${guards[@]}"})" || [[ -z "$dest" ]]; then
+      gs=""; [[ "${#guards[@]}" -eq 0 ]] || gs=" (${guards[*]})"   # ${#a[@]} is safe on an empty array under set -u on bash 3.2
+      echo "route_task: no route for $event$gs" >&2
+      return 1
+    fi
+    # @escalate and @stay come back from the topology as they are: they mean "do not move the
+    # card", which is a judgment this handler does not make.
+    if [[ "$dest" == @* ]]; then
+      echo "route_task: $event routes to $dest, which is not a stage; this handler cannot move the task" >&2
+      return 1
+    fi
+    # A stage the task's strategy skips (task-strategy.sh, #188) is not entered: the task goes on as if
+    # it had passed, by the event the topology names for that stage. Only a stage the topology lists as
+    # skippable can be skipped (review and merging cannot), and the reason is written on the card first:
+    # a skip that cannot be recorded is not made, and the step runs. The skip event is routed on the
+    # card's type and the locks guard only, as validation-passed is. A chain of skips ends after four.
+    reason="$(task-strategy.sh skip "$id" "$dest" 2> /dev/null || true)"
+    [[ -n "$reason" && "$hops" -lt 4 ]] || break
+    skip_event="$(topology-load.sh skip-event "$CONDUCTOR_DIR/topology.json" "$dest" 2> /dev/null || true)"
+    [[ -n "$skip_event" ]] || break
+    if ctype="$(card_field "$id" type)" && lock="$(locks_guard "$id")" \
+       && task-signal.sh --task "$id" --type progress --notes "conductor: skipped $dest — $reason" > /dev/null; then
+      event="$skip_event"; guards=("type=$ctype" "locks=$lock"); hops=$(( hops + 1 ))
+    else
+      echo "route_task: could not record the skip of $dest for task $id; running the step instead" >&2
+      break
+    fi
+  done
   task-move.sh "$id" "$dest" || return 1
   stage-start.sh "$id" "$dest" || return 1
   # shellcheck disable=SC2034  # read by the handler that sourced this file
