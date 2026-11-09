@@ -24,10 +24,17 @@ set -euo pipefail
 # existed has no billing and reads as unknown, never as api. The other groupings can span billing
 # within a group, and say so.
 #
-# --by picks the groupings to print, and can be repeated: harness, handler, task, role, model, pool,
+# --by picks the groupings to print, and can be repeated: harness, handler, task, role, model, weight, tasks, pool,
 # adapters, allowance, budget. The default is all of them. "adapters" is the cross-adapter view: every attempt
 # that has an estimate, reported cost or not, on the price table's one basis, with the number
 # of attempts that have none.
+#
+# "weight" groups the attempts by the planned weight of their task, from the task's own record
+# ("record": "task", written by task-record.sh when it merges); an attempt of a task with no record or
+# no weight is "-". "tasks" lists those records by weight: tasks, worker steps, rework rounds, lines
+# changed (added plus removed), files touched, and how many had no size. Lines measure size, not
+# difficulty: read them next to files and rework, and compare dollars only within a pool.
+# The file can be the combined one from usage-combine.sh (--file), which holds many runs.
 #
 # "allowance" is the subscription pools (Codex, subscription:openai, and Claude Code,
 # subscription:anthropic), kept apart from tokens and dollars because it is a percentage of a window,
@@ -60,8 +67,8 @@ while [[ $# -gt 0 ]]; do
     --budgets) BUDGETS="${2:?--budgets needs a path}"; shift 2 ;;
     --by)
       case "${2:-}" in
-        harness|handler|task|role|model|pool|adapters|allowance|budget) BY="$BY${BY:+,}$2"; shift 2 ;;
-        *) echo "usage-summary.sh: --by takes harness, handler, task, role, model, pool, adapters, allowance or budget" >&2; exit 1 ;;
+        harness|handler|task|role|model|weight|tasks|pool|adapters|allowance|budget) BY="$BY${BY:+,}$2"; shift 2 ;;
+        *) echo "usage-summary.sh: --by takes harness, handler, task, role, model, weight, tasks, pool, adapters, allowance or budget" >&2; exit 1 ;;
       esac ;;
     -h|--help) sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Usage: usage-summary.sh [--file <usage.jsonl>] [--since <timestamp>] [--budgets <budgets.json>] [--by <grouping>]..." >&2; exit 1 ;;
@@ -82,7 +89,9 @@ jq -R 'fromjson? // empty' "$FILE" \
     | ($inrange | map(select(.record == "allowance"))) as $readings
     | ($inrange | map(select(.record == "model_mismatch"))) as $mismatches
     | ($inrange | map(select(.record == "pool_mismatch"))) as $poolmm
-    | ($inrange | map(select(.record == null))) as $all
+    | ($inrange | map(select(.record == "task"))) as $taskrecs
+    | ($taskrecs | map({key: ((.run // "") + "/" + .task), value: .weight}) | from_entries) as $weights
+    | ($inrange | map(select(.record == null) | . + {weight: ($weights[(.run // "") + "/" + (.task // "")] // null)})) as $all
     | ($all | map(select(.billing == "api" or .billing == "subscription")) | length > 0) as $billed
     | ($all | map(select(.pool != null and .pool != "unknown")) | length > 0) as $pooled
     | def want(k): $by == "" or ($by | split(",") | index(k) != null);
@@ -188,6 +197,14 @@ jq -R 'fromjson? // empty' "$FILE" \
         (if want("task")    then (groups(.task)    | .[] | row("task";    .key; .a)) else empty end),
         (if want("role")    then (groups(.role)    | .[] | row("role";    .key; .a)) else empty end),
         (if want("model")   then (groups(.model)   | .[] | row("model";   .key; .a)) else empty end),
+        (if want("weight")  then (groups(.weight)  | .[] | row("weight";  .key; .a)) else empty end),
+        (if want("tasks") and ($taskrecs | length) > 0 then
+           ($taskrecs | group_by(.weight // "-")
+            | map(["tasks", (.[0].weight // "-" | tostring), length, (map(.steps) | add), (map(.rework.rounds) | add),
+                   (map(select(.git.lines_added != null) | .git.lines_added + .git.lines_removed) | add // 0),
+                   (map(select(.git.files != null) | .git.files) | add // 0),
+                   (map(select(.git.lines_added == null)) | length)] | @tsv) | .[])
+         else empty end),
         (if want("pool") and ($pooled or ($poolmm | length) > 0) then
            (groups(poolkey) | .[] | row("pool"; .key; .a)),
            ($poolmm | group_by([.declared, .detected]) | map(["pool_mismatch", .[0].declared, .[0].detected, length] | @tsv) | .[])
@@ -300,6 +317,11 @@ jq -R 'fromjson? // empty' "$FILE" \
       }
       unpriced = $3 - $14; unpriced_all += unpriced
       printf "%-28s %8d %11s %8d %9d %12s\n", $2, $3, money($13), $14, unpriced, ($14 > 0 ? money($13 / $14) : "-")
+      next
+    }
+    $1 == "tasks" {
+      if (!tasks_head) { printf "\n%-12s %6s %6s %8s %12s %7s %s\n", "Tasks, by weight", "tasks", "steps", "rework", "lines", "files", "(size unknown)"; tasks_head = 1 }
+      printf "%-12s %6d %6d %8d %12d %7d %s\n", ($2 == "-" ? "(no weight)" : $2), $3, $4, $5, $6, $7, ($8 > 0 ? "[" $8 "]" : "")
       next
     }
     {

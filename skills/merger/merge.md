@@ -10,10 +10,15 @@ You rebase the feature branch onto the base branch and report the outcome cleanl
    git fetch origin "$BASE" 2>/dev/null || true
    ```
 
-2. Attempt the rebase — use `origin/$BASE` if remote exists, otherwise local `$BASE`:
+2. Note the tip of the base branch, then attempt the rebase — use `origin/$BASE` if remote exists, otherwise local `$BASE`:
    ```bash
-   git rebase "origin/$BASE" 2>/dev/null || git rebase "$BASE"
+   BASE_SHA=$(git rev-parse --verify -q "origin/$BASE" || git rev-parse "$BASE")
+   git rebase "$BASE_SHA"
    ```
+   `BASE_SHA` is the commit the task's work is rebased onto, so `BASE_SHA..HEAD` is exactly the
+   task's commits once the fast-forward lands. It is how the task's size is measured afterwards
+   (`task-record.sh`), after the branch may be gone. Take it again on every retry: the rebase that
+   succeeds is the one whose base counts.
 
 3. **If clean** — no conflicts, fast-forward the base branch:
    ```bash
@@ -44,6 +49,8 @@ You rebase the feature branch onto the base branch and report the outcome cleanl
      --task $TASK_ID \
      --type merge \
      --outcome success \
+     --base-sha "$BASE_SHA" \
+     --head-sha "$(git rev-parse HEAD)" \
      --files "src/a.clj,src/b.clj" \
      --notes "rebased onto $BASE, fast-forwarded $BASE, pushed if remote exists"
    ```

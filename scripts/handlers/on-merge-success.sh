@@ -3,7 +3,8 @@
 # with no model. The loop runs it for a merge artifact with outcome: success, with CONDUCTOR_DIR
 # and TASK_ID set and the scripts on PATH.
 #
-#   1. close the finishing worker's tmux window
+#   1. close the finishing worker's tmux window, and write the task's record to the usage log
+#      (task-record.sh: cost, size, rework; a convenience, so a failure there stops nothing)
 #   2. ask the topology where merge-success sends the task (no guards: done), and move it
 #   3. the three effects of that transition, which the topology names but does not do:
 #      unblock the dependents that were waiting on it, release the merges that were waiting on
@@ -27,6 +28,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../handler-steps.sh"
 : "${TASK_ID:?on-merge-success: TASK_ID is not set}"
 
 close_worker_window "$TASK_ID"
+task-record.sh "$TASK_ID" || echo "on-merge-success: could not record the task $TASK_ID in the usage log" >&2
 route_task "$TASK_ID" merge-success
 unblock_dependents "$TASK_ID"
 release_merge_pending

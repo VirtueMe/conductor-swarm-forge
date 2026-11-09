@@ -684,6 +684,39 @@ The log holds the conductor's own dispatches and the workers' sessions (see "Wor
 - **The log is a convenience.** A line that cannot be written never changes what the loop does.
   The loop needs `jq` for it and exits 3 with a message if it is missing.
 
+### Task record
+
+When a task reaches `done`, `on-merge-success.sh` runs `scripts/task-record.sh`, which appends one line of its
+own to the usage log: `{"record": "task", ...}`. It is a record and not an attempt, so the summary's attempt
+totals do not count it twice. It is what lets a step's cost be read against the size of the task it was spent on.
+
+| Field | Meaning |
+| --- | --- |
+| `task`, `title`, `type`, `merged_at` | which task, from its file and its merge artifact |
+| `weight` | the planned weight, from `weight:` in the task file; null until the strategist (#188) writes one. Every comparison by cost has to carry it: a cheaper model given easier tasks looks good |
+| `steps`, `steps_by_role` | the worker steps that ran for the task (the conductor's own dispatches are in the cost, not in the steps) |
+| `rework` | `review_rejected`, `validation_failed` and their sum, `rounds`: how often the task was sent back |
+| `cost` | one row per pool, never added across them: `pool`, `billing`, `steps`, `reported_usd`, `estimated_usd` (only for a line with no reported cost) and `unknown` (lines with neither: not free). On a `subscription` pool the dollars are notional and the allowance points are the real cost; they are on the step lines and are not summed here |
+| `git` | `commits`, `lines_added`, `lines_removed`, `files`, and the two shas it was read from; or `{"unknown": <why>}` when it could not be: never zero |
+| `files` | the files the task touched |
+
+**Why two shas.** The merger rebases the branch onto the base and then fast-forwards the base onto it, so once
+the merge has landed `base...branch` is empty. The merger therefore notes, on its `merge` artifact, `base-sha`
+(the tip of the base it rebased onto, taken again on every retry) and `head-sha` (the branch tip after the
+rebase). `base-sha..head-sha` is exactly the task's commits, and they stay reachable after the branch is deleted.
+A merge artifact without them (a merger from before this) gives `git: {"unknown": ...}`.
+
+Lines changed measure size and not difficulty, so read them next to `files` and `rework`. A few rows say little:
+treat them as a hint until there are dozens of runs, and key anything you keep by the exact model ID, since a new
+version makes old rows stale.
+
+**Across runs.** `scripts/usage-combine.sh` copies a finished run's usage log into one combined file
+(`~/.conductor/usage-combined.jsonl`, or `USAGE_COMBINED`, or `--into`), adding a `run` field to every line and
+changing nothing else. A run already in the file is not added twice. `usage-summary.sh --file <combined>` reads it
+as it reads one run's. `--by weight` groups the attempts by the planned weight of their task, next to the existing
+`--by role` and `--by model`; `--by tasks` lists the task records by weight: tasks, steps, rework rounds, lines
+changed, files, and how many had no size.
+
 ### Price table
 
 `scripts/usage-prices.json` holds dollars per million tokens for each model: `input`, `cache_read`,
