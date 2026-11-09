@@ -1229,6 +1229,25 @@ validated.`, so the card moves on and the reviewer sees that nothing ran. Test f
 run (discovery or an import error) are still a failure. The loop limit above stays as the backstop for a
 failure that really cannot be fixed.
 
+### The strategist: the plan hold, and a parked task (#188)
+
+A workforce with a `strategist` member and a brief starts with the plan **held** (`plan-hold.sh`, the file
+`plan-hold` in the conductor directory). While it exists new tasks and unblocked tasks stay in backlog (a design
+task still goes to done). The architect tells the strategist the plan is complete (`strategist-inbox/plan-ready-*.md`);
+the strategist checks it against the brief, writes `strategy/<task>.json` where a task should not run the default
+way, and runs `plan-hold.sh release`. Release is all-or-nothing: a plan error (`plan-check.sh`) or one invalid
+strategy file releases nothing, and a successful release copies `strategy/` to `strategy-released/`, which is what
+`task-strategy.sh` reads from then on.
+
+The strategist is also told of a parked task: `escalate_validation_loop` writes `strategist-inbox/exception-<task>-*.md`
+(only if that inbox exists) beside the notices for the architect and the person. The strategist decides code or plan
+fault (`skills/strategist/on-exception.md`) and calls `plan-revision.sh propose <task> <kind> <note>`, where kind is
+`fix-plan`, `split`, `add-task` or `ask-person`. The proposal is kept in `revisions/<task>-<n>.md`, and the architect
+(`skills/architect/on-plan-change.md`) approves it by making the change and sending the task back with
+`plan-revision.sh resume <task>`. Rounds are capped, and the count is the number of files in `revisions/`:
+`max-replans` per task and `max-plan-rejections` for the plan itself (`config.md`, 2 each). Past the cap the call
+changes nothing, tells the person (`human-inbox/plan-cap-*.md`) and exits 1. `ask-person` costs no round.
+
 ## Spike results
 
 The spike (#73) ran one real handler, `on-review-approved`, under each harness

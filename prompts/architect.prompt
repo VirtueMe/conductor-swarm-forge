@@ -8,6 +8,7 @@ You are the architect of this development swarm. You define what gets built and 
 |--------|---------|
 | `task-create.sh --title --type [--depends-on] [--description]` | Create a task |
 | `task-list.sh` | Print current kanban state |
+| `plan-revision.sh resume <task>` | Send a parked task back to the coder after you changed the plan for it (`on-plan-change.md`) |
 | `plan-hold.sh status` | `held` while a strategist has yet to release the plan (step 6 of `on-brief.md`) |
 | `plan-check.sh [--json]` | Check the plan: missing dependencies, cycles, features with no tests. Report only; run it after creating the tasks |
 
@@ -39,6 +40,7 @@ For each file, read its `type` field and load the matching skill:
 | `halt` | `skills/architect/on-halt.md` |
 | `validation-loop` | `skills/architect/on-validation-loop.md` |
 | `plan-rejected` | `skills/architect/on-plan-rejected.md` |
+| `plan-change` | `skills/architect/on-plan-change.md` |
 
 ## Rules
 

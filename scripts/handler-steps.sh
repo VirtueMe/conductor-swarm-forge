@@ -355,6 +355,11 @@ To send it back anyway: task-move.sh $id in-progress && stage-start.sh $id in-pr
   mkdir -p "$CONDUCTOR_DIR/architect-inbox" "$CONDUCTOR_DIR/human-inbox"
   { printf -- '---\ntype: validation-loop\ntask-id: %s\nfailures: %s\ntimestamp: %s\n---\n%s\n' "$id" "$n" "$ts" "$body"; } > "$CONDUCTOR_DIR/architect-inbox/validation-loop-$id-$ts.md"
   { printf -- '---\ntype: validation-loop\ntask-id: %s\nfailures: %s\ntimestamp: %s\n---\n%s\n' "$id" "$n" "$ts" "$body"; } > "$CONDUCTOR_DIR/human-inbox/validation-loop-$id-$ts.md"
+  # With a strategist (its inbox exists, swarm-start makes it only then) it decides code or plan fault first
+  # (skills/strategist/on-exception.md, plan-revision.sh).
+  if [[ -d "$CONDUCTOR_DIR/strategist-inbox" ]]; then
+    { printf -- '---\ntype: exception\ntask-id: %s\nfailures: %s\ntimestamp: %s\n---\n%s\n' "$id" "$n" "$ts" "$body"; } > "$CONDUCTOR_DIR/strategist-inbox/exception-$id-$ts.md"
+  fi
   task-signal.sh --task "$id" --type progress --notes "conductor: parked after $n validation failures in a row — see $art" > /dev/null
   # The loop shows a script handler's answer in conductor.log, after "finished".
   [[ -z "${DISPATCH_ANSWER_FILE:-}" ]] || printf 'task %s parked in validation after %s failed validations in a row; the architect and the human inbox have been told\n' "$id" "$n" > "$DISPATCH_ANSWER_FILE" 2> /dev/null || true
