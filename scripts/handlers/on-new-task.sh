@@ -42,6 +42,12 @@ fi
 : "${TASK_FILE:?on-new-task: TASK_FILE is not set}"
 type="$(fm_field "$TASK_FILE" type)"
 if [[ -z "$type" ]]; then echo "on-new-task: task $TASK_ID has no type, so its route is unknown" >&2; exit 1; fi
+if plan_held && [[ "$type" != design ]]; then
+  # The plan hold is on (plan-hold.sh): the task waits in backlog until the plan is released.
+  card_path "$TASK_ID" > /dev/null || task-move.sh "$TASK_ID" backlog
+  echo "on-new-task: $TASK_ID held in backlog until the plan is released" >&2
+  exit 0
+fi
 deps="$(deps_done "$TASK_ID")"
 route_task "$TASK_ID" new-task "type=$type" "deps=$deps"
 if [[ "$ROUTED_DEST" == "done" ]]; then unblock_dependents "$TASK_ID"; fi
