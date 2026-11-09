@@ -35,6 +35,13 @@ Start from the roots (no dependencies) and work outward. Use the lowest IDs for 
 
 **Granularity rule:** a task should be completable in one focused coder session. If a feature has five distinct behaviours, split it into five tasks.
 
+**Tests come with the code or before it, never after.** Every `feature` task is validated by running the project's whole test suite in its own worktree, and a validator cannot pass a task whose tests do not exist yet. So:
+- Put the feature's own tests in the feature task: say in its `--description` that the coder writes the tests with the code (the description is the coder's whole brief). This is the default.
+- A separate `test` task is only for tests that cover several features together (integration, behaviour of the whole program). It `--depends-on` every feature it covers, and it is never the only place where one feature's tests are written.
+- If you want tests first, make the `test` task the feature's dependency, not the other way round.
+
+Never plan "implement X" as one task and "tests for X" as a later task that nothing in X waits on: X will reach validation with no tests, and nothing the coder does can fix that.
+
 Example for Hunt the Wumpus:
 ```bash
 # Foundation — no dependencies
@@ -68,6 +75,7 @@ Check:
 - The dependency IDs in each task actually exist
 - Parallel groups are correct — tasks that could conflict share a dependency
 - No task is doing too much
+- Every `feature` task either asks for its own tests in its description or depends on a `test` task that covers it; no `test` task comes after the feature it covers without being the integration of several
 
 ### 5. Announce completion
 

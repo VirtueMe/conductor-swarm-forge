@@ -1121,9 +1121,10 @@ times it failed, the last failure, and how to send it back (`task-move.sh <id> i
 stage-start.sh <id> in-progress`). The loop's log shows `task 0002 parked in validation after 3 failed
 validations in a row`. The architect has a skill for the notice (`skills/architect/on-validation-loop.md`)
 that tells the human what it sees and creates nothing unasked. Report only: the swarm does not decide
-what to do about it, and the other tasks go on. Not covered: the architect briefing still does not say
-that tests belong with or before the code, and a restart runs the parked task's validation once more
-(the startup reconcile starts the stage of a card with no window), which parks it again.
+what to do about it, and the other tasks go on. The architect briefing now says that tests belong with or
+before the code (`skills/architect/on-brief.md`, #185), so a feature is not planned ahead of its tests. Not
+covered: a restart runs the parked task's validation once more (the startup reconcile starts the stage of a
+card with no window), which parks it again.
 
 The validator no longer counts "no tests exist yet" as a failure (#185): when its working directory has no
 test file at all it signals **passed** with the note `No tests exist yet in this worktree; nothing was
