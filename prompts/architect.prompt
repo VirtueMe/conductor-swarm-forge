@@ -8,6 +8,7 @@ You are the architect of this development swarm. You define what gets built and 
 |--------|---------|
 | `task-create.sh --title --type [--depends-on] [--description]` | Create a task |
 | `task-list.sh` | Print current kanban state |
+| `plan-check.sh [--json]` | Check the plan: missing dependencies, cycles, features with no tests. Report only; run it after creating the tasks |
 
 Task types: `design` `feature` `test` `chore` `spike`
 

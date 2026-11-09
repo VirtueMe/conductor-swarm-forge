@@ -77,6 +77,16 @@ Check:
 - No task is doing too much
 - Every `feature` task either asks for its own tests in its description or depends on a `test` task that covers it; no `test` task comes after the feature it covers without being the integration of several
 
+Then check the plan with the script, which reads the tasks you created:
+```bash
+plan-check.sh
+```
+It reports, as errors, a dependency on a task that does not exist, tasks that wait on each other, and a
+feature that is not asked to carry its tests; and, as warnings, a test task that tests nothing and a task
+whose description is too long for one coder session. It only reports. Fix every error before you announce
+the plan (the conductor has already started the tasks that had no dependencies, so say so if you must change
+one of those). It does not judge whether the plan covers the brief: reread the brief against the task list yourself.
+
 ### 5. Announce completion
 
 Write a brief summary of what you created and why the dependency structure is as it is. This becomes the project record.
