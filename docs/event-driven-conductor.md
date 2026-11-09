@@ -1049,6 +1049,28 @@ that run. Overlap is only detected between the swarm's own runs; a person using 
 run is live moves the window too, and the swarm cannot see it. The numbers mean something added up
 over several runs, and a run under one point does not show.
 
+## Plan check
+
+`scripts/plan-check.sh` reads the tasks the architect created (`$CONDUCTOR_DIR/tasks/*.md`) and reports what is
+wrong with the plan itself, before the conductor's retries and limits have to cope with it. The architect runs it as
+step 4 of `skills/architect/on-brief.md`; a person can run it any time. It is **report only**: it moves no card and
+creates no task, and nothing waits for it, so a plan can start running before anyone has read the findings. Holding a
+plan until it passes is the strategist's job (#188), not this script's. `--json` prints the findings as an array; the
+exit status is 1 when there is an error, 0 otherwise (warnings do not count).
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `empty-plan` | error | there are no tasks |
+| `dangling-dependency` | error | a task depends on an id that is not a task |
+| `dependency-cycle` | error | tasks wait on each other (or on a cycle), so none of them can start |
+| `feature-no-tests` | error | a `feature` task whose description does not contain the word "test" and that does not depend on a `test` task. It reaches validation with nothing to run (#185, #187). The message names the later test task that waits on it, which is the usual shape of the fault |
+| `test-covers-nothing` | warning | a `test` task that depends on nothing and that nothing waits on |
+| `task-too-large` | warning | a description longer than `PLAN_CHECK_MAX_DESCRIPTION` characters (default 1500): likely more than one coder session |
+
+"Asks for tests" is the word `test` or `tests` in the description, in any case; `tested` does not count. That is a
+heuristic and a cheap one, which is why it is an error the architect can answer by adding the sentence, not a gate.
+What it cannot judge is whether the plan covers the brief: that takes a model, and is left to the strategist.
+
 ## Startup reconcile
 
 `skills/conductor/startup.md` used to be two things: steps 1 to 6 reconciled the board with
