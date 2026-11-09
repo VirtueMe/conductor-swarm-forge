@@ -187,6 +187,9 @@ jobs:
       - name: test-usage-summary
         run: bash scripts/test-usage-summary.sh
 
+      - name: test-task-record
+        run: bash scripts/test-task-record.sh
+
       - name: test-budget
         run: bash scripts/test-budget.sh
 

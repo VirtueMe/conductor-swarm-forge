@@ -12,11 +12,13 @@ OUTCOME=""
 WORKER_TYPE=""
 BRANCH=""
 WORKTREE=""
+BASE_SHA=""
+HEAD_SHA=""
 FILES=""
 NOTES=""
 
 usage() {
-  echo "Usage: task-signal.sh --task <id> --type <type> [--outcome <outcome>] [--worker-type <type>] [--branch <branch>] [--worktree <path>] [--files <file,...>] [--notes <text>]" >&2
+  echo "Usage: task-signal.sh --task <id> --type <type> [--outcome <outcome>] [--worker-type <type>] [--branch <branch>] [--worktree <path>] [--base-sha <sha>] [--head-sha <sha>] [--files <file,...>] [--notes <text>]" >&2
   echo "Types: assigned progress drift signal review merge done" >&2
   exit 1
 }
@@ -29,6 +31,8 @@ while [[ $# -gt 0 ]]; do
     --worker-type) WORKER_TYPE="$2"; shift 2 ;;
     --branch)      BRANCH="$2";      shift 2 ;;
     --worktree)    WORKTREE="$2";    shift 2 ;;
+    --base-sha)    BASE_SHA="$2";    shift 2 ;;
+    --head-sha)    HEAD_SHA="$2";    shift 2 ;;
     --files)       FILES="$2";       shift 2 ;;
     --notes)       NOTES="$2";       shift 2 ;;
     *) usage ;;
@@ -55,6 +59,8 @@ FM_TAIL=""
 [[ -n "$WORKER_TYPE" ]] && FM_TAIL+="worker-type: $WORKER_TYPE"$'\n'
 [[ -n "$BRANCH" ]]      && FM_TAIL+="branch: $BRANCH"$'\n'
 [[ -n "$WORKTREE" ]]    && FM_TAIL+="worktree: $WORKTREE"$'\n'
+[[ -n "$BASE_SHA" ]]    && FM_TAIL+="base-sha: $BASE_SHA"$'\n'
+[[ -n "$HEAD_SHA" ]]    && FM_TAIL+="head-sha: $HEAD_SHA"$'\n'
 if [[ -n "$FILES" ]]; then
   FM_TAIL+="files-changed:"$'\n'
   IFS=',' read -ra FILE_LIST <<< "$FILES"
