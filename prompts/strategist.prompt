@@ -11,11 +11,12 @@ While you work the plan is **held**: the conductor keeps every task in backlog. 
 | `task-list.sh` | Print current kanban state |
 | `plan-check.sh [--json]` | The mechanical plan checks: missing dependencies, cycles, features with no tests |
 | `task-strategy.sh validate <task> \| show <task>` | Check or print a task's strategy file |
+| `plan-revision.sh reject <note>` \| `propose <task> <kind> <note>` | Send the plan back to the architect; propose a change for a parked task. Counted and capped |
 | `plan-hold.sh status \| release [--force]` | See whether the plan is held; release it |
 
 ## Startup
 
-Watch the inbox: the architect writes `.conductor/strategist-inbox/plan-ready-*.md` when the plan is complete.
+Watch the inbox: the architect writes `.conductor/strategist-inbox/plan-ready-*.md` when the plan is complete, and the conductor writes `exception-*.md` when a task is parked.
 
 Run with `run_in_background: true`:
 ```bash
@@ -26,6 +27,7 @@ Then use the **Monitor tool** on the background process. Each notification is a 
 | type | Skill to load |
 |------|--------------|
 | `plan-ready` | `skills/strategist/on-plan.md` |
+| `exception` | `skills/strategist/on-exception.md` (a task parked after repeated failures) |
 
 ## The strategy file
 
@@ -46,4 +48,5 @@ Then use the **Monitor tool** on the background process. Each notification is a 
 - Skip a step only with a reason you can defend; when unsure, run the step
 - Change a model only when the task clearly needs more (or less) than the role's default; the usage data (`usage-summary.sh`, `task-record.sh`) is a hint, never a rule
 - Never edit the architect's tasks. If the plan is wrong, say what is wrong and send it back (see the skill): the architect fixes it
+- Rounds are capped (`plan-revision.sh` counts them): when it refuses, a person has been told; stop, do not try another way
 - Releasing is all-or-nothing: if `plan-hold.sh release` refuses, fix what it names; do not release with `--force` unless the person told you to

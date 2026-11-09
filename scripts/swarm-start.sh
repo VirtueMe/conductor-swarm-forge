@@ -146,8 +146,7 @@ fi
 mkdir -p \
   "$CONDUCTOR_DIR/tasks" \
   "$CONDUCTOR_DIR/work" \
-  "$CONDUCTOR_DIR/architect-inbox" \
-  "$CONDUCTOR_DIR/strategist-inbox"
+  "$CONDUCTOR_DIR/architect-inbox"
 
 # Cursor file for the conductor's batch-drain loop — initialised to now so the
 # startup scan owns pre-existing artifacts and the poll loop owns what comes after.
@@ -379,7 +378,7 @@ if [[ -n "$BRIEF_FILE" ]] && python3 -c 'import json,sys; sys.exit(0 if any(m["r
   STRAT_BODY="$(printf 'SKILLS_DIR: %s\nCONDUCTOR_DIR: %s/%s\nSCRIPTS_DIR: %s\nLANG: %s' \
     "$TARGET_DIR/$CONDUCTOR_DIR/skills" "$TARGET_DIR" "$CONDUCTOR_DIR" "$SCRIPTS_DIR" "${LANG:-unknown}")"
 
-  mkdir -p ".worktrees/strategist"
+  mkdir -p ".worktrees/strategist" "$CONDUCTOR_DIR/strategist-inbox"
   adapter_call "$STRAT_ADAPTER_FILE" adapter_write_briefing \
     ".worktrees/strategist" "strategist" "$STRAT_SKILL" "$STRAT_BODY" \
     "$SCRIPTS_DIR" "$TARGET_DIR" "" "${LANG:-}"

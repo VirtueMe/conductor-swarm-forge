@@ -523,7 +523,16 @@ assert_eq "the title and the last failure are in the text" "$(grep -c 'Implement
 assert_eq "it says how to send the card back" "$(grep -c 'task-move.sh 0009 in-progress && stage-start.sh 0009 in-progress' "$H")" "1"
 assert_eq "a progress note was written, nothing was moved or started" "$(grep -c '^task-signal.*--type progress.*parked after 3 validation failures' "$STUB_LOG") $(grep -c '^task-move\|^stage-start' "$STUB_LOG" || true)" "1 0"
 assert_eq "the loop's log line is left for it to show" "$(grep -c 'task 0009 parked in validation after 3 failed validations' "$DISPATCH_ANSWER_FILE")" "1"
+assert_eq "no strategist inbox, no strategist notice" "$(find "$CONDUCTOR_DIR" -path '*strategist-inbox*' | grep -c .)" "0"
+# with a strategist (its inbox exists) it is told too, before anyone decides what to do
+mkdir -p "$CONDUCTOR_DIR/strategist-inbox"
+# shellcheck source=scripts/handler-steps.sh
+( source "$STEPS_LIB"; escalate_validation_loop 0009 3 "$CONDUCTOR_DIR/work/0009/validation-20261108-140000.md" )
+S="$(find "$CONDUCTOR_DIR/strategist-inbox" -name 'exception-0009-*.md')"
+assert_eq "the strategist gets an exception notice" "$(printf '%s\n' "$S" | grep -c .)" "1"
+assert_eq "typed exception, naming the task and the failures" "$(grep -c '^type: exception$' "$S") $(grep -c '^task-id: 0009$' "$S") $(grep -c '^failures: 3$' "$S")" "1 1 1"
 unset DISPATCH_ANSWER_FILE
+rm -rf "$CONDUCTOR_DIR/strategist-inbox"
 rm -rf "$CONDUCTOR_DIR/work/0009" "$CONDUCTOR_DIR/architect-inbox" "$CONDUCTOR_DIR/human-inbox" "$CONDUCTOR_DIR/tasks/0009.md"
 
 echo ""

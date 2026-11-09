@@ -23,16 +23,10 @@ Read `.conductor/brief.md` and every task file in `.conductor/tasks/`.
 
 ### 3. If the plan is wrong, send it back
 
-Write one file, `.conductor/architect-inbox/plan-rejected-<timestamp>.md`:
-
+```bash
+plan-revision.sh reject "<what is wrong, task by task or requirement by requirement, and what you would change>"
 ```
----
-type: plan-rejected
-timestamp: <timestamp>
----
-<what is wrong, task by task or requirement by requirement, and what you would change>
-```
-Then stop. The plan stays held. The architect fixes it and tells you again with a new `plan-ready` file. Do this at most **2 times** for one plan: if the third plan is still wrong, write the problem to `.conductor/human-inbox/plan-rejected-<timestamp>.md` (same format) and leave the plan held for the person.
+It writes your note to the architect (and to the person). Then stop. The plan stays held. The architect fixes it and tells you again with a new `plan-ready` file. A plan can be sent back **2** times (`max-plan-rejections` in `config.md`): after that the call fails, a person has been told, and the plan stays held for them. Do not release a plan you judge wrong to get round the cap.
 
 ### 4. Write each task's strategy
 
