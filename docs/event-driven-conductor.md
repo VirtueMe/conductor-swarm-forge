@@ -1176,6 +1176,10 @@ so is everything once a shutdown is requested. A card whose `depends-on` cannot 
 with a message on stderr. A failing check is logged and never halts the loop; `CONDUCTOR_BACKLOG_CHECK=off`
 turns it off. Unblocking itself stays explicit in the handlers, not in `task-move.sh`.
 
+The check also runs while the loop is idle, every `CONDUCTOR_BACKLOG_INTERVAL` seconds (default 60; 0 =
+every pass), so a card left behind by something that is not an event (a plan release that failed, a
+person moving a card by hand) is healed without waiting for the next event or a restart (#197).
+
 ## Windows that wait for a person
 
 A worker is an interactive window in the background. When it stops to ask something (a permission

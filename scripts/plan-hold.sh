@@ -21,6 +21,12 @@ set -euo pipefail
 #   4. the hold file is removed, plan-released is written, and every backlog card whose dependencies are
 #      done is released (the others wait for their dependencies, as always)
 #
+# A card that cannot be released puts the hold back, says which one (and which had already started,
+# since those stay started), and exits 1: a release that half worked must not read as released, or
+# nothing would ever start the cards it left in backlog (#197).
+# The scripts directory is added to the end of PATH, since handler-steps.sh calls its siblings by name
+# and a strategist's window does not have it there.
+#
 # The conductor's own steps (handler-steps.sh) honour the hold file: new-task, unblock_dependents,
 # unblock_ready and the backlog check all leave backlog cards where they are while it exists. A design
 # task still goes to done on arrival: nobody works on it, and it holds nothing back.
@@ -28,6 +34,7 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 export CONDUCTOR_DIR
+case ":$PATH:" in *":$SCRIPTS_DIR:"*) ;; *) export PATH="$PATH:$SCRIPTS_DIR" ;; esac
 HOLD="$CONDUCTOR_DIR/plan-hold"
 RELEASED="$CONDUCTOR_DIR/plan-released"
 
@@ -74,11 +81,19 @@ cmd_release() {
 
   # shellcheck source=scripts/handler-steps.sh
   source "$SCRIPTS_DIR/handler-steps.sh"
-  local line
+  local line card failed="" started=""
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    release_backlog_card "${line%% *}"
+    card="${line%% *}"
+    release_backlog_card "$card" || { failed="$card"; break; }
+    started="${started:+$started }$card"
   done < <(stranded_backlog)
+  if [[ -n "$failed" ]]; then
+    date +%Y-%m-%dT%H:%M:%S > "$HOLD"
+    rm -f "$RELEASED"
+    # Cards released before the failing one stay released: say so, or "held again" reads as "nothing started".
+    die "task $failed could not be released, so the plan is held again${started:+ (already released and started: ${started// /, })}; fix that and run release again"
+  fi
   echo "released"
 }
 

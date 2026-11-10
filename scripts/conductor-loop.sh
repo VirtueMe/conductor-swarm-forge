@@ -19,6 +19,7 @@ set -euo pipefail
 #   CONDUCTOR_BACKLOG_CHECK     'off' skips the check after each event that no card waits in backlog with its
 #                               dependencies done (default on)
 #   CONDUCTOR_HEARTBEAT         seconds of idleness between 'idle' lines in the log (default 600; 0 = never)
+#   CONDUCTOR_BACKLOG_INTERVAL  seconds between backlog checks while idle, with no event to prompt one (default 60; 0 = every pass)
 #   CONDUCTOR_HANDLERS_DIR      where script handlers live (default: handlers/ next to this script)
 #
 # A handler is a script when one exists, else the skill goes to the model. For the skill
@@ -123,6 +124,7 @@ LOG_FILE="$CONDUCTOR_DIR/conductor.log"
 HEARTBEAT="${CONDUCTOR_HEARTBEAT:-600}"
 LAST_BEAT=$SECONDS EVENTS_DONE=0
 WATCH_EVERY="${CONDUCTOR_WATCH_INTERVAL:-60}" LAST_WATCH=$SECONDS   # seconds between looks at the worker windows (0 = every pass)
+BACKLOG_EVERY="${CONDUCTOR_BACKLOG_INTERVAL:-60}" LAST_BACKLOG=$SECONDS   # seconds between idle backlog checks (0 = every pass)
 
 # Every message passes through here, and some carry text a model wrote (its last line, an adapter's
 # error) that may have come from a task or a file nobody trusts. A terminal obeys escape sequences,
@@ -517,6 +519,15 @@ check_backlog() {
   done <<< "$out"
 }
 
+# check_backlog runs after an event, so a card left behind by something that is not an event (a plan
+# release that failed, a person moving a card by hand) waits for the next one, which in an idle swarm
+# never comes (#197). An idle pass runs it too, every BACKLOG_EVERY seconds.
+check_backlog_idle() {
+  (( SECONDS - LAST_BACKLOG >= BACKLOG_EVERY )) || return 0
+  LAST_BACKLOG=$SECONDS
+  check_backlog
+}
+
 # A worker window that stops to ask a person something (a permission or trust question) is in the
 # background and says nothing (#168). window-watch.sh looks at the end of each worker window and
 # prints one line per new finding; this puts it in the log. Report only, and best effort: a failing
@@ -571,6 +582,7 @@ while :; do
   check_windows
   read -r rel < <("$SCRIPTS_DIR/artifact-ledger.sh" unprocessed) || true
   if [[ -z "$rel" ]]; then
+    check_backlog_idle
     "$ONCE" && break
     if (( HEARTBEAT > 0 && SECONDS - LAST_BEAT >= HEARTBEAT )); then
       log "idle: nothing to do ($EVENTS_DONE events handled since start)"

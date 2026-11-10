@@ -126,5 +126,60 @@ task 0004 feature "No word of it." 0099
 "$H" release --force > /dev/null 2>&1
 assert_eq "released" "$("$H" status || true)" "released"
 
+# A held project of its own: 0001 is a design task already done, 0002 a feature in backlog that depends on it.
+fresh_project() { # <dir>
+  local d="$1/.conductor" st
+  mkdir -p "$d"/{tasks,work,strategy}
+  while IFS= read -r st; do mkdir -p "$d/kanban/$st"; done < <("$SCRIPTS_DIR/topology-load.sh" stages "$topo")
+  cp "$topo" "$d/topology.json"
+  printf -- '---\nid: 0001\ntype: design\ntitle: t0001\ndepends-on: []\n---\n\nDesign.\n' > "$d/tasks/0001.md"
+  printf -- '---\nid: 0002\ntype: feature\ntitle: t0002\ndepends-on:\n  - 0001\n---\n\nBuild it, with tests.\n' > "$d/tasks/0002.md"
+  cp "$d/tasks/0001.md" "$d/kanban/done/0001.md"
+  cp "$d/tasks/0002.md" "$d/kanban/backlog/0002.md"
+  CONDUCTOR_DIR="$d" "$H" hold > /dev/null
+}
+stage_in() { (CONDUCTOR_DIR="$1/.conductor"; stage_of "$2"); }
+
+section "9 · Release from a window with no scripts on its PATH (#197)"
+# The strategist's window is given SCRIPTS_DIR in its briefing and calls scripts by absolute path; nothing
+# puts that directory on PATH. Release used to remove the hold, then die on 'topology-load.sh: command not
+# found', leaving the card in backlog and the plan 'released' for nothing to start.
+P9="$TMP/p9"; fresh_project "$P9"
+RC=0; env CONDUCTOR_DIR="$P9/.conductor" PATH="$STUB:/usr/bin:/bin" "$H" release > "$TMP/out9" 2>&1 || RC=$?
+assert_eq "release succeeds" "$RC" "0"
+assert_eq "the hold is gone" "$(CONDUCTOR_DIR="$P9/.conductor" "$H" status || true)" "released"
+assert_eq "0002 (its dependency is done) is ready" "$(stage_in "$P9" 0002)" "ready"
+
+section "10 · A card that cannot be released puts the hold back (#197)"
+P10="$TMP/p10"; fresh_project "$P10"
+cat > "$STUB/task-move.sh" << 'X'
+#!/usr/bin/env bash
+[[ "${STUB_FAIL_MOVE:-}" != "$1" ]] || { echo "task-move: cannot move $1" >&2; exit 1; }
+for f in "$CONDUCTOR_DIR"/kanban/*/"$1".md; do [[ -f "$f" ]] && rm -f "$f"; done
+mkdir -p "$CONDUCTOR_DIR/kanban/$2"
+printf -- '---\nid: %s\n---\n' "$1" > "$CONDUCTOR_DIR/kanban/$2/$1.md"
+X
+RC=0; env CONDUCTOR_DIR="$P10/.conductor" STUB_FAIL_MOVE=0002 "$H" release > "$TMP/out10" 2>&1 || RC=$?
+assert_eq "release fails" "$RC" "1"
+assert_eq "the plan is held again" "$(CONDUCTOR_DIR="$P10/.conductor" "$H" status || true)" "held"
+assert_eq "no 'released' marker is left" "$([[ -e "$P10/.conductor/plan-released" ]] && echo yes || echo no)" "no"
+assert_eq "0002 is still in backlog" "$(stage_in "$P10" 0002)" "backlog"
+assert_eq "the message says the plan is held again" "$(grep -c "held again" "$TMP/out10" || true)" "1"
+RC=0; env CONDUCTOR_DIR="$P10/.conductor" "$H" release > /dev/null 2>&1 || RC=$?
+assert_eq "once the cause is gone, release works again" "$RC" "0"
+assert_eq "and 0002 is ready" "$(stage_in "$P10" 0002)" "ready"
+
+section "11 · A failed release says which cards had already started (#197)"
+P11="$TMP/p11"; fresh_project "$P11"
+printf -- '---\nid: 0003\ntype: feature\ntitle: t0003\ndepends-on:\n  - 0001\n---\n\nBuild more, with tests.\n' > "$P11/.conductor/tasks/0003.md"
+cp "$P11/.conductor/tasks/0003.md" "$P11/.conductor/kanban/backlog/0003.md"
+RC=0; env CONDUCTOR_DIR="$P11/.conductor" STUB_FAIL_MOVE=0003 "$H" release > "$TMP/out11" 2>&1 || RC=$?
+assert_eq "release fails" "$RC" "1"
+assert_eq "0002 had already started" "$(stage_in "$P11" 0002)" "ready"
+assert_eq "0003 is still in backlog" "$(stage_in "$P11" 0003)" "backlog"
+assert_eq "the message names the failed card" "$(grep -c 'task 0003 could not be released' "$TMP/out11" || true)" "1"
+assert_eq "and the card that had already started" "$(grep -c 'already released and started: 0002' "$TMP/out11" || true)" "1"
+assert_eq "a failure with nothing started says nothing about it" "$(grep -c 'already released' "$TMP/out10" || true)" "0"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All plan-hold tests passed."; else echo "$FAILS plan-hold test(s) failed." >&2; exit 1; fi

@@ -1235,6 +1235,35 @@ rm -f "$CONDUCTOR_DIR/window-watch.seen"
 PATH="$TMP/wwbin:$PATH" CONDUCTOR_WINDOW_WATCH=off CONDUCTOR_WATCH_INTERVAL=0 CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" --once > /dev/null 2>&1 || true
 assert_eq "CONDUCTOR_WINDOW_WATCH=off says nothing more" "$(grep -c 'window coder-0001' "$CONDUCTOR_DIR/conductor.log" || true)" "1"
 
+# 52 ------------------------------------------------------------------------------
+section "52 · A card stranded in backlog is healed while the loop is idle (#197)"
+# No event arrives: the card was left behind by something that is not a handler (a release that failed,
+# a person moving a card). The check after an event never runs, so an idle pass must run it too. The loop
+# is already running when the card is stranded: a restart's reconcile would heal it anyway.
+strand_under_live_loop() { # <seconds to wait> [env assignments for the loop...]
+  local wait_s="$1"; shift
+  new_swarm
+  export CONDUCTOR_BACKLOG_CHECK=on   # new_swarm turns it off for the stub-handler tests
+  "$SCRIPTS_DIR/task-create.sh" --title A --type chore --description x > /dev/null
+  "$SCRIPTS_DIR/task-create.sh" --title B --type chore --depends-on 0001 --description x > /dev/null
+  : > "$STUB_LOG"
+  env "$@" CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err" &
+  LOOP_PID=$!
+  sleep 2    # the startup reconcile and the two card events are handled
+  # By hand, so no event follows. 0001 may already have left backlog: the idle check moves it too.
+  mv "$CONDUCTOR_DIR"/kanban/*/0001.md "$CONDUCTOR_DIR/kanban/done/0001.md"
+  for _ in $(seq 1 $(( wait_s * 5 ))); do [[ -f "$CONDUCTOR_DIR/kanban/ready/0002.md" ]] && break; sleep 0.2; done
+  kill -TERM "$LOOP_PID" 2> /dev/null || true; wait "$LOOP_PID" 2> /dev/null || true; LOOP_PID=""
+}
+strand_under_live_loop 8 CONDUCTOR_BACKLOG_INTERVAL=1
+assert_eq "the idle pass healed the card into ready" "$([[ -f "$CONDUCTOR_DIR/kanban/ready/0002.md" ]] && echo yes)" "yes"
+assert_eq "and started its stage" "$(grep -c '^stage-start 0002 ready$' "$STUB_LOG" || true)" "1"
+expect_grep 'invariant: 0002 was in backlog but its dependencies are done (0001)' "$CONDUCTOR_DIR/conductor.log" "the log says so"
+strand_under_live_loop 4 CONDUCTOR_BACKLOG_INTERVAL=3600
+assert_eq "within the interval the idle pass leaves it alone" "$([[ -f "$CONDUCTOR_DIR/kanban/backlog/0002.md" ]] && echo yes)" "yes"
+strand_under_live_loop 4 CONDUCTOR_BACKLOG_INTERVAL=1 CONDUCTOR_BACKLOG_CHECK=off
+assert_eq "CONDUCTOR_BACKLOG_CHECK=off skips the idle pass" "$([[ -f "$CONDUCTOR_DIR/kanban/backlog/0002.md" ]] && echo yes)" "yes"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1
