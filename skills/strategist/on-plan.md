@@ -30,10 +30,10 @@ It writes your note to the architect (and to the person). Then stop. The plan st
 
 ### 4. Write each task's strategy
 
-For each task that should not run the default way, write `.conductor/strategy/<task>.json` (see the strategy file in your briefing). Most tasks need no file. Examples of a task that does:
-- a `chore` that only edits documentation: skip `validation`, reason "docs only: no test applies"
-- a large integration task: reviewer on a stronger model
-- a trivial task: coder on a cheaper model
+Write `.conductor/strategy/<task>.json` for **every task a worker will run** (see the strategy file in your briefing), because each needs a `weight`: your estimate of its size on the scale in the briefing (1 trivial, 2 small, 3 a normal coder session, 5 large). A task that should run the default way gets just `{ "weight": N }`. A design task is done on arrival and needs no file. Beyond the weight, a task gets more only when it should not run the default way. Examples:
+- a `chore` that only edits documentation: weight 1, skip `validation`, reason "docs only: no test applies"
+- a large integration task: weight 5, reviewer on a stronger model
+- a trivial task: weight 1, coder on a cheaper model
 
 Check each file: `task-strategy.sh validate <task>`.
 
@@ -42,7 +42,7 @@ Check each file: `task-strategy.sh validate <task>`.
 ```bash
 plan-hold.sh release
 ```
-It checks the plan and every strategy file, and releases nothing if anything is wrong; fix what it names and run it again. When it succeeds the conductor starts the tasks that have no dependencies.
+It checks the plan and every strategy file, and releases nothing if anything is wrong; fix what it names and run it again. A task with no weight is named in a warning and released anyway: go back and write its weight if you see one. When it succeeds the conductor starts the tasks that have no dependencies.
 
 ### 6. Announce
 

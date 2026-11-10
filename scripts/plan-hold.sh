@@ -21,6 +21,9 @@ set -euo pipefail
 #   4. the hold file is removed, plan-released is written, and every backlog card whose dependencies are
 #      done is released (the others wait for their dependencies, as always)
 #
+# A task with no weight is named in a warning and released anyway (#201); a task the topology sends
+# straight to done is not named.
+#
 # A card that cannot be released puts the hold back, says which one (and which had already started,
 # since those stay started), and exits 1: a release that half worked must not read as released, or
 # nothing would ever start the cards it left in backlog (#197).
@@ -32,6 +35,8 @@ set -euo pipefail
 # task still goes to done on arrival: nobody works on it, and it holds nothing back.
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/frontmatter.sh
+source "$SCRIPTS_DIR/frontmatter.sh"
 CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 export CONDUCTOR_DIR
 case ":$PATH:" in *":$SCRIPTS_DIR:"*) ;; *) export PATH="$PATH:$SCRIPTS_DIR" ;; esac
@@ -57,6 +62,8 @@ cmd_release() {
   case "${1:-}" in --force) force=1 ;; "") ;; *) die "Usage: plan-hold.sh release [--force]" ;; esac
   [[ -f "$HOLD" ]] || die "nothing to release: the plan is not held"
   command -v jq > /dev/null 2>&1 || { echo "plan-hold.sh release needs jq" >&2; exit 3; }
+  # shellcheck source=scripts/handler-steps.sh
+  source "$SCRIPTS_DIR/handler-steps.sh"
 
   if ! report="$("$SCRIPTS_DIR/plan-check.sh" 2>&1)"; then
     if [[ "$force" -eq 1 ]]; then echo "plan-hold.sh: releasing despite plan errors (--force):" >&2; echo "$report" >&2
@@ -71,6 +78,24 @@ cmd_release() {
   done
   [[ "$problems" -eq 0 ]] || die "a strategy file is invalid: nothing is released and no strategy applies"
 
+  # Every task a worker runs gets a weight (#201), so a cost can be filed against it. A task with none is
+  # named, and the plan is released anyway: a missing number must not stall an unattended swarm. A task the
+  # topology sends straight to done (a design task, in software-dev) is never worked on and costs nothing, so
+  # it is not named; backlog_dest asks the topology, as the conductor does. The weight is the strategy's,
+  # else the task file's own `weight:`, the lookup task-record.sh makes.
+  local unweighted=""
+  for f in "$CONDUCTOR_DIR"/tasks/*.md; do
+    [[ -f "$f" ]] || continue
+    task="$(basename "$f" .md)"
+    if [[ "$(backlog_dest "$task" 2> /dev/null || true)" == "done" ]]; then continue; fi
+    if [[ -n "$("$SCRIPTS_DIR/task-strategy.sh" weight "$task" 2> /dev/null || true)" ]]; then continue; fi
+    if [[ -n "$(fm_field "$f" weight 2> /dev/null || true)" ]]; then continue; fi
+    unweighted="${unweighted:+$unweighted, }$task"
+  done
+  if [[ -n "$unweighted" ]]; then
+    echo "plan-hold.sh: warning: no weight for $unweighted; the strategist gives every task a weight (strategy/<task>.json), so that its cost can be filed against one" >&2
+  fi
+
   if compgen -G "$CONDUCTOR_DIR/strategy/*.json" > /dev/null; then
     rm -rf "$CONDUCTOR_DIR/strategy-released"
     mkdir -p "$CONDUCTOR_DIR/strategy-released"
@@ -79,8 +104,6 @@ cmd_release() {
   date +%Y-%m-%dT%H:%M:%S > "$RELEASED"
   rm -f "$HOLD"
 
-  # shellcheck source=scripts/handler-steps.sh
-  source "$SCRIPTS_DIR/handler-steps.sh"
   local line card failed="" started=""
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue

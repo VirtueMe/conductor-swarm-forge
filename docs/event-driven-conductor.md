@@ -1103,7 +1103,7 @@ The file is `$CONDUCTOR_DIR/strategy/<task>.json`:
 | --- | --- |
 | `skip` | stage → the reason. The reason is required: it is written on the card (a `progress` artifact, `conductor: skipped validation — <reason>`) before the step is skipped, and a skip that cannot be recorded is not made: the step runs |
 | `workers` | role → tuning merged over the workforce's `params` for that role, for this task only. Only `model` and `effort` can be set: the adapter and the pool stay the workforce's, so what a worker is billed to does not change with a strategy |
-| `weight` | the planned weight, a number. `task-record.sh` files the task's cost under it (it falls back to `weight:` in the task file) |
+| `weight` | the planned weight, a number. `task-record.sh` files the task's cost under it (it falls back to `weight:` in the task file). The strategist gives **every task a worker runs** one (#201), on one scale: 1 trivial, 2 small, 3 a normal coder session, 5 large. `plan-hold.sh release` names a task with no weight in a warning (a design task is not named) and releases anyway |
 
 **The floor.** The topology decides what may be skipped, not the strategy: its `skippable` map lists the working
 stages that can be skipped, each with the event that sends the task on as if the stage had passed. In
