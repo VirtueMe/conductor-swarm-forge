@@ -314,6 +314,7 @@ assert_eq "the event was recorded first" "$(unprocessed)" ""
 assert_eq "a requested shutdown is not a halt: no notice for the human" "$(notices human-inbox)" "0"
 assert_eq "nor for the architect" "$(notices architect-inbox)" "0"
 expect_grep 'kill-window -t swarm:architect' "$TMP/tmux.log" "architect window closed"
+expect_grep 'kill-window -t swarm:strategist' "$TMP/tmux.log" "strategist window closed"
 if grep -q 'swarm:conductor' "$TMP/tmux.log"; then fail "the handler closed the loop's own window"; else ok "the loop's window was left to the loop"; fi
 : > "$TMP/tmux.log"
 (unset CONDUCTOR_LOOP; PATH="$TMP/bin:$PATH" bash "$SCRIPTS_DIR/conductor-shutdown.sh" > /dev/null)
