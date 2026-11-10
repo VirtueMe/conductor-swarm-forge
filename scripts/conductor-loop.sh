@@ -178,16 +178,32 @@ fi
 
 # --- One loop per conductor dir ---------------------------------------------
 
+# The lock is a file holding the loop's pid, made with bash's own exclusive create (noclobber), so the pid
+# is in the lock from the moment it exists. It was a directory made with mkdir, and the mkdir of the
+# ubuntu-26.04 runner image (uutils coreutils 0.10.0) let two simultaneous callers both succeed (#207).
+# A lock held by a loop of an older version is a directory with the pid inside: it is read the same way.
+# Taking over a lock left by a dead loop is still not atomic: two loops started at the same instant over
+# one dead lock can both clear it and both win. That needs a crash and a simultaneous start.
 acquire_lock() {
-  if mkdir "$LOCK" 2>/dev/null; then echo "$$" > "$LOCK/pid"; return 0; fi
-  local pid
-  pid="$(cat "$LOCK/pid" 2>/dev/null || true)"
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    log "already running (pid $pid)"
-    return 1
-  fi
-  rm -rf "$LOCK"                       # left behind by a loop that was killed
-  mkdir "$LOCK" && echo "$$" > "$LOCK/pid"
+  local pid tries=0 rounds=0
+  while (( rounds < 50 )); do
+    rounds=$(( rounds + 1 ))
+    if ( set -C; echo "$$" > "$LOCK" ) 2>/dev/null; then return 0; fi
+    pid="$({ cat "$LOCK" 2>/dev/null || cat "$LOCK/pid" 2>/dev/null; } || true)"
+    if [[ -z "$pid" ]]; then
+      # Made a moment ago by a loop that has not written its pid yet, or left empty: give it a second
+      # before calling it stale.
+      tries=$(( tries + 1 ))
+      if (( tries <= 10 )); then sleep 0.1; continue; fi
+    elif kill -0 "$pid" 2>/dev/null; then
+      log "already running (pid $pid)"
+      return 1
+    fi
+    rm -rf "$LOCK"                     # left behind by a loop that was killed
+    tries=0
+  done
+  log "could not take the lock $LOCK"
+  return 1
 }
 
 acquire_lock || exit 4
@@ -274,7 +290,7 @@ cleanup() {
     [[ -n "$HANDLER_SCRIPT" ]] || log_usage "$CUR_LABEL" "$CUR_ATTEMPT" interrupted 143 "$(( SECONDS - CUR_START ))"
   fi
   if [[ -n "$SLEEP_PID" ]]; then kill "$SLEEP_PID" 2>/dev/null || true; fi
-  if [[ "$(cat "$LOCK/pid" 2>/dev/null || true)" == "$$" ]]; then rm -rf "$LOCK"; fi
+  if [[ "$(cat "$LOCK" 2>/dev/null || true)" == "$$" ]]; then rm -f "$LOCK"; fi
 }
 trap cleanup EXIT
 trap 'log "terminated"; exit 143' TERM INT
