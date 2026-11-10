@@ -3,7 +3,7 @@ set -euo pipefail
 # Meter a worker: note when it is spawned, and when its window closes read what its harness left
 # behind and append a line to usage.jsonl.
 #
-# Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json> [<pool>]]
+# Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json> [<pool> [<window>]]]
 #        worker-usage.sh read <task> [--outcome finished|interrupted] [--wait <seconds>] [--role <role>]
 #        worker-usage.sh sweep
 #        worker-usage.sh model <adapter> <directory> <since-epoch>
@@ -17,6 +17,12 @@ set -euo pipefail
 #          workforce gave the member; billing-mode.sh settles it now, against the sign-in as it is at
 #          the spawn, and the record keeps the decision (pool_check), so the line says what the worker
 #          was billed to and not what the closing process can see. Called by worker-spawn.sh.
+#          <window> is the tmux window the worker runs in, when it is not <role>-<task>: the
+#          architect and strategist windows are named for the role alone (#198), and sweep would
+#          otherwise take them for closed. swarm-start.sh records them as plan-architect and
+#          plan-strategist, one id each because a record is found by its task. A planning window
+#          takes no allowance reading, here or at the read: it overlaps every worker, so its share
+#          could not be told apart from theirs.
 # read     finds the sessions of that worktree written since the spawn, adds them up, appends one
 #          line to $CONDUCTOR_DIR/usage.jsonl with the worker's role and task, and removes the
 #          record. Called by worker-close.sh after the window is closed. --wait gives a harness
@@ -173,9 +179,9 @@ find_record() { # <task>
 }
 
 cmd_spawned() {
-  local task="${1:?Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json> [<pool>]]}"
+  local task="${1:?Usage: worker-usage.sh spawned <task> <role> <adapter> <worktree-dir> [<params-json> [<pool> [<window>]]]}"
   local role="${2:?missing role}" adapter="${3:?missing adapter}" worktree="${4:?missing worktree-dir}"
-  local params="${5:-}" pool="${6:-}"
+  local params="${5:-}" pool="${6:-}" window="${7:-}"
   [[ -n "$params" ]] || params="{}"
   local physical
   physical="$(cd "$worktree" 2> /dev/null && pwd -P)" || physical="$worktree"
@@ -188,17 +194,21 @@ cmd_spawned() {
   jq -e . <<< "$check" > /dev/null 2>&1 || check=null
   jq -nc --arg task "$task" --arg role "$role" --arg adapter "$adapter" --arg cwd "$physical" \
     --argjson params "$params" --arg started "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg epoch "$(date +%s)" \
-    --arg pool "$pool" --argjson check "$check" '
+    --arg pool "$pool" --arg window "$window" --argjson check "$check" '
     { task: $task, role: $role, adapter: $adapter, cwd: $cwd, params: $params,
+      window: (if $window == "" then null else $window end),
       declared_pool: (if $pool == "" then null else $pool end),
       pool_check: $check,
       started_at: $started, started_epoch: ($epoch | tonumber) }' > "$tmp"
   mv "$tmp" "$file"
   # A Codex or Claude Code worker, or a pi worker on a ChatGPT plan, draws on a subscription allowance: take the reading its run is measured from.
   local vendor
-  vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" --pool "$(jq -r '.pool // empty' <<< "$check")" 2> /dev/null || true)"
+  # A window with a declared name is a planning window: it lives for the whole swarm and overlaps every
+  # worker, so its share of the allowance cannot be told apart from theirs (#198). No reading.
+  vendor=""
+  [[ -n "$window" ]] || vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" --pool "$(jq -r '.pool // empty' <<< "$check")" 2> /dev/null || true)"
   if [[ -n "$vendor" ]]; then
-    "$SCRIPTS_DIR/allowance.sh" begin "worker:$role-$task" --kind worker --window "$role-$task" --vendor "$vendor" \
+    "$SCRIPTS_DIR/allowance.sh" begin "worker:$role-$task" --kind worker --window "${window:-$role-$task}" --vendor "$vendor" \
       || echo "worker-usage.sh: could not take the allowance reading for $role-$task" >&2
   fi
 }
@@ -216,10 +226,11 @@ cmd_read() {
   done
   case "$outcome" in finished|interrupted) ;; *) die "--outcome is finished or interrupted" ;; esac
 
-  local rec role adapter="" cwd="" epoch="" declared_pool="" pool_check=null
+  local rec role adapter="" cwd="" epoch="" declared_pool="" pool_check=null window=""
   rec="$(find_record "$task")"
   if [[ -n "$rec" ]]; then
     role="$(jq -r .role "$rec")"; adapter="$(jq -r .adapter "$rec")"
+    window="$(jq -r '.window // empty' "$rec" 2> /dev/null || true)"
     cwd="$(jq -r .cwd "$rec")"; epoch="$(jq -r .started_epoch "$rec")"
     declared_pool="$(jq -r '.declared_pool // empty' "$rec" 2> /dev/null || true)"
     pool_check="$(jq -c '.pool_check // null' "$rec" 2> /dev/null || echo null)"
@@ -242,8 +253,8 @@ cmd_read() {
   [[ -z "$epoch" ]] || duration=$(( $(date +%s) - epoch ))
 
   # What a Codex or Claude Code worker, or a pi worker on a ChatGPT plan, used of its subscription allowance, from the readings at its spawn and now.
-  local allowance=null vendor
-  vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" --pool "$(jq -r '.pool // empty' <<< "$pool_check")" 2> /dev/null || true)"
+  local allowance=null vendor=""
+  [[ -n "$window" ]] || vendor="$("$SCRIPTS_DIR/allowance.sh" vendor "$adapter" --pool "$(jq -r '.pool // empty' <<< "$pool_check")" 2> /dev/null || true)"
   if [[ -n "$vendor" ]]; then
     allowance="$("$SCRIPTS_DIR/allowance.sh" end "worker:$role-$task" 2> /dev/null)" || allowance=null
     jq -e . <<< "$allowance" > /dev/null 2>&1 || allowance=null
@@ -289,7 +300,7 @@ cmd_read() {
 }
 
 cmd_sweep() {
-  local rec role task windows
+  local rec role task windows win
   [[ -d "$WORKERS_DIR" ]] || return 0
   # If tmux cannot list the windows (it is restarting, or the swarm session is not up) nothing is
   # known about which workers are gone, and reading them all as interrupted would also delete the
@@ -299,7 +310,8 @@ cmd_sweep() {
   for rec in "$WORKERS_DIR"/*.json; do
     [[ -e "$rec" ]] || continue
     role="$(jq -r .role "$rec")"; task="$(jq -r .task "$rec")"
-    grep -qxF -- "$role-$task" <<< "$windows" && continue
+    win="$(jq -r '.window // empty' "$rec")"; [[ -n "$win" ]] || win="$role-$task"
+    grep -qxF -- "$win" <<< "$windows" && continue
     cmd_read "$task" --outcome interrupted
   done
 }

@@ -452,8 +452,21 @@ else
   else
     adapter_call "$ADAPTER_FILE" adapter_launch "$SESSION" "conductor" "." "$TARGET_DIR" "$CONDUCTOR_PARAMS"
   fi
-  [[ -n "$BRIEF_FILE" ]] && adapter_call "$ARCH_ADAPTER_FILE" adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR" "${ARCH_PARAMS:-}"
-  [[ "$HAS_STRATEGIST" == true ]] && adapter_call "$STRAT_ADAPTER_FILE" adapter_launch "$SESSION" "strategist" ".worktrees/strategist" "$TARGET_DIR" "${STRAT_PARAMS:-}"
+  # The planning windows are named for the role alone, so each is recorded under its own id (plan-<role>)
+  # with its window: worker-usage.sh reads what it spent when the window closes at shutdown (#198).
+  note_planning_window() { # <role> <adapter name> <params>
+    "$SCRIPTS_DIR/worker-usage.sh" spawned "plan-$1" "$1" "$2" "$TARGET_DIR/.worktrees/$1" "${3:-}" \
+      "$(wf_field "$WORKFORCE" "$1" pool 2> /dev/null || true)" "$1" \
+      || echo "Warning: could not note the $1 window for the usage log" >&2
+  }
+  if [[ -n "$BRIEF_FILE" ]]; then
+    adapter_call "$ARCH_ADAPTER_FILE" adapter_launch "$SESSION" "architect" ".worktrees/architect" "$TARGET_DIR" "${ARCH_PARAMS:-}"
+    note_planning_window architect "$ARCH_ADAPTER_NAME" "${ARCH_PARAMS:-}"
+  fi
+  if [[ "$HAS_STRATEGIST" == true ]]; then
+    adapter_call "$STRAT_ADAPTER_FILE" adapter_launch "$SESSION" "strategist" ".worktrees/strategist" "$TARGET_DIR" "${STRAT_PARAMS:-}"
+    note_planning_window strategist "$STRAT_ADAPTER_NAME" "${STRAT_PARAMS:-}"
+  fi
 
   # Kill kanban server automatically when the tmux session closes
   if [[ "$KANBAN_SERVER" == true ]]; then
