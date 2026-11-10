@@ -264,7 +264,7 @@ assert_eq "it did not finish" "$(grep -c '^end ' "$STUB_LOG" || true)" "0"
 sleep 0.5
 assert_eq "no process from the dispatch is left running" "$(children_left)" "0"
 assert_eq "the event is still unprocessed" "$(unprocessed | wc -l | tr -d ' ')" "1"
-assert_eq "the lock was released" "$([[ -d "$CONDUCTOR_DIR/conductor-loop.lock" ]] && echo held || echo free)" "free"
+assert_eq "the lock was released" "$([[ -e "$CONDUCTOR_DIR/conductor-loop.lock" ]] && echo held || echo free)" "free"
 run_loop
 assert_eq "the restart runs it again" "$(dispatches)" "2"
 assert_eq "and records it" "$(unprocessed)" ""
@@ -275,13 +275,64 @@ new_swarm
 create_task; run_loop
 CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err" &
 LOOP_PID=$!
-for _ in $(seq 1 50); do [[ -f "$CONDUCTOR_DIR/conductor-loop.lock/pid" ]] && break; sleep 0.1; done
+for _ in $(seq 1 50); do [[ -s "$CONDUCTOR_DIR/conductor-loop.lock" ]] && break; sleep 0.1; done
 run_loop
 assert_eq "a second loop refuses" "$RC" "4"
 kill -TERM "$LOOP_PID"; wait "$LOOP_PID" 2>/dev/null || true; LOOP_PID=""
-mkdir -p "$CONDUCTOR_DIR/conductor-loop.lock"; echo 999999 > "$CONDUCTOR_DIR/conductor-loop.lock/pid"
+echo 999999 > "$CONDUCTOR_DIR/conductor-loop.lock"
 run_loop
 assert_eq "a lock left by a dead process is taken over" "$RC" "0"
+
+# 13b -----------------------------------------------------------------------------
+section "13b · The lock does not depend on mkdir failing for a directory that exists (#207)"
+# The ubuntu-26.04 runner's mkdir (uutils coreutils 0.10.0) let both of two simultaneous callers create the
+# same directory (#204). This mkdir succeeds for an existing directory every time, as the worst case of that:
+# two loops started together must still leave one running, so the lock cannot be taken with mkdir.
+REAL_MKDIR="$(command -v mkdir)"
+mkdir -p "$TMP/badmkdir"
+printf '#!/usr/bin/env bash\nexec "%s" -p "$@"\n' "$REAL_MKDIR" > "$TMP/badmkdir/mkdir"
+chmod +x "$TMP/badmkdir/mkdir"
+new_swarm
+create_task; run_loop
+STARTS_BEFORE="$(grep -c 'started (pid' "$CONDUCTOR_DIR/conductor.log" || true)"
+BAD_PIDS=()
+for _ in 1 2; do
+  PATH="$TMP/badmkdir:$PATH" CONDUCTOR_ADAPTER_FILE="$STUB" bash "$LOOP" > "$TMP/loop.out" 2> "$TMP/loop.err" &
+  BAD_PIDS+=("$!")
+done
+# Wait for the outcome, not for a time: either both loops have started (the lock let both through), or one
+# has refused and exited. A fixed wait would let the old code pass on a slow runner (#203).
+for _ in $(seq 1 100); do
+  (( $(grep -c 'started (pid' "$CONDUCTOR_DIR/conductor.log" || true) - STARTS_BEFORE >= 2 )) && break
+  if ! kill -0 "${BAD_PIDS[0]}" 2> /dev/null || ! kill -0 "${BAD_PIDS[1]}" 2> /dev/null; then break; fi
+  sleep 0.1
+done
+sleep 0.5   # a second loop that was let through logs its start a moment after the first
+assert_eq "two loops started together: one runs" "$(( $(grep -c 'started (pid' "$CONDUCTOR_DIR/conductor.log" || true) - STARTS_BEFORE ))" "1"
+for pid in "${BAD_PIDS[@]}"; do kill -TERM "$pid" 2> /dev/null || true; wait "$pid" 2> /dev/null || true; done
+
+# A lock left by an older loop is a directory with the pid inside: a live one still refuses a new loop,
+# a dead one is cleared, and an empty lock file nobody is writing is cleared too.
+new_swarm
+create_task; run_loop
+sleep 30 & OLD_PID=$!
+mkdir "$CONDUCTOR_DIR/conductor-loop.lock"; echo "$OLD_PID" > "$CONDUCTOR_DIR/conductor-loop.lock/pid"
+run_loop
+assert_eq "a live lock directory from an older loop refuses a new one" "$RC" "4"
+assert_eq "and is left alone" "$(cat "$CONDUCTOR_DIR/conductor-loop.lock/pid" 2> /dev/null || true)" "$OLD_PID"
+kill "$OLD_PID" 2> /dev/null || true; wait "$OLD_PID" 2> /dev/null || true
+echo 999999 > "$CONDUCTOR_DIR/conductor-loop.lock/pid"
+run_loop
+assert_eq "a dead lock directory from an older loop is taken over" "$RC" "0"
+: > "$CONDUCTOR_DIR/conductor-loop.lock"
+run_loop
+assert_eq "an empty lock file nobody is writing is taken over" "$RC" "0"
+sleep 30 & OLD_PID=$!
+echo "$OLD_PID" > "$CONDUCTOR_DIR/conductor-loop.lock"
+run_loop
+assert_eq "a lock file with a live pid refuses a new loop" "$RC" "4"
+kill "$OLD_PID" 2> /dev/null || true; wait "$OLD_PID" 2> /dev/null || true
+rm -f "$CONDUCTOR_DIR/conductor-loop.lock"
 
 # 14 ------------------------------------------------------------------------------
 section "14 · The loop polls and picks up an event that arrives later"
