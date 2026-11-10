@@ -79,7 +79,7 @@ start() {
   ( cd "$TMP" && env PATH="${START_PATH:-$STUB:$PATH}" "${envs[@]}" bash "$tool/scripts/swarm-start.sh" "$TARGET" "$@" ) \
     > "$TMP/out" 2> "$TMP/err" || RC=$?
 }
-new_session() { grep '^new-session' "$TMUX_LOG" | head -1; }
+new_session() { grep -m1 '^new-session' "$TMUX_LOG"; }
 
 section "1 · Without the flag nothing changes"
 start --
@@ -187,7 +187,10 @@ printf '#!/usr/bin/env bash\nprintf "%%s" "$CONDUCTOR_TEST_VAL"\n' > "$FAKE/scri
 # shellcheck disable=SC2016  # the dollar sign is part of the value
 VAL='two words $HOME "q" '"'"'s'"'"' `x`;|&\ *?(y)'
 start --tool "$FAKE" --env "CONDUCTOR_TEST_VAL=$VAL" -- -hc
-GOT="$( cd "$TMP" && SHELL=/bin/true PATH="$STUB:$PATH" bash -c "$(cat "$TMUX_CMD")" 2>&1 | head -1 )"
+# Take all of the output and cut its first line here: a pipe into head -1 closes while the window is still
+# writing, and the SIGPIPE it sends ends this script under pipefail (#210).
+OUT="$( cd "$TMP" && SHELL=/bin/true PATH="$STUB:$PATH" bash -c "$(cat "$TMUX_CMD")" 2>&1 )" || true
+GOT="${OUT%%$'\n'*}"
 assert_eq "the value arrives unchanged" "${GOT:0:${#VAL}}" "$VAL"
 
 section "10 · The window shows where the last run left off"
@@ -220,7 +223,7 @@ printf 'a brief\n' > "$TMP/brief.md"
 mixed() { # <conductor adapter> <architect adapter>
   printf '{"members":[{"role":"conductor","adapter":"%s"},{"role":"architect","adapter":"%s"},{"role":"coder","adapter":"claude-code"},{"role":"validator","adapter":"claude-code"},{"role":"reviewer","adapter":"claude-code"},{"role":"merger","adapter":"claude-code"}]}' "$1" "$2" > "$FAKE/workforces/mixed.json"
 }
-window() { grep "\[$1\]" "$TMUX_LOG" | head -1; }
+window() { grep -m1 "\[$1\]" "$TMUX_LOG"; }
 
 # The briefing check below reads how the scripts dir is written in the architect's prompt. If that
 # prompt stops referring to it, the check would pass without proving anything, so say so.
