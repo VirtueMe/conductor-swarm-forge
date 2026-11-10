@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in -o) out="$2"; shift 2 ;; -D) hdr="$2"; shift 2 ;; *) printf '%s\n' "$1" >> "$STUB_LOG.args"; shift ;; esac
 done
 cat > "$STUB_LOG.stdin"
-echo called >> "$STUB_LOG.calls"
+echo "called $(date +%s.%N) ppid=$PPID" >> "$STUB_LOG.calls"
 [[ -z "${hdr:-}" ]] || { printf 'HTTP/2 %s\r\n' "${STUB_CODE:-200}"; [[ -z "${STUB_RETRY_AFTER:-}" ]] || printf 'Retry-After: %s\r\n' "$STUB_RETRY_AFTER"; } > "$hdr"
 [[ "${STUB_CODE:-200}" != 000 ]] || exit 7
 [[ -z "$out" || -z "${STUB_BODY:-}" ]] || cp "$STUB_BODY" "$out"
@@ -265,19 +265,61 @@ read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
 assert_eq "a broken state file is no state" "$(calls)" "1"
 rm -rf "$CLAUDE_USAGE_STATE_FILE"; mkdir "$CLAUDE_USAGE_STATE_FILE.lock"; touch -d '10 minutes ago' "$CLAUDE_USAGE_STATE_FILE.lock"
 read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
-assert_eq "a stale lock is cleared" "$(calls)" "1"
-assert_eq "and released" "$([[ -d "$CLAUDE_USAGE_STATE_FILE.lock" ]] && echo held || echo free)" "free"
+assert_eq "a stale lock left by an older version (a directory) is cleared" "$(calls)" "1"
+assert_eq "and released" "$([[ -e "$CLAUDE_USAGE_STATE_FILE.lock" ]] && echo held || echo free)" "free"
+rm -rf "$CLAUDE_USAGE_STATE_FILE"; : > "$CLAUDE_USAGE_STATE_FILE.lock"; touch -d '10 minutes ago' "$CLAUDE_USAGE_STATE_FILE.lock"
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+assert_eq "a stale lock file is cleared" "$(calls)" "1"
+assert_eq "and released" "$([[ -e "$CLAUDE_USAGE_STATE_FILE.lock" ]] && echo held || echo free)" "free"
+rm -rf "$CLAUDE_USAGE_STATE_FILE"; : > "$CLAUDE_USAGE_STATE_FILE.lock"
+( sleep 1; rm -f "$CLAUDE_USAGE_STATE_FILE.lock" ) &
+read_clock "$CRED" "$FX/claude.json" "$FX/endpoint.json" 200
+wait
+assert_eq "a lock held by a live caller is waited for, then taken" "$(calls)" "1"
 
-# Callers in a burst take turns: five at once make one request.
-rm -rf "$CLAUDE_USAGE_STATE_FILE"; rm -f "$STUB_LOG".*; CLOCK=4000000
+# Callers in a burst take turns: five at once make one request. BURST_ROUNDS repeats the burst (#204: it
+# failed now and then on CI and never locally); each caller is traced, and a burst that makes more than
+# one request prints what every caller did.
 export STUB_BODY="$FX/endpoint.json" STUB_CODE=200
+for round in $(seq 1 "${BURST_ROUNDS:-1}"); do
+  rm -rf "$CLAUDE_USAGE_STATE_FILE" "$CLAUDE_USAGE_STATE_FILE.lock"; rm -f "$STUB_LOG".* "$TMP"/burst.*; CLOCK=4000000
+  for i in 1 2 3 4 5; do
+    ( PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$FX/claude.json" CLAUDE_USAGE_NOW="$NOW" CLAUDE_USAGE_CLOCK="$CLOCK" \
+        CLAUDE_STATUSLINE_FILE="$TMP/no-statusline.json" PS4='+ $EPOCHREALTIME ' bash -x "$READER" > "$TMP/burst.$i" 2> "$TMP/burst.$i.trace" ) &
+  done
+  wait
+  if [[ "$(calls)" != 1 ]]; then
+    {
+      echo "── burst diagnostics (round $round): $(calls) requests"
+      echo "requests (time, parent pid):"; cat "$STUB_LOG.calls" 2> /dev/null
+      echo "state file: $(cat "$CLAUDE_USAGE_STATE_FILE" 2> /dev/null | cut -c1-120)"; echo "lock: $([[ -d "$CLAUDE_USAGE_STATE_FILE.lock" ]] && echo held || echo free)"
+      echo "bash $BASH_VERSION, $(nproc) cpu(s), $(uname -sr), tmp on $(df -T "$TMP" 2> /dev/null | awk 'NR==2{print $2}')"
+      for i in 1 2 3 4 5; do
+        echo "-- caller $i: source=$(jq -r '.source' "$TMP/burst.$i" 2> /dev/null) note=$(jq -r '.note' "$TMP/burst.$i" 2> /dev/null)"
+        grep -E 'mkdir|rmdir|find |sleep|mem=|request_endpoint|remember|tries' "$TMP/burst.$i.trace" | cut -c1-160 | head -30
+      done
+    } >&2
+  fi
+  assert_eq "five callers at once: one request${BURST_ROUNDS:+ (round $round)}" "$(calls)" "1"
+  assert_eq "and all five got the endpoint's answer${BURST_ROUNDS:+ (round $round)}" "$(cat "$TMP"/burst.? | jq -r .source | sort -u)" "endpoint"
+done
+
+# The lock must not depend on mkdir failing for a directory that exists (#204). The ubuntu-26.04 runner's
+# mkdir (uutils coreutils 0.10.0) let two callers create the same directory at once, now and then. This
+# mkdir succeeds for an existing directory every time, as the worst case of that: with it, five callers
+# at once must still make one request, so the lock cannot be taken with mkdir.
+REAL_MKDIR="$(command -v mkdir)"
+mkdir -p "$TMP/badmkdir"
+printf '#!/usr/bin/env bash\nexec "%s" -p "$@"\n' "$REAL_MKDIR" > "$TMP/badmkdir/mkdir"
+chmod +x "$TMP/badmkdir/mkdir"
+rm -rf "$CLAUDE_USAGE_STATE_FILE" "$CLAUDE_USAGE_STATE_FILE.lock"; rm -f "$STUB_LOG".* "$TMP"/burst.*
 for i in 1 2 3 4 5; do
-  ( PATH="$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$FX/claude.json" CLAUDE_USAGE_NOW="$NOW" CLAUDE_USAGE_CLOCK="$CLOCK" \
+  ( PATH="$TMP/badmkdir:$TMP/bin:$PATH" CLAUDE_CREDENTIALS_FILE="$CRED" CLAUDE_JSON_FILE="$FX/claude.json" CLAUDE_USAGE_NOW="$NOW" CLAUDE_USAGE_CLOCK=4000000 \
       CLAUDE_STATUSLINE_FILE="$TMP/no-statusline.json" "$READER" > "$TMP/burst.$i" 2> /dev/null ) &
 done
 wait
-assert_eq "five callers at once: one request" "$(calls)" "1"
-assert_eq "and all five got the endpoint's answer" "$(cat "$TMP"/burst.* | jq -r .source | sort -u)" "endpoint"
+assert_eq "a mkdir that always succeeds does not let a second caller through" "$(calls)" "1"
+assert_eq "and the lock is released" "$([[ -e "$CLAUDE_USAGE_STATE_FILE.lock" ]] && echo held || echo free)" "free"
 unset KEEP_STATE
 
 section "9 · Arguments"
