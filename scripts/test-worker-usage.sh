@@ -246,6 +246,18 @@ assert_eq "the five-hour window and the week, attributed to the run" "$(last '.a
 assert_eq "a model, and the credits in dollars" "$(last '.allowance | [(.weekly_by_model.models[0].points | tostring), (.credits.dollars | tostring)] | join(" ")')" "12 4.25"
 assert_eq "both readings are in the log" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG" | tr '\n' ' ')" "run-begin:worker:reviewer-0044 run-end:worker:reviewer-0044 "
 assert_eq "and the run is forgotten" "$(find "$CONDUCTOR_DIR/allowance" -type f | wc -l | tr -d ' ')" "0"
+# A planning window lives for the whole swarm and overlaps every worker: its use of the allowance cannot be
+# told apart from theirs, so it takes no reading (two more calls to the endpoint, and a row that is always
+# 'in a batch') (#198).
+reset
+cp "$FX/../claude-usage/endpoint.json" "$STUB_CLAUDE_BODY"
+"$WU" spawned plan-architect architect claude-code "$CWD" '{"model":"m"}' "" architect
+assert_eq "a planning window takes no allowance reading at its spawn" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG" 2> /dev/null | wc -l | tr -d ' ')" "0"
+put claude-code "$FX/claude-code/exited.jsonl" a.jsonl > /dev/null
+STUB_WINDOWS="" "$WU" read plan-architect
+assert_eq "nor when it is read" "$(jq -r 'select(.record == "allowance") | .moment' "$LOG" | wc -l | tr -d ' ')" "0"
+assert_eq "and its line carries no allowance" "$(last '.allowance | tostring')" "null"
+assert_eq "its tokens are still read" "$(last '[.role, .usage] | join(",")')" "architect,reported"
 rm -f "$TMP/bin/curl"
 unset STUB_CLAUDE_BODY CLAUDE_USAGE_NOW
 export CLAUDE_CREDENTIALS_FILE="$TMP/no-claude-login.json"
@@ -321,6 +333,43 @@ spawn 0022 coder pi
 STUB_TMUX_FAIL=1 "$WU" sweep
 assert_eq "if tmux cannot answer, nothing is read and no record is deleted" \
   "$(lines)/$(find "$CONDUCTOR_DIR/workers" -type f | wc -l | tr -d ' ')" "0/1"
+
+section "10b · Sweep: a planning window is not named <role>-<task> (#198)"
+# The architect and strategist windows are named 'architect' and 'strategist'. A record says so with its
+# window, or the first sweep (every worker close runs one) would read them as gone while they still work.
+reset
+"$WU" spawned plan-architect architect pi "$CWD" '{"model":"m"}' "" architect
+"$WU" spawned plan-strategist strategist pi "$CWD" '{"model":"m"}' "" strategist
+assert_eq "the record names its window" "$(jq -r .window "$CONDUCTOR_DIR/workers/architect-plan-architect.json")" "architect"
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+STUB_WINDOWS="architect strategist" "$WU" sweep
+assert_eq "windows still open: nothing is read" "$(lines)" "0"
+assert_eq "and both records are kept" "$(find "$CONDUCTOR_DIR/workers" -type f | wc -l | tr -d ' ')" "2"
+STUB_WINDOWS="strategist" "$WU" sweep
+assert_eq "the architect's window closes: it is read" "$(last .role)" "architect"
+assert_eq "as interrupted" "$(last .outcome)" "interrupted"
+assert_eq "under its own id" "$(last .task)" "plan-architect"
+assert_eq "the strategist is left alone" "$(find "$CONDUCTOR_DIR/workers" -type f -printf "%f\n")" "strategist-plan-strategist.json"
+STUB_WINDOWS="" "$WU" sweep
+assert_eq "once its window goes, the strategist is read too" "$(last .role)" "strategist"
+assert_eq "two lines in all" "$(lines)" "2"
+
+section "10c · Shutdown reads the planning windows it closes (#198)"
+# conductor-shutdown.sh closes the architect and strategist windows and then sweeps: both are read, once.
+reset
+"$WU" spawned plan-architect architect pi "$CWD" '{"model":"m"}' "" architect
+"$WU" spawned plan-strategist strategist pi "$CWD" '{"model":"m"}' "" strategist
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+STUB_WINDOWS="" bash "$SCRIPTS_DIR/conductor-shutdown.sh" > /dev/null 2>&1
+assert_eq "one line each" "$(lines)" "2"
+assert_eq "for the architect and the strategist" "$(jq -r 'select(.record == null) | .role' "$LOG" | sort | paste -sd, -)" "architect,strategist"
+assert_eq "they finished: a shutdown is how a planning window ends, not an interruption" "$(jq -r 'select(.record == null) | .outcome' "$LOG" | sort -u | paste -sd, -)" "finished"
+assert_eq "their records are gone" "$(find "$CONDUCTOR_DIR/workers" -type f | wc -l | tr -d ' ')" "0"
+STUB_WINDOWS="" bash "$SCRIPTS_DIR/conductor-shutdown.sh" > /dev/null 2>&1
+assert_eq "a second shutdown reads nothing again, and invents no unknown line" "$(lines)" "2"
+reset
+STUB_WINDOWS="" bash "$SCRIPTS_DIR/conductor-shutdown.sh" > /dev/null 2>&1
+assert_eq "a swarm with no planning windows leaves no line" "$(lines)" "0"
 
 section "11 · Arguments"
 RC=0; "$WU" bogus 2> /dev/null || RC=$?

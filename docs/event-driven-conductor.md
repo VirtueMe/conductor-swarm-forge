@@ -846,6 +846,19 @@ result to read when they finish. What each harness leaves on disk, and how that 
   shutdown, read such a worker as `interrupted` (`worker-usage.sh sweep`). A swarm that crashes
   before either leaves the record unread.
 
+- **The planning windows** (architect and strategist, #198) are metered the same way. Their windows
+  are named for the role alone, so `swarm-start.sh` records each as `plan-architect` / `plan-strategist`
+  with a `window` field (the record is found by its task, so each role has its own id, and `sweep`
+  checks the declared window instead of `<role>-<task>`). The project's shutdown closes them and reads
+  them as `finished`: a shutdown is how a planning window ends. A usage line has the role `architect`
+  or `strategist` and shows in `usage-summary.sh` under "By role" and, as `plan-architect` and
+  `plan-strategist`, under "By task". In the second real strategist run these two came to about $1.28
+  on top of the $2.49 the workers cost. A swarm that stops without a shutdown leaves them for `sweep`.
+  They take no allowance reading: a window that lives for the whole swarm overlaps every worker, so its
+  share of the allowance could not be told apart from theirs. If the tmux session is lost and the swarm
+  started again, the new record's start time replaces the old one and the earlier session's cost is not
+  counted, as for a worker spawned twice.
+
 Each harness gives what it gives: Pi's own cost per message, Claude Code's cost from the line it
 writes on exit, Codex tokens only. A session killed with `SIGKILL` has its tokens but no Claude Code
 cost, so `cost_usd` is null and `cost_source` is `estimated`. Unknown is never zero: a worker whose

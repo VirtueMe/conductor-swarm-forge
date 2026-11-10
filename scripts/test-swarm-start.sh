@@ -266,12 +266,20 @@ assert_eq "the plan is held" "$([[ -f "$TARGET/.conductor/plan-hold" ]] && echo 
 case "$(window strategist)" in *"&& claude "*) ok "the strategist window starts claude" ;; *) fail "strategist window: $(window strategist | cut -c1-200)" ;; esac
 assert_eq "the strategist is briefed" "$([[ -f "$TARGET/.worktrees/strategist/AGENTS.md" ]] && echo yes || echo no)" "yes"
 assert_eq "its inbox exists" "$([[ -d "$TARGET/.conductor/strategist-inbox" ]] && echo yes || echo no)" "yes"
+# The planning windows are metered like workers (#198): a record at start, read when the window closes.
+W="$TARGET/.conductor/workers"
+assert_eq "the architect is recorded for metering" "$(jq -r '[.role, .task, .adapter, .window] | join(" ")' "$W/architect-plan-architect.json" 2> /dev/null || true)" "architect plan-architect claude-code architect"
+assert_eq "the strategist too" "$(jq -r '[.role, .task, .adapter, .window] | join(" ")' "$W/strategist-plan-strategist.json" 2> /dev/null || true)" "strategist plan-strategist claude-code strategist"
+assert_eq "each record names its own worktree" "$(jq -r '.cwd | split("/") | .[-1]' "$W/architect-plan-architect.json" 2> /dev/null || true)/$(jq -r '.cwd | split("/") | .[-1]' "$W/strategist-plan-strategist.json" 2> /dev/null || true)" "architect/strategist"
 mixed claude-code claude-code
 start --tool "$FAKE" -- --workforce mixed --brief "$TMP/brief.md"
 assert_eq "no strategist member: no hold" "$([[ -f "$TARGET/.conductor/plan-hold" ]] && echo yes || echo no)" "no"
 assert_eq "and no strategist window" "$(window strategist)" ""
+assert_eq "and no strategist record" "$([[ -e "$TARGET/.conductor/workers/strategist-plan-strategist.json" ]] && echo yes || echo no)" "no"
+assert_eq "the architect is still recorded" "$([[ -e "$TARGET/.conductor/workers/architect-plan-architect.json" ]] && echo yes || echo no)" "yes"
 start --tool "$FAKE" --
 assert_eq "no brief: no hold" "$([[ -f "$TARGET/.conductor/plan-hold" ]] && echo yes || echo no)" "no"
+assert_eq "no brief: no architect, so no record" "$(find "$TARGET/.conductor/workers" -type f 2> /dev/null | wc -l | tr -d ' ')" "0"
 
 section "12 · node is needed for the kanban board only"
 # A PATH like section 7's, without node or npm. A language that needs neither (bash), so the only
