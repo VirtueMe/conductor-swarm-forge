@@ -162,7 +162,9 @@ remember() { # <state json>  (best effort, atomic)
 
 # Tries the endpoint. <dir> is a scratch directory for the response. Callers take turns on a lock
 # next to the state file, and look at the state again once it is theirs: whoever went first has
-# probably left an answer.
+# probably left an answer. The lock is a file made with bash's own exclusive create (noclobber), not a
+# directory made with mkdir: the mkdir of the ubuntu-26.04 runner image (uutils coreutils) let two
+# simultaneous callers both create the same directory (#204), and the lock must not depend on that.
 fetch_endpoint() { # <dir>
   local token expires mem lock="$STATE.lock" tries=0
   if [[ ! -r "$CREDENTIALS" ]]; then answer null "no OAuth login on this machine" ""; return 0; fi
@@ -179,18 +181,19 @@ fetch_endpoint() { # <dir>
   mem="$(remembered)"
   if [[ -n "$mem" ]]; then printf '%s\n' "$mem"; return 0; fi
   mkdir -p "$(dirname "$STATE")" 2> /dev/null || true
-  until mkdir "$lock" 2> /dev/null; do
-    # A lock nobody has touched for a minute belongs to a caller that died.
-    if [[ -n "$(find "$lock" -maxdepth 0 -mmin +1 2> /dev/null)" ]]; then rmdir "$lock" 2> /dev/null || true; continue; fi
+  until ( set -C; : > "$lock" ) 2> /dev/null; do
+    # A lock nobody has touched for a minute belongs to a caller that died (or is a directory left by an
+    # older version of this script).
+    if [[ -n "$(find "$lock" -maxdepth 0 -mmin +1 2> /dev/null)" ]]; then rm -rf "$lock" 2> /dev/null || true; continue; fi
     tries=$(( tries + 1 ))
     # Not ours after ~12 s: ask anyway rather than wait for ever.
     if (( tries > 60 )); then lock=""; break; fi
     sleep 0.2
   done
   mem="$(remembered)"
-  if [[ -n "$mem" ]]; then [[ -z "$lock" ]] || rmdir "$lock" 2> /dev/null || true; printf '%s\n' "$mem"; return 0; fi
+  if [[ -n "$mem" ]]; then [[ -z "$lock" ]] || rm -f "$lock" 2> /dev/null || true; printf '%s\n' "$mem"; return 0; fi
   request_endpoint "$1" "$token"
-  [[ -z "$lock" ]] || rmdir "$lock" 2> /dev/null || true
+  [[ -z "$lock" ]] || rm -f "$lock" 2> /dev/null || true
   return 0
 }
 
