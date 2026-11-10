@@ -1180,6 +1180,7 @@ CP="$TMP/scripts-copy"; rm -rf "$CP"; cp -r "$SCRIPTS_DIR" "$CP"
 cat > "$CP/stage-start.sh" << 'S'
 #!/usr/bin/env bash
 echo "stage-start $*" >> "$STUB_LOG"
+sleep "${STUB_STAGE_DELAY:-0}"   # section 52 slows the start so the loop logs well after the card has moved (#203)
 S
 LOOP="$CP/conductor-loop.sh"
 new_swarm
@@ -1252,10 +1253,12 @@ strand_under_live_loop() { # <seconds to wait> [env assignments for the loop...]
   sleep 2    # the startup reconcile and the two card events are handled
   # By hand, so no event follows. 0001 may already have left backlog: the idle check moves it too.
   mv "$CONDUCTOR_DIR"/kanban/*/0001.md "$CONDUCTOR_DIR/kanban/done/0001.md"
-  for _ in $(seq 1 $(( wait_s * 5 ))); do [[ -f "$CONDUCTOR_DIR/kanban/ready/0002.md" ]] && break; sleep 0.2; done
+  # Wait for the log line, not the card: the card moves first and the loop logs after the stage has started,
+  # so a loop killed on seeing the card may not have written the line yet (#203).
+  for _ in $(seq 1 $(( wait_s * 5 ))); do grep -q 'invariant: 0002 ' "$CONDUCTOR_DIR/conductor.log" 2> /dev/null && break; sleep 0.2; done
   kill -TERM "$LOOP_PID" 2> /dev/null || true; wait "$LOOP_PID" 2> /dev/null || true; LOOP_PID=""
 }
-strand_under_live_loop 8 CONDUCTOR_BACKLOG_INTERVAL=1
+strand_under_live_loop 8 CONDUCTOR_BACKLOG_INTERVAL=1 STUB_STAGE_DELAY=2
 assert_eq "the idle pass healed the card into ready" "$([[ -f "$CONDUCTOR_DIR/kanban/ready/0002.md" ]] && echo yes)" "yes"
 assert_eq "and started its stage" "$(grep -c '^stage-start 0002 ready$' "$STUB_LOG" || true)" "1"
 expect_grep 'invariant: 0002 was in backlog but its dependencies are done (0001)' "$CONDUCTOR_DIR/conductor.log" "the log says so"
