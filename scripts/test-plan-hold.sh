@@ -181,5 +181,46 @@ assert_eq "the message names the failed card" "$(grep -c 'task 0003 could not be
 assert_eq "and the card that had already started" "$(grep -c 'already released and started: 0002' "$TMP/out11" || true)" "1"
 assert_eq "a failure with nothing started says nothing about it" "$(grep -c 'already released' "$TMP/out10" || true)" "0"
 
+section "12 · Release warns about a task with no weight, and releases anyway (#201)"
+# Every task a worker runs gets a weight from the strategist, so a cost can be filed against it. A task with
+# none is named in a warning that never holds the plan back. A design task costs nothing and is not named.
+add_feature() { # <dir> <id> <dependency> [<extra front matter line>]
+  printf -- '---\nid: %s\ntype: feature\ntitle: t%s\ndepends-on:\n  - %s\n%s---\n\nBuild it, with tests.\n' "$2" "$2" "$3" "${4:+$4
+}" > "$1/.conductor/tasks/$2.md"
+  cp "$1/.conductor/tasks/$2.md" "$1/.conductor/kanban/backlog/$2.md"
+}
+release_in() { # <dir>: sets RC and the output file
+  RC=0; env CONDUCTOR_DIR="$1/.conductor" "$H" release > "$TMP/out12" 2>&1 || RC=$?
+}
+P12="$TMP/p12"; fresh_project "$P12"          # 0001 design (done), 0002 feature, no weight
+add_feature "$P12" 0003 0001                  # no weight either
+add_feature "$P12" 0004 0001 'weight: 2'      # weighted in its task file
+add_feature "$P12" 0005 0001                  # weighted in a strategy file
+echo '{ "weight": 3 }' > "$P12/.conductor/strategy/0005.json"
+release_in "$P12"
+assert_eq "release succeeds" "$RC" "0"
+assert_eq "the plan is released" "$(CONDUCTOR_DIR="$P12/.conductor" "$H" status || true)" "released"
+assert_eq "it warns, naming both unweighted tasks" "$(grep -c 'warning: no weight for 0002, 0003' "$TMP/out12" || true)" "1"
+assert_eq "a task weighted in its task file is not named" "$(grep -c '0004' "$TMP/out12" || true)" "0"
+assert_eq "a task weighted in a strategy file is not named" "$(grep -c '0005' "$TMP/out12" || true)" "0"
+assert_eq "the design task is not named" "$(grep -c '0001' "$TMP/out12" || true)" "0"
+assert_eq "and the unweighted task still started" "$(stage_in "$P12" 0002)" "ready"
+
+# Whether a task needs a weight is the topology's call, not a literal type: this topology sends a chore straight
+# to done as well, so a chore costs nothing and is not named, while an unweighted feature still is.
+P12c="$TMP/p12c"; fresh_project "$P12c"
+jq '.transitions["new-task"][0].when.type += ["chore"]' "$P12c/.conductor/topology.json" > "$P12c/.conductor/topology.new" && mv "$P12c/.conductor/topology.new" "$P12c/.conductor/topology.json"
+printf -- '---\nid: 0006\ntype: chore\ntitle: t0006\ndepends-on:\n  - 0001\n---\n\nTidy up.\n' > "$P12c/.conductor/tasks/0006.md"
+cp "$P12c/.conductor/tasks/0006.md" "$P12c/.conductor/kanban/backlog/0006.md"
+release_in "$P12c"
+assert_eq "a task this topology sends straight to done is not named" "$(grep -c '0006' "$TMP/out12" || true)" "0"
+assert_eq "the unweighted feature still is" "$(grep -c 'warning: no weight for 0002;' "$TMP/out12" || true)" "1"
+
+P12b="$TMP/p12b"; fresh_project "$P12b"
+echo '{ "weight": 1 }' > "$P12b/.conductor/strategy/0002.json"
+release_in "$P12b"
+assert_eq "every task weighted: release succeeds" "$RC" "0"
+assert_eq "and says nothing about weight" "$(grep -c 'weight' "$TMP/out12" || true)" "0"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All plan-hold tests passed."; else echo "$FAILS plan-hold test(s) failed." >&2; exit 1; fi

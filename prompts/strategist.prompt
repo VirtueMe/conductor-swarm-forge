@@ -31,7 +31,7 @@ Then use the **Monitor tool** on the background process. Each notification is a 
 
 ## The strategy file
 
-`.conductor/strategy/<task>.json`, one per task that needs one (a task with none runs every step, as before):
+`.conductor/strategy/<task>.json`: one for **every task a worker will run**, because every such task needs a `weight`. A task with nothing else to change gets `{ "weight": N }` and runs every step, as before. A design task is done on arrival and needs none:
 
 ```json
 { "skip":    { "validation": "docs only: no test applies" },
@@ -41,7 +41,7 @@ Then use the **Monitor tool** on the background process. Each notification is a 
 
 - `skip`: stage -> reason. Only a stage the topology lists as skippable can be skipped. Review and merge are the floor and are never skipped. The reason is written on the card.
 - `workers`: role -> `model` and/or `effort`, for this task only. Nothing else.
-- `weight`: your estimate of the task's size, a number.
+- `weight`: your estimate of the task's size, on this scale, so that costs compare across runs: **1** trivial (documentation, configuration, a rename), **2** small, **3** a normal coder session (a module with its tests), **5** large, near the most a reviewer can take in. `plan-hold.sh release` names a task with no weight in a warning; it still releases.
 
 ## Rules
 
