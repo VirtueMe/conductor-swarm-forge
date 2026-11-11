@@ -151,11 +151,27 @@ off. The launch goes on: a settings problem must not stop a worker.
 - The headless dispatch (`claude -p`, the conductor's handlers): it does not write the task's commits.
 - Managed settings. An organisation's managed `attribution` outranks `--settings`, so Claude's own line
   would still be added and the commit would carry both.
-- The windows that do not commit. See Open.
+- The windows that do not commit (only the coder does; see "Which windows commit" below).
 
-Not verified against a real `claude`: that an empty `commit` and `pr` really produce no trailer. The
-docs the check was made against did not say, and the test stubs `claude`. A live commit in a throwaway
-repository would settle it.
+**Checked against a real `claude` (2026-11-11, Claude Code 2.1.322, #220).** An empty `commit` is enough:
+in a throwaway repository, with `--setting-sources project` and the file `adapter_settings_flag` wrote
+passed as `--settings`, a commit Claude made had the message and no trailer. The same prompt with no
+`--settings` ended the commit with `Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>`, so the
+check could have failed. One commit each, made with `claude -p`. Not checked: the `pr` key (a PR body
+needs a real PR), and an interactive window, which takes the same setting.
+
+**Which windows commit (read 2026-11-11, #220).** Only the coder. `adapter_launch` serves the conductor
+(in the project root), the architect and strategist (each in its own worktree) and every worker
+(coder, validator, reviewer, merger, in the task's worktree), so Claude's own attribution is off for
+all of them. Of their skills and prompts, only the coder's say to commit (`fresh-start`, `on-rejection`
+and `on-conflict`). Those commits sit on the task's branch, so the merger's rebase stamps them
+(`BASE_SHA..HEAD`). The validator and reviewer are told not to fix anything, the architect and strategist
+write only under `.conductor/` (ignored by git), and the merger only rebases and fast-forwards, which
+makes no commit of its own. The scripts that commit are `swarm-start.sh` (the initial commit and the
+`.gitignore` one, made by git, not by a model) and `attribution-rebase.sh` (the stamp). So the launch needs
+no role switch and the stamp no wider reach. This is what the prompts say, not something enforced: a
+model that committed against its instructions would be stamped if it did so in a task's worktree, and
+would carry neither line if it did so as the conductor in the project root. Nothing there asks it to.
 
 ## Tests
 
@@ -171,9 +187,5 @@ of the suite:
 
 ## Open
 
-- Which windows commit. `adapter_launch` serves every interactive window (coder, architect, validator,
-  reviewer), so Claude's own attribution is off for all of them, while the stamp covers only the task's
-  commits through the merger's rebase. A commit made by another role outside that path would carry
-  neither. If any role does that, the launch has to learn the role, and the switch be limited to the coder.
 - Whether interactive Codex adds a trailer of its own. If it does, the stamp would add ours beside it
   and the result has two lines. Test an interactive session before enabling `trailer` for Codex.
