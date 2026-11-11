@@ -65,13 +65,18 @@ every commit covered, and no force-push.
 
 - The core, `scripts/attribution-rebase.sh <base-sha> [<trailer-line>...]` (built): rebases onto
   `<base-sha>` and stamps each replayed commit with the given lines. With no lines it is the plain
-  rebase. It knows nothing about settings, adapters or models.
+  rebase. A line has to look like `Key: value`; anything else is refused before a commit is touched, so
+  a mistyped flag cannot end up in the history.
 - The resolver, `scripts/attribution-trailer.sh <task>` (built): reads the setting, the coder's adapter
-  and the model, and prints the lines for that task, or nothing for `none`. The merger skill runs the two as one command, in
-  place of `git rebase "$BASE_SHA"`.
+  and the model, and prints the lines for that task, or nothing for `none`.
 
-The policy is then in code: a test drives each layer directly, and a model cannot run the rebase and
-skip the stamp, because it never assembles the lines.
+`attribution-rebase.sh <base-sha> --task <id>` joins them (built): it takes the lines from the resolver
+and rebases with them. That is the merger's one command, in place of `git rebase "$BASE_SHA"`. If the
+resolver refuses its setting, nothing has been rebased. If it has nothing to give, the rebase is the
+plain one.
+
+The policy is then in code: a test drives each layer and the two together, and a model cannot run the
+rebase and skip the stamp, because it never assembles the lines.
 
 ### The stamp skips what is already there
 
