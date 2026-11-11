@@ -535,6 +535,46 @@ unset DISPATCH_ANSWER_FILE
 rm -rf "$CONDUCTOR_DIR/strategist-inbox"
 rm -rf "$CONDUCTOR_DIR/work/0009" "$CONDUCTOR_DIR/architect-inbox" "$CONDUCTOR_DIR/human-inbox" "$CONDUCTOR_DIR/tasks/0009.md"
 
+section "G · A restart leaves a parked task parked (#212)"
+# A card parked in validation has no worker by design, so resume_interrupted must not respawn the validator
+# for it: that ran the validation once more, failed, and parked it again with a second notice. The tmux stub
+# lists no validator window, so every validation card here is "missing" its worker.
+mfile() { # <task> <timestamp>: a moved artifact, as task-move.sh writes it
+  mkdir -p "$CONDUCTOR_DIR/work/$1"
+  printf -- '---\ntype: moved\ntask-id: %s\ntimestamp: %s\nto: validation\n---\n' "$1" "$2" > "$CONDUCTOR_DIR/work/$1/moved-$2.md"
+}
+spawned() { calls | grep '^worker-spawn' || true; }
+rm -rf "$CONDUCTOR_DIR/work/0004"
+board_reset; bcard 0004 validation
+mfile 0004 20261108-090000
+vfile 0004 20261108-100000 failed; vfile 0004 20261108-110000 failed; vfile 0004 20261108-120000 failed
+printf -- '---\ntype: signal\ntask-id: 0004\n---\n' > "$CONDUCTOR_DIR/work/0004/signal-20261108-120001.md"   # the park's progress note
+resume_interrupted
+assert_eq "three failures in a row, no move since: parked, no validator is spawned" "$(spawned)" ""
+RC=0; resume_interrupted || RC=$?
+assert_eq "and the resume still succeeds" "$RC" "0"
+board_reset; bcard 0004 validation; bcard 0003 in-progress
+resume_interrupted
+assert_eq "another card's missing worker is still respawned" "$(spawned)" "worker-spawn 0003 coder"
+
+rm -f "$CONDUCTOR_DIR/work/0004/validation-20261108-120000.md"
+board_reset; bcard 0004 validation
+resume_interrupted
+assert_eq "two failures: below the limit, the validator is respawned" "$(spawned)" "worker-spawn 0004 validator"
+
+vfile 0004 20261108-120000 failed
+mfile 0004 20261108-130000   # sent back with task-move.sh, and the card is in validation again
+board_reset; bcard 0004 validation
+resume_interrupted
+assert_eq "a move since the third failure (a send-back): not parked, the validator is respawned" "$(spawned)" "worker-spawn 0004 validator"
+
+rm -f "$CONDUCTOR_DIR/work/0004/moved-20261108-130000.md"
+vfile 0004 20261108-140000 passed
+board_reset; bcard 0004 validation
+resume_interrupted
+assert_eq "a pass as the newest validation: not parked" "$(spawned)" "worker-spawn 0004 validator"
+rm -rf "$CONDUCTOR_DIR/work/0004"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

@@ -6,8 +6,9 @@
 #
 #   2. register the tasks that have no card (into backlog)
 #   3. unblock the backlog cards whose dependencies are all done (into ready)
-#   4. resume interrupted work: respawn a worker whose window is gone (auto stage), or notify
-#      again where the human's inbox file is gone (manual stage)
+#   4. resume interrupted work: respawn a worker whose window is gone (auto stage; not for a
+#      task parked after repeated failed validations, #212), or notify again where the human's
+#      inbox file is gone (manual stage)
 #   5. start the entry stage of every card in ready
 #
 # Every step acts only on what is missing, so running it again changes nothing. The order is the
