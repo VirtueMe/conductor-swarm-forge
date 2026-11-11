@@ -11,7 +11,7 @@ adapter ran the task. Checked on 2026-11-11 against claude-code 2.1.322, codex 0
 |---|---|---|
 | claude-code | `Co-Authored-By: <model> <noreply@anthropic.com>` (and a PR body line) | `--settings '{"attribution":{"commit":"","pr":""}}'`, no file edit. The adapter already passes `--settings`. |
 | codex (`exec`) | Nothing, in a throwaway repo, with `commit_attribution_enabled` unset, `false` and `true`. | `-c commit_attribution_enabled=<bool>` is accepted, but changed nothing in `exec`. |
-| codex (interactive) | Not tested. The binary carries an instruction to end commits with `Co-authored-by: Codex <noreply@openai.com>`, gated by `commit_attribution_enabled`. | as above |
+| codex (interactive) | Nothing, in a throwaway repo (2026-11-11, #220): one commit from an interactive session, `Add repository README`, with no trailer; `commit_attribution_enabled` was not in `~/.codex/config.toml`. The binary still carries an instruction to end commits with `Co-authored-by: Codex <noreply@openai.com>`, gated by that setting. | as above |
 | pi | Nothing. | none needed |
 
 The instruction in Codex is text given to the model, not git configuration. A line in the briefing
@@ -187,5 +187,7 @@ of the suite:
 
 ## Open
 
-- Whether interactive Codex adds a trailer of its own. If it does, the stamp would add ours beside it
-  and the result has two lines. Test an interactive session before enabling `trailer` for Codex.
+- Interactive Codex was checked once, with the setting unset (see the table). Its instruction to add
+  `Co-authored-by: Codex` exists in the binary, so a model that follows it in some run would leave two
+  lines beside ours. If a commit with Codex's own line turns up, launch it with
+  `-c commit_attribution_enabled=false` (or have the stamp replace it).
