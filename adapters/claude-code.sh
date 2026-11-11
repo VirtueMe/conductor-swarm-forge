@@ -151,52 +151,20 @@ PYEOF
 # turned off. The headless dispatch is not covered: it runs the conductor's handlers, which do not write
 # the task's commits.
 adapter_settings_flag() { # <root dir> <state dir>
-  local project_settings="${1:-}/.claude/settings.json" attribution=""
-  if [[ -f "${2:-}/config.md" ]]; then
-    attribution="$(sed -n 's/^attribution:[[:space:]]*//p' "$2/config.md" | sed -n '1s/[[:space:]]*$//p')"
-  fi
-  case "${attribution:-trailer}" in
-    none|trailer) ;;
-    # attribution-trailer.sh refuses this value; a launch cannot, so it says so and goes on as the default.
-    # swarm-start.sh blocks the value, so only a config.md edited by hand gets here.
-    *) echo "claude-code: attribution: '$attribution' in config.md is neither trailer nor none; launching as trailer" >&2 ;;
-  esac
+  local project_settings="${1:-}/.claude/settings.json" attribution scripts_dir
+  scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" && pwd)"
+  # shellcheck source=scripts/attribution-mode.sh
+  source "$scripts_dir/attribution-mode.sh"
+  # The state dir is where config.md lives (the conductor dir), so it is what the reader is given.
+  attribution="$(attribution_mode "${2:-}")"
+  # attribution-trailer.sh refuses a bad value; a launch cannot, so it says so and goes on as the default.
+  # swarm-start.sh blocks it, so only a config.md edited by hand gets here.
+  attribution_valid "$attribution" || echo "claude-code: attribution: '$attribution' in config.md is not one of: $ATTRIBUTION_MODES; launching as $ATTRIBUTION_DEFAULT" >&2
   if [[ "$attribution" == none ]]; then
     [[ -f "$project_settings" ]] && printf '%s\n' "--settings '$project_settings'"
     return 0
   fi
-  python3 - "$project_settings" "${2:-}" << 'PYEOF'
-import json, os, sys, tempfile
-path, state_dir = sys.argv[1], sys.argv[2]
-def as_is(why):
-    sys.stderr.write(f"claude-code: {why}; passing the project's settings as they are, attribution is not turned off\n")
-    if os.path.isfile(path):
-        print(f"--settings '{path}'")
-    sys.exit(0)
-settings = {}
-if os.path.isfile(path):
-    try:
-        with open(path) as f:
-            settings = json.load(f)
-        if not isinstance(settings, dict):
-            raise ValueError("not a JSON object")
-    except (ValueError, OSError) as e:
-        as_is(f"{path} is not usable settings JSON ({e})")
-settings["attribution"] = {"commit": "", "pr": ""}
-target = os.path.join(state_dir, "claude-settings.json")
-try:
-    os.makedirs(state_dir, exist_ok=True)
-    # Written beside the target and moved into place, so two windows starting together never read half a file.
-    fd, tmp = tempfile.mkstemp(dir=state_dir, prefix=".claude-settings.")
-    with os.fdopen(fd, "w") as f:
-        json.dump(settings, f, separators=(",", ":"))
-        f.write("\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, target)
-except OSError as e:
-    as_is(f"cannot write {target} ({e})")
-print(f"--settings '{target}'")
-PYEOF
+  python3 "$scripts_dir/claude-settings-merge.py" "$project_settings" "${2:-}"
 }
 
 # Launch a claude session — creates the tmux session if it doesn't exist yet,

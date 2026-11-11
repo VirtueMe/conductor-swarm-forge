@@ -53,13 +53,14 @@ PREFLIGHT_ARGS=()
   ${TEST_CMD:+--test-cmd "$TEST_CMD"} \
   ${PREFLIGHT_ARGS[@]+"${PREFLIGHT_ARGS[@]}"} || exit 1
 
-# CONDUCTOR_ATTRIBUTION (trailer or none) is written to config.md and read at every merge
+# CONDUCTOR_ATTRIBUTION (one of ATTRIBUTION_MODES, attribution-mode.sh) is written to config.md and read at every merge
 # (attribution-trailer.sh). A typo is refused here, where the person who made it is, and not at the
 # first merge, hours in. Empty means the default.
-case "${CONDUCTOR_ATTRIBUTION:-trailer}" in
-  trailer|none) ;;
-  *) echo "CONDUCTOR_ATTRIBUTION must be trailer or none, not '${CONDUCTOR_ATTRIBUTION}'" >&2; exit 1 ;;
-esac
+# shellcheck source=scripts/attribution-mode.sh
+source "$SCRIPTS_DIR/attribution-mode.sh"
+if [[ -n "${CONDUCTOR_ATTRIBUTION:-}" ]] && ! attribution_valid "$CONDUCTOR_ATTRIBUTION"; then
+  echo "CONDUCTOR_ATTRIBUTION must be one of: $ATTRIBUTION_MODES, not '${CONDUCTOR_ATTRIBUTION}'" >&2; exit 1
+fi
 
 # Resolve and check the topology before doing any work — fail fast.
 # `check` runs structural validate then behavioral completeness (e.g. manual stages need a human handler).

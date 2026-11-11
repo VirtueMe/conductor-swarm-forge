@@ -22,7 +22,8 @@
 #                                   stderr and returns 1, so the handler stops. A model
 #                                   once read a failing task-locks.sh as "free" and let
 #                                   a merge go ahead on a guard that had not run
-#   config_field <name>             print the value of a key in the project's config.md (test-cmd,
+#   config_field <name>             (defined in config-field.sh, sourced here) print the value of a
+#                                   key in the project's config.md (test-cmd,
 #                                   say), the whole line after "name:" without its surrounding
 #                                   spaces. Unlike the others it does not fail closed: an empty
 #                                   value, a key the file lacks and no config file all print
@@ -103,6 +104,8 @@ trap '_handler_step_failed "$?" "$BASH_COMMAND"' ERR
 
 # shellcheck source=scripts/frontmatter.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/frontmatter.sh"
+# shellcheck source=scripts/config-field.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config-field.sh"
 
 # shellcheck disable=SC2034  # set for the handler that sources this file
 ROUTED_DEST=""
@@ -149,17 +152,6 @@ locks_guard() { # <task>
     if grep -qxF -- "$item" <<< "$locked"; then echo held; return 0; fi
   done < <(fm_list "$card" files-changed)
   echo free
-}
-
-config_field() { # <name>
-  if [[ ! "${1:-}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-    echo "config_field: '${1:-}' is not a plain config key" >&2
-    return 1
-  fi
-  [[ -f "$CONDUCTOR_DIR/config.md" ]] || return 0
-  # The first "name:" line; no match is not an error. The config has no fixed shape (the loop's
-  # own readers take it with or without frontmatter fences), so this reads lines, not frontmatter.
-  sed -n "s/^$1:[[:space:]]*//p" "$CONDUCTOR_DIR/config.md" | sed -n '1s/[[:space:]]*$//p'
 }
 
 task_deps() { # <task>

@@ -171,10 +171,6 @@ of the suite:
 
 ## Open
 
-- The set of valid `attribution:` values is written in three places: `swarm-start.sh`,
-  `attribution-trailer.sh` and `adapter_settings_flag`, each with its own copy of the line that reads the
-  key. A third mode needs all three edited, and nothing fails if one is missed. A shared reader would
-  remove the copies.
 - Which windows commit. `adapter_launch` serves every interactive window (coder, architect, validator,
   reviewer), so Claude's own attribution is off for all of them, while the stamp covers only the task's
   commits through the merger's rebase. A commit made by another role outside that path would carry
