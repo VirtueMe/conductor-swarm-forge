@@ -1,6 +1,6 @@
 # Commit attribution
 
-Status: **in progress**, for #130. The rebase-and-stamp script is built; the rest is not. It unblocks #137.
+Status: **in progress**, for #130. The rebase-and-stamp script and the resolver are built; the merger skill and the adapter flag are not. It unblocks #137.
 
 ## The problem
 
@@ -26,7 +26,9 @@ Its output is commits and a branch push. This document is about commits only.
 Do not ask each tool to behave. The conductor stamps the commits itself, after the member is done
 and before anything leaves the worktree, so the result is the same whatever the adapter did.
 
-One setting in the workforce, `attribution`:
+One setting, `attribution:` in `.conductor/config.md` (next to `base-branch` and `test-cmd`, which the merger
+already reads there; `swarm-start.sh` writes it from `CONDUCTOR_ATTRIBUTION`, default `trailer`, and refuses any other value
+than `trailer` or `none` before it starts anything):
 
 - `trailer` (the default): the conductor adds the trailers below to every commit of the task.
 - `none`: the conductor adds nothing.
@@ -64,8 +66,8 @@ every commit covered, and no force-push.
 - The core, `scripts/attribution-rebase.sh <base-sha> [<trailer-line>...]` (built): rebases onto
   `<base-sha>` and stamps each replayed commit with the given lines. With no lines it is the plain
   rebase. It knows nothing about settings, adapters or models.
-- The resolver (not yet built): reads the setting, the task's adapter and its model, and prints the
-  lines for that task, or nothing for `none`. The merger skill runs the two as one command, in
+- The resolver, `scripts/attribution-trailer.sh <task>` (built): reads the setting, the coder's adapter
+  and the model, and prints the lines for that task, or nothing for `none`. The merger skill runs the two as one command, in
   place of `git rebase "$BASE_SHA"`.
 
 The policy is then in code: a test drives each layer directly, and a model cannot run the rebase and
@@ -85,9 +87,18 @@ every trailer with the same key, which would also delete a human co-author.
 
 ## What the conductor needs to know
 
-- the model: `task-strategy.sh` carries `workers.<role>.model`;
-- the adapter: it belongs to the workforce;
-- the agent name and URL: a new fixed field per adapter, kept next to the adapter's other settings.
+The resolver reads it all, for the `coder`, the role whose commits these are. That name is fixed in the
+resolver: the merger exists only in the `software-dev` topology, and its roles are the ones that commit.
+A topology with another committing role would need the resolver told which one.
+
+- the model: the workforce's `params.model`, with the task's strategy over it (`task-strategy.sh params`);
+- the adapter: the workforce's `adapter`;
+- the agent name and URL: `adapter_attribution` in `adapters/<adapter>.sh`, one line, tab-separated.
+
+What it cannot find (no `workforce.json`, no coder, an adapter with no file) costs the lines it would
+have given, with a warning on stderr: the stamp is metadata, and a merge must not stop for it. The price is that such a task's commits go
+unstamped, with the warning as the only sign; this was chosen over stopping the merge. A
+`attribution:` value that is neither `trailer` nor `none` is an error, so a typo does not pass for off.
 
 ## Claude Code is launched with its attribution off
 
@@ -113,4 +124,3 @@ of the suite:
 
 - Whether interactive Codex adds a trailer of its own. If it does, the stamp would add ours beside it
   and the result has two lines. Test an interactive session before enabling `trailer` for Codex.
-- The URL per adapter.

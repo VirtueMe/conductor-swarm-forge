@@ -53,6 +53,14 @@ PREFLIGHT_ARGS=()
   ${TEST_CMD:+--test-cmd "$TEST_CMD"} \
   ${PREFLIGHT_ARGS[@]+"${PREFLIGHT_ARGS[@]}"} || exit 1
 
+# CONDUCTOR_ATTRIBUTION (trailer or none) is written to config.md and read at every merge
+# (attribution-trailer.sh). A typo is refused here, where the person who made it is, and not at the
+# first merge, hours in. Empty means the default.
+case "${CONDUCTOR_ATTRIBUTION:-trailer}" in
+  trailer|none) ;;
+  *) echo "CONDUCTOR_ATTRIBUTION must be trailer or none, not '${CONDUCTOR_ATTRIBUTION}'" >&2; exit 1 ;;
+esac
+
 # Resolve and check the topology before doing any work — fail fast.
 # `check` runs structural validate then behavioral completeness (e.g. manual stages need a human handler).
 TOPOLOGY_FILE="$("$SCRIPTS_DIR/topology-load.sh" resolve "$TOPOLOGY")" || {
@@ -93,6 +101,9 @@ CONDUCTOR_DIR="${CONDUCTOR_DIR:-.conductor}"
 # CONDUCTOR_NOTIFY_CHANNEL — "push" adds a desktop notification (macOS) when the headless
 #                            conductor loop halts. Anything else: no notification beyond the
 #                            conductor window and the inbox files. Default: none.
+# CONDUCTOR_ATTRIBUTION — "trailer" (default) or "none": whether the conductor stamps the task's commits
+#                          with Co-Authored-By and Assisted-by trailers when it merges (#130,
+#                          docs/commit-attribution.md). Checked above; written to config.md.
 # WORKFORCE was resolved and existence-checked above (from --workforce).
 
 echo "Target : $TARGET_DIR"
@@ -218,6 +229,7 @@ fi
   printf 'base-branch: %s\n'   "$BASE_BRANCH"
   printf 'poll-interval: %s\n' "${CONDUCTOR_POLL_INTERVAL:-3}"
   printf 'notify-channel: %s\n' "${CONDUCTOR_NOTIFY_CHANNEL:-none}"
+  printf 'attribution: %s\n'    "${CONDUCTOR_ATTRIBUTION:-trailer}"
   printf -- '---\n'
 } > "$CONDUCTOR_DIR/config.md"
 # The project's own test command and its language's runner are allowed too, so the validator and the coder

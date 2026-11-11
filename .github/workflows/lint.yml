@@ -121,6 +121,9 @@ jobs:
       - name: test-attribution-rebase
         run: bash scripts/test-attribution-rebase.sh
 
+      - name: test-attribution-trailer
+        run: bash scripts/test-attribution-trailer.sh
+
       - name: test-wf-read
         run: bash scripts/test-wf-read.sh
 
