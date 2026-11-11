@@ -76,6 +76,15 @@ worktree and with the same window name. Filter by start time (the spawn time, be
 - **The allowance.** Each `token_count` also carries `rate_limits`: the 5-hour and the weekly
   `used_percent` with their reset times, the plan type and credits. That is the data the Codex
   subscription slice (#112) wants, and it comes with every worker session at no extra cost.
+- **The allowance without a session log (#161, read 2026-11-11, codex 0.166.0).** `codex app-server`
+  (stdio JSON-RPC: `initialize`, then `initialized`, then a request) has `account/rateLimits/read`.
+  One call on a machine signed in with ChatGPT returned `rateLimits.primary` (`windowDurationMins` 300)
+  and `secondary` (10080), each with `usedPercent` and `resetsAt` (Unix seconds), `credits`,
+  `planType` (`plus` here) and `rateLimitReachedType`. It is the same window shape as the session
+  logs, but a live reading with no model call and no earlier session needed. Codex makes the call
+  with its own login, so the conductor never handles the token. It needs the Codex binary installed
+  and signed in. The protocol is marked experimental (`codex app-server generate-json-schema` writes
+  it); `account/usage/read` (token usage) exists and was not tried.
 - **Killed.** The file is appended as events happen, so SIGKILL left it as it was and every
   completed turn is in it. Not tested: a kill in the middle of a turn, where that turn's counts
   are probably lost.
@@ -92,7 +101,14 @@ worktree and with the same window name. Filter by start time (the spawn time, be
   `session` line has the `cwd` and the format `version`. A session's usage is the sum over its
   assistant messages.
 - **Cost.** Pi's own figure, per message, from its own price table. For the fixture it equals what
-  `usage-prices.json` gives, to the millionth of a dollar.
+  `usage-prices.json` gives, to the millionth of a dollar. `cost.totalFromProvider` was `false` in
+  every message seen: the figure is Pi's estimate, not the provider's. On a ChatGPT plan it is not a
+  charge either (see "Pi is metered only on a ChatGPT plan" below).
+- **Provider.** Each assistant message has `provider` and `api` beside `model`, and a
+  `model_change` line `{provider, modelId}` marks a switch. A session can mix providers: one seen
+  had two `anthropic` messages and three `openai-codex` ones, so the provider is read per message,
+  never per session. The log does not name the sign-in: no line mentions `oauth`, `api_key` or a
+  plan.
 - **Killed.** Appended per message; SIGKILL left every completed message. A message in flight is
   lost.
 - **Documented.** Yes: `docs/session-format.md` in the package, and a session `version` field
@@ -232,11 +248,30 @@ What the reader settled, and what it assumed:
   `subscription:openai` is allowed (OpenAI lists Pi for ChatGPT plan usage), and since #159 a Pi run
   there is registered in the same window as Codex (`allowance.sh vendor pi --pool subscription:openai`).
   The window is still read from Codex's session logs: Pi's own hold the provider, tokens and cost per
-  message, no rate limits. Read 2026-11-07 from Pi 1.4.0's logs and docs: a session log names the
-  provider and not the sign-in; `~/.pi/agent/auth.json` has a `type` per provider (`api_key` or
-  `oauth`), and Pi uses a runtime `--api-key`, then a stored `auth.json` credential, then `models.json`,
-  then the provider's environment variable. No ChatGPT-plan session was available on this machine, so
-  what such a session looks like in the log was not seen.
+  message, no rate limits. Read 2026-11-07 from Pi 1.4.0's logs and docs, and checked on 2026-11-11
+  with real sessions (#161): a session log names the provider and not the sign-in;
+  `~/.pi/agent/auth.json` has a `type` per provider, and Pi uses a runtime `--api-key`, then a stored
+  `auth.json` credential, then `models.json`, then the provider's environment variable.
+  - **The sign-in is in the provider's name and `type`.** After `/login` for ChatGPT, `auth.json`
+    held `openai-codex` with `type: oauth` beside `openai` and `anthropic` with `type: api_key`.
+    The OAuth entry's fields are `access`, `accountId`, `expires`, `refresh` and `type`; only the
+    names were read, never a value, and the pool needs only the `type`.
+  - **Two real runs.** On the `openai` API key (`gpt-5.3-codex`): `provider: openai`,
+    `api: openai-responses`. On the plan (`gpt-5.6-luna`): `provider: openai-codex`,
+    `api: openai-codex-responses`. The usage fields are the same in both. The plan run's cost
+    (about $0.20 per million input tokens and $1.20 per million output) is an estimate at API rates,
+    not a charge on the plan, so on a plan the tokens are what counts, against the window.
+  - **So a Pi message's pool is its provider and that provider's `type`:** `openai-codex` with
+    `oauth` is `subscription:openai`; `openai` with `api_key` is the API. Nothing in the repo
+    knows `openai-codex` yet: a Pi member's pool still comes only from its declaration
+    (`billing-mode.sh pool`). `auth.json` is the best guess, not proof: a runtime `--api-key` outranks
+    it and leaves no trace in the log.
+  - **The window without Codex's logs.** `codex app-server` (above) reads it live, but needs Codex
+    installed and signed in. A machine with only Pi has Pi's own `openai-codex` sign-in and no
+    Codex. Reading the plan's usage with Pi's token directly is not done: nothing found says a
+    third-party tool may reuse a ChatGPT OAuth token for it, and one third-party source quotes an
+    anti-circumvention clause in OpenAI's terms (not confirmed on OpenAI's own page). Treat it as not
+    allowed until OpenAI says otherwise. A Pi-only swarm has no fresh window reading.
 - **The window is the account's.** A person using Claude by hand moves it during a run too.
 
 ## Findings that change the price table
@@ -294,6 +329,9 @@ exit wait, Codex needs a priced model.
 - A Claude Code session that used tools, subagents (sidechains), `/compact` or `--resume`: the
   message duplication, and whether subagent usage is in the same file, are unknown.
 - A Codex or Pi kill in the middle of a turn.
+- Pi on a ChatGPT plan, more than one short run (#161): the `openai-codex` messages seen came from two
+  prompts. Not tried: a runtime `--api-key` over a stored plan login, `models.json` or an environment
+  key, a Pi-only machine with no Codex, and Codex's `account/usage/read`.
 - A clean `/exit` for any harness, as against a kill.
 - Several sessions in one worktree (rework): the time filter is reasoned, not tried.
 - Windows and macOS paths; everything here ran on Linux.
