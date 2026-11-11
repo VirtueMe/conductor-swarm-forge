@@ -713,7 +713,8 @@ version makes old rows stale.
 **Across runs.** `scripts/usage-combine.sh` copies a finished run's usage log into one combined file
 (`~/.conductor/usage-combined.jsonl`, or `USAGE_COMBINED`, or `--into`), adding a `run` field to every line and
 changing nothing else. A run already in the file is not added twice. `usage-summary.sh --file <combined>` reads it
-as it reads one run's. `--by weight` groups the attempts by the planned weight of their task, next to the existing
+as it reads one run's. Every run numbers its tasks from 0001, so `--by task` labels a task `<run>/<id>` when more
+than one run is in range (#213); with one run it prints the plain id. `--by weight` groups the attempts by the planned weight of their task, next to the existing
 `--by role` and `--by model`; `--by tasks` lists the task records by weight: tasks, steps, rework rounds, lines
 changed, files, and how many had no size.
 

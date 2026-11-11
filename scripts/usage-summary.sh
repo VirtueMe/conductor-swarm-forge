@@ -29,6 +29,10 @@ set -euo pipefail
 # that has an estimate, reported cost or not, on the price table's one basis, with the number
 # of attempts that have none.
 #
+# "task" groups by task id. Every run numbers its tasks from 0001, so when the lines in range come from more
+# than one run (the "run" field usage-combine.sh adds) a task is shown as <run>/<id>; with one run, or none
+# named, it is the plain id. An attempt with no task is one row, "(no task)".
+#
 # "weight" groups the attempts by the planned weight of their task, from the task's own record
 # ("record": "task", written by task-record.sh when it merges); an attempt of a task with no record or
 # no weight is "-". "tasks" lists those records by weight: tasks, worker steps, rework rounds, lines
@@ -90,10 +94,12 @@ jq -R 'fromjson? // empty' "$FILE" \
     | ($inrange | map(select(.record == "model_mismatch"))) as $mismatches
     | ($inrange | map(select(.record == "pool_mismatch"))) as $poolmm
     | ($inrange | map(select(.record == "task"))) as $taskrecs
-    | ($taskrecs | map({key: ((.run // "") + "/" + .task), value: .weight}) | from_entries) as $weights
-    | ($inrange | map(select(.record == null) | . + {weight: ($weights[(.run // "") + "/" + (.task // "")] // null)})) as $all
+    | def taskid: (.run // "") + "/" + (.task // "");
+      ($taskrecs | map({key: taskid, value: .weight}) | from_entries) as $weights
+    | ($inrange | map(select(.record == null) | . + {weight: ($weights[taskid] // null)})) as $all
     | ($all | map(select(.billing == "api" or .billing == "subscription")) | length > 0) as $billed
     | ($all | map(select(.pool != null and .pool != "unknown")) | length > 0) as $pooled
+    | ($all | map(.run // "") | map(select(. != "")) | unique | length > 1) as $manyruns
     | def want(k): $by == "" or ($by | split(",") | index(k) != null);
       def reported: select(.cost_usd != null);
       def estimated: select(.cost_usd == null and .estimated_cost_usd != null);
@@ -118,6 +124,10 @@ jq -R 'fromjson? // empty' "$FILE" \
       def poolkey: (.pool // "unknown") | if startswith("subscription:") then . + " (notional)" else . end;
       def by_billing(rows): ["api", "subscription", "unknown"] | map(. as $m | {mode: $m, a: agg(rows | map(select(billing_of == $m)))}) | map(select(.a.attempts > 0));
       def groups(f): $all | group_by(f // "-") | map({key: (.[0] | f // "-"), a: agg(.)}) | sort_by(-(.a.reported + .a.estimated), .key);
+      # A task id is only unique within a run (#213): with more than one run in range a task is told apart by
+      # its run, keyed as the weight lookup is (taskid). An attempt with no task stays "-" and is one row; one with a
+      # task but no run (a raw log appended by hand) keeps its bare id, a row of its own beside the labelled ones.
+      def task_key: (.task // "-") as $t | if $manyruns and $t != "-" and (.run // "") != "" then taskid else $t end;
       def same_window($a; $b): ($a.resets_at != null and $b.resets_at != null and (($a.resets_at - $b.resets_at) | fabs) <= 120);
       def pool_of: .pool // "subscription:openai";
       def claude_pool: "subscription:anthropic";
@@ -194,7 +204,7 @@ jq -R 'fromjson? // empty' "$FILE" \
         (if $billed then (by_billing($all | map(select(.outcome != "finished"))) | .[] | row("unfin_billing"; .mode; .a)) else empty end),
         (if want("harness") then (groups(.harness) | .[] | row("harness"; .key; .a)) else empty end),
         (if want("handler") then (groups(.handler) | .[] | row("handler"; .key; .a)) else empty end),
-        (if want("task")    then (groups(.task)    | .[] | row("task";    .key; .a)) else empty end),
+        (if want("task")    then (groups(task_key) | .[] | row("task";    .key; .a)) else empty end),
         (if want("role")    then (groups(.role)    | .[] | row("role";    .key; .a)) else empty end),
         (if want("model")   then (groups(.model)   | .[] | row("model";   .key; .a)) else empty end),
         (if want("weight")  then (groups(.weight)  | .[] | row("weight";  .key; .a)) else empty end),
