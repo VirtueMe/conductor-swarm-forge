@@ -41,6 +41,10 @@ There is no artifact and no task for this event. Everything it needs is in the k
      tmux list-windows -t swarm -F '#{window_name}' 2>/dev/null
      worker-spawn.sh <id> "$ROLE"
      ```
+     **Not for a parked task.** Its newest `work/<id>/validation-*.md` has `outcome: failed`, the
+     failures in a row are enough for the topology to route `validation-failed` to `@escalate`, and
+     no `work/<id>/moved-*.md` is newer than that failure. A parked card has no worker by design;
+     starting one runs the validation again and parks it again (#212). Leave it where it is.
    - If `$MODE` is `manual`: check whether a human-inbox file exists for this task.
      If not (e.g. previous notification was lost), re-notify. Use `compgen -G`
      rather than `ls` to test glob existence — `ls` exits non-zero for both

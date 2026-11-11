@@ -290,7 +290,10 @@ resume_interrupted() {
     role="$(topology-load.sh role "$CONDUCTOR_DIR/topology.json" "$stage")" || return 1
     mode="$(topology-load.sh mode "$CONDUCTOR_DIR/topology.json" "$stage")" || return 1
     if [[ -n "$role" ]]; then
-      grep -qxF -- "$role-$id" <<< "$windows" || worker-spawn.sh "$id" "$role" || return 1
+      # A parked card has no worker by design: respawning it ran the validation again and parked it again (#212).
+      if ! grep -qxF -- "$role-$id" <<< "$windows" && ! parked_in_validation "$id"; then
+        worker-spawn.sh "$id" "$role" || return 1
+      fi
     elif [[ "$mode" == manual ]]; then
       compgen -G "$CONDUCTOR_DIR/human-inbox/$id-*.md" > /dev/null 2>&1 \
         || task-notify.sh --task "$id" --stage "$stage" || return 1
@@ -336,6 +339,23 @@ failed_validations() { # <task>
     n=$(( n + 1 ))
   done < <(find "$CONDUCTOR_DIR/work/$1" -maxdepth 1 -name 'validation-*.md' 2> /dev/null | sort -r)
   echo "$n"
+}
+
+# Whether a task is parked (#212): its newest validation failed, the failures in a row are enough for the
+# topology to send it to @escalate, and no move has been made since that failure. A send-back (task-move.sh,
+# plan-revision.sh resume) writes a moved-*.md artifact, so it ends the park; the card's later entry into
+# validation is another move, and the failure that parks it comes after that. Anything the topology cannot
+# route is not parked: the card is treated as interrupted, as it was before.
+parked_in_validation() { # <task>
+  local dir="$CONDUCTOR_DIR/work/$1" last moved n dest
+  last="$(find "$dir" -maxdepth 1 -name 'validation-*.md' 2> /dev/null | sort | tail -n 1)"
+  [[ -n "$last" && "$(fm_field "$last" outcome)" == failed ]] || return 1
+  n="$(failed_validations "$1")"
+  dest="$(topology-load.sh route "$CONDUCTOR_DIR/topology.json" validation-failed "count.validation-failed=$n" 2> /dev/null)" || return 1
+  [[ "$dest" == @escalate ]] || return 1
+  moved="$(find "$dir" -maxdepth 1 -name 'moved-*.md' 2> /dev/null | sort | tail -n 1)"
+  # Names end in -<YYYYMMDD-HHMMSS>.md, so the last 15 characters of a name before .md compare as times.
+  [[ -z "$moved" ]] || [[ "$(basename "$moved" .md | tail -c 16)" < "$(basename "$last" .md | tail -c 16)" ]] || return 1
 }
 
 # A task the topology sends to @escalate after repeated validation failures: the card stays in
