@@ -262,10 +262,15 @@ What the reader settled, and what it assumed:
     (about $0.20 per million input tokens and $1.20 per million output) is an estimate at API rates,
     not a charge on the plan, so on a plan the tokens are what counts, against the window.
   - **So a Pi message's pool is its provider and that provider's `type`:** `openai-codex` with
-    `oauth` is `subscription:openai`; `openai` with `api_key` is the API. Nothing in the repo
-    knows `openai-codex` yet: a Pi member's pool still comes only from its declaration
-    (`billing-mode.sh pool`). `auth.json` is the best guess, not proof: a runtime `--api-key` outranks
-    it and leaves no trace in the log.
+    `oauth` is `subscription:openai`; `openai` with `api_key` is the API.
+    `billing-mode.sh pi-pool <provider>` prints that (and `api:anthropic` for `anthropic` with
+    `api_key`), reading only the `type` from `auth.json` (`PI_AUTH_FILE`). Every other pairing is
+    `unknown`: a pairing nobody has seen (`openai-codex` on a key, `openai` on oauth) is not guessed,
+    and `anthropic` on oauth is not what pays for a Pi run (#156). **Not wired in yet:** a Pi member's
+    pool on a usage line still comes only from its declaration (`billing-mode.sh pool`), and the
+    reader does not take the provider per message. A session can mix providers, so the line would
+    need the pool per message, not one. `auth.json` is the best guess, not proof: a runtime
+    `--api-key` outranks it and leaves no trace in the log.
   - **The window without Codex's logs.** `codex app-server` (above) reads it live, but needs Codex
     installed and signed in. A machine with only Pi has Pi's own `openai-codex` sign-in and no
     Codex. Reading the plan's usage with Pi's token directly is not done: nothing found says a
