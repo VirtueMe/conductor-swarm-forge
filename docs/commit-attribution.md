@@ -135,6 +135,13 @@ writes beside the target and renames, so two windows starting together never rea
 is the user's: it would also switch attribution off in their own Claude Code sessions in that
 repository. The merged file lives in the swarm's state dir and is rewritten at each launch.
 
+**A bad value.** `attribution-trailer.sh` refuses an `attribution:` that is neither `trailer` nor `none`
+(a typo should not pass for off), and `swarm-start.sh` refuses it before anything starts. A launch cannot
+refuse, so a window that finds such a value in `config.md` (it was edited by hand) says so on stderr and
+goes on as `trailer`, the default: Claude's own attribution off, as the stamp expects. The merge then
+stops on the bad value, with a message that names it. So for a bad value both treat the stamp as on;
+they do not share a rule (see Open).
+
 **When it falls back.** If the project's file is not a JSON object, or the merged file cannot be written,
 the project's file is passed as it is, with a warning on stderr, and attribution is then not turned
 off. The launch goes on: a settings problem must not stop a worker.
@@ -164,6 +171,10 @@ of the suite:
 
 ## Open
 
+- The set of valid `attribution:` values is written in three places: `swarm-start.sh`,
+  `attribution-trailer.sh` and `adapter_settings_flag`, each with its own copy of the line that reads the
+  key. A third mode needs all three edited, and nothing fails if one is missed. A shared reader would
+  remove the copies.
 - Which windows commit. `adapter_launch` serves every interactive window (coder, architect, validator,
   reviewer), so Claude's own attribution is off for all of them, while the stamp covers only the task's
   commits through the merger's rebase. A commit made by another role outside that path would carry

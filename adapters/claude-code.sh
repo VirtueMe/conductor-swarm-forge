@@ -140,7 +140,8 @@ PYEOF
 #
 # Claude's own attribution is off because the conductor stamps the task's commits itself
 # (docs/commit-attribution.md), and Claude's own Co-Authored-By would sit beside ours. It is on unless
-# config.md has `attribution: none`, and absent means trailer. Whether a repeated --settings merges is not
+# config.md has `attribution: none`, and absent means trailer; any other value is said so on stderr and
+# taken as trailer. Whether a repeated --settings merges is not
 # documented, so there is one: with the setting on, the project's file is merged with the attribution keys
 # over it and written to $state_dir/claude-settings.json, readable only by its owner, and that path is
 # passed. It is a file and not inline JSON because the project's settings can hold env entries and helpers,
@@ -154,7 +155,13 @@ adapter_settings_flag() { # <root dir> <state dir>
   if [[ -f "${2:-}/config.md" ]]; then
     attribution="$(sed -n 's/^attribution:[[:space:]]*//p' "$2/config.md" | sed -n '1s/[[:space:]]*$//p')"
   fi
-  if [[ "${attribution:-trailer}" == none ]]; then
+  case "${attribution:-trailer}" in
+    none|trailer) ;;
+    # attribution-trailer.sh refuses this value; a launch cannot, so it says so and goes on as the default.
+    # swarm-start.sh blocks the value, so only a config.md edited by hand gets here.
+    *) echo "claude-code: attribution: '$attribution' in config.md is neither trailer nor none; launching as trailer" >&2 ;;
+  esac
+  if [[ "$attribution" == none ]]; then
     [[ -f "$project_settings" ]] && printf '%s\n' "--settings '$project_settings'"
     return 0
   fi
