@@ -121,7 +121,7 @@ git -C "$R" switch -q main
 echo other > "$R/f1.txt"; git -C "$R" add f1.txt; git -C "$R" commit -q -m "chore: clash"
 git -C "$R" switch -q task
 set +e; (cd "$R" && "$STAMP" "$(git -C "$R" rev-parse main)" "$AGENT") >/dev/null 2>&1; RC=$?; set -e
-if [[ "$RC" -ne 0 ]]; then ok "exits non-zero on a conflict"; else fail "exits non-zero on a conflict (got 0)"; fi
+if [[ "$RC" -ne 0 && "$RC" -ne 4 ]]; then ok "exits non-zero on a conflict, and not with the resolver's 4"; else fail "exits non-zero on a conflict, and not with the resolver's 4 (got $RC)"; fi
 if [[ -d "$R/.git/rebase-merge" || -d "$R/.git/rebase-apply" ]]; then ok "the rebase is left in progress, for the merger to abort"
 else fail "the rebase is left in progress, for the merger to abort"; fi
 
@@ -166,7 +166,7 @@ R="$WORK/task-bad"; new_task "$R" 2
 BASE="$(git -C "$R" rev-parse main)"; CD="$(new_cd 'attribution: banana')"
 BEFORE="$(git -C "$R" rev-parse HEAD)"
 set +e; (cd "$R" && CONDUCTOR_DIR="$CD" "$STAMP" "$BASE" --task 0001) >/dev/null 2>"$WORK/err"; RC=$?; set -e
-assert_eq "exit 1" "$RC" "1"
+assert_eq "exit 4, which is not a conflict's 1" "$RC" "4"
 assert_eq "the branch is untouched" "$(git -C "$R" rev-parse HEAD)" "$BEFORE"
 if [[ -d "$R/.git/rebase-merge" || -d "$R/.git/rebase-apply" ]]; then fail "no rebase was started"; else ok "no rebase was started"; fi
 if grep -q banana "$WORK/err"; then ok "and the message says why"; else fail "and the message says why ($(cat "$WORK/err"))"; fi
@@ -193,6 +193,27 @@ for bad in "--taks" "0001" "not a trailer" "Key:novalue" ": nokey"; do
   assert_eq "'$bad': the branch is untouched" "$(git -C "$R" rev-parse HEAD)" "$BEFORE"
 done
 if grep -q -- '--taks' <<< "$(cd "$R" && CONDUCTOR_DIR="$CD" "$STAMP" "$BASE" --taks 0001 2>&1 || true)"; then ok "and the message shows the line it refused"; else fail "and the message shows the line it refused"; fi
+
+echo "── the merger's probe tells a conflict from a failure before the rebase started"
+# skills/merger/merge.md step 2 sends "anything else" by whether a rebase is in progress.
+# Run from inside the repo, as the merger does: --git-path prints a path relative to it.
+in_progress() { ( cd "$1" && [[ -d "$(git rev-parse --git-path rebase-merge)" || -d "$(git rev-parse --git-path rebase-apply)" ]] ); }
+R="$WORK/probe-conflict"; new_task "$R" 1
+git -C "$R" switch -q main; echo other > "$R/f1.txt"; git -C "$R" add f1.txt; git -C "$R" commit -q -m "chore: clash"
+git -C "$R" switch -q task
+set +e; (cd "$R" && "$STAMP" "$(git -C "$R" rev-parse main)" "$AGENT") >/dev/null 2>&1; RC=$?; set -e
+if in_progress "$R"; then ok "a conflict: a rebase is in progress"; else fail "a conflict: a rebase is in progress"; fi
+R="$WORK/probe-dirty"; new_task "$R" 1
+echo changed > "$R/f1.txt"
+set +e; (cd "$R" && "$STAMP" "$(git -C "$R" rev-parse main)" "$AGENT") >/dev/null 2>&1; RC=$?; set -e
+if [[ "$RC" -ne 0 && "$RC" -ne 4 ]]; then ok "a dirty worktree: git's failure comes through (exit $RC)"; else fail "a dirty worktree: git's failure comes through (got $RC)"; fi
+if in_progress "$R"; then fail "a dirty worktree: no rebase is in progress"; else ok "a dirty worktree: no rebase is in progress"; fi
+R="$WORK/probe-worktree"; new_task "$R" 1
+git -C "$R" switch -q main; git -C "$R" worktree add -q -b wt "$WORK/wt-checkout" task 2>/dev/null
+git -C "$WORK/wt-checkout" switch -q -c wtask 2>/dev/null || true
+echo other > "$R/f1.txt"; git -C "$R" add f1.txt; git -C "$R" commit -q -m "chore: clash"
+set +e; (cd "$WORK/wt-checkout" && "$STAMP" "$(git -C "$R" rev-parse main)" "$AGENT") >/dev/null 2>&1; set -e
+if in_progress "$WORK/wt-checkout"; then ok "in a linked worktree, as the swarm's tasks are: the probe sees the conflict"; else fail "in a linked worktree, the probe sees the conflict"; fi
 
 echo "── usage"
 set +e; (cd "$WORK" && "$STAMP") >/dev/null 2>&1; RC=$?; set -e

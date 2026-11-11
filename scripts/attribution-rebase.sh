@@ -13,8 +13,10 @@
 # coder's adapter and the model. This is the merger's one command, so no model assembles the lines or
 # can run the rebase and skip them. Lines given as well are added after the resolved ones. When the
 # resolver gives none (`attribution: none`, or what it needs is missing, which it warns about on stderr)
-# the rebase is the plain one. When the resolver fails (a bad `attribution:` value) the script fails
-# with its exit code before it rebases, so nothing has been rewritten.
+# the rebase is the plain one. When the resolver fails (a bad `attribution:` value, or no jq) the script
+# exits 4 before it rebases, so nothing has been rewritten. Its own code is not passed on: git's rebase
+# exits 1 on a conflict, and the merger has to tell "conflict, abort it" from "misconfigured, nothing was
+# rebased".
 #
 # The stamp only ever adds. A line is added to a commit only when that exact line is not one of
 # the commit's trailers: a second run changes nothing (the merger retries a failed fast-forward up to
@@ -29,8 +31,8 @@
 # before the resolver runs or a commit is touched, rather than written into the history.
 #
 # Exit: 0 rebased (and stamped); 2 usage: no base, --task with no id, or an argument that is not a
-# trailer line; the resolver's own code when it fails (1 a bad `attribution:` value, 3 no jq);
-# anything else is git's.
+# trailer line; 4 the resolver failed, nothing rebased; anything else is git's (1: a conflict, with the
+# rebase left in progress).
 
 set -euo pipefail
 
@@ -81,8 +83,9 @@ done
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -n "$TASK" ]]; then
-  # The resolver first and on its own: if it fails, set -e stops here, before any commit is touched.
-  resolved="$("$SCRIPTS_DIR/attribution-trailer.sh" "$TASK")"
+  # The resolver first and on its own: if it fails we stop here, before any commit is touched. Its error
+  # message has already gone to stderr.
+  resolved="$("$SCRIPTS_DIR/attribution-trailer.sh" "$TASK")" || exit 4
   resolved_lines=()
   if [[ -n "$resolved" ]]; then mapfile -t resolved_lines <<< "$resolved"; fi
   LINES=(${resolved_lines[@]+"${resolved_lines[@]}"} ${LINES[@]+"${LINES[@]}"})

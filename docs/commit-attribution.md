@@ -1,6 +1,6 @@
 # Commit attribution
 
-Status: **in progress**, for #130. The rebase-and-stamp script and the resolver are built; the merger skill and the adapter flag are not. It unblocks #137.
+Status: **in progress**, for #130. The rebase-and-stamp script and the resolver are built; the merger skill runs it; the claude-code adapter flag is not built. It unblocks #137.
 
 ## The problem
 
@@ -71,9 +71,14 @@ every commit covered, and no force-push.
   and the model, and prints the lines for that task, or nothing for `none`.
 
 `attribution-rebase.sh <base-sha> --task <id>` joins them (built): it takes the lines from the resolver
-and rebases with them. That is the merger's one command, in place of `git rebase "$BASE_SHA"`. If the
-resolver refuses its setting, nothing has been rebased. If it has nothing to give, the rebase is the
-plain one.
+and rebases with them. That is the merger's one command, in place of `git rebase "$BASE_SHA"` (`skills/merger/merge.md`,
+step 2). If it has nothing to give, the rebase is the plain one. If the resolver fails (a bad
+`attribution:` value, no `jq`) the command exits **4** before it rebases anything. It does not pass the
+resolver's own code on, because git's rebase exits 1 on a conflict and the merger has to tell the two
+apart: a 4 is signalled as `blocked` with the stderr message, with nothing to abort. Any other failure
+is told by state, not by code: if a rebase is in progress it is a conflict, aborted and signalled as
+`conflict`; if none is, git failed before it began (uncommitted changes, a missing base), and that is
+signalled as `blocked` too.
 
 The policy is then in code: a test drives each layer and the two together, and a model cannot run the
 rebase and skip the stamp, because it never assembles the lines.
