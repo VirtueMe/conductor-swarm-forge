@@ -105,6 +105,7 @@ has "CONDUCTOR_DIR=.conductor" "$TMP/ns" "with the conductor dir set"
 lacks "&& claude " "$TMUX_LOG" "no interactive claude"
 has "^notify-channel: none" "$TARGET/.conductor/config.md" "notify-channel is in config.md"
 has "^poll-interval:" "$TARGET/.conductor/config.md" "next to the poll interval"
+has "^attribution: trailer" "$TARGET/.conductor/config.md" "attribution defaults to trailer in config.md (#130)"
 start -- -hc
 assert_eq "-hc is the same flag" "$(new_session | grep -c 'conductor-loop.sh' || true)" "1"
 
@@ -394,6 +395,23 @@ start -- --trust-project
 assert_eq "--trust-project with no state file: the start goes on" "$RC" "0"
 has "claude once" "$TMP/err" "and says what to do"
 export CLAUDE_JSON_FILE="$TMP/no-claude.json"
+
+section "18 · CONDUCTOR_ATTRIBUTION is checked at the start, not at the first merge (#130)"
+start --env CONDUCTOR_ATTRIBUTION=none --
+assert_eq "none: exit 0" "$RC" "0"
+has "^attribution: none" "$TARGET/.conductor/config.md" "none is written to config.md"
+start --env CONDUCTOR_ATTRIBUTION=trailer --
+assert_eq "trailer: exit 0" "$RC" "0"
+has "^attribution: trailer" "$TARGET/.conductor/config.md" "trailer is written to config.md"
+start --env CONDUCTOR_ATTRIBUTION=trailr --
+assert_eq "a typo: exit 1" "$RC" "1"
+has "CONDUCTOR_ATTRIBUTION" "$TMP/err" "the message names the variable"
+has "trailr" "$TMP/err" "and the value"
+assert_eq "and nothing was started" "$(grep -c '^new-session' "$TMUX_LOG" || true)" "0"
+assert_eq "and no config.md was written" "$([[ -f "$TARGET/.conductor/config.md" ]] && echo yes || echo no)" "no"
+start --env CONDUCTOR_ATTRIBUTION= --
+assert_eq "empty means the default: exit 0" "$RC" "0"
+has "^attribution: trailer" "$TARGET/.conductor/config.md" "and trailer is written"
 
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi

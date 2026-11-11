@@ -280,3 +280,9 @@ adapter_dispatch() {
   dispatch_finish claude-code "$answer" || return 1
   return 0
 }
+
+# How this adapter names itself in a commit's Co-Authored-By trailer (#130,
+# docs/commit-attribution.md): the tool's name and its URL, tab-separated, on one line.
+adapter_attribution() {
+  printf '%s\t%s\n' 'Claude Code' 'https://claude.com/claude-code'
+}
