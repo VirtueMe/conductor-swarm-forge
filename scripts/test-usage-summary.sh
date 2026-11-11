@@ -69,6 +69,37 @@ has '^0002  *2  *\$0.0000  *\$0.0000  *2' "task 0002: unknown, twice"
 first="$(grep -E '^conductor/' "$OUT" | head -1 | cut -d' ' -f1)"
 assert_eq "the most expensive handler comes first" "$first" "conductor/reconcile"
 
+section "3b · A task id is only unique within a run (#213)"
+# usage-combine.sh puts many runs in one file, each line with a "run" field, and every run numbers its
+# tasks from 0001. By task they are told apart by run when the file holds more than one run.
+CMB="$TMP/combined.jsonl"
+{
+  line 2026-11-01T10:00:00Z startup ""   conductor/reconcile            1 finished 0 claude-code 0.0100 1 1 0 0 reported | jq -c '. + {run: "runA"}'
+  line 2026-11-01T10:05:00Z 0001/signal-1.md 0001 conductor/on-signal-complete 1 finished 0 claude-code 0.1000 8 300 0 0 reported | jq -c '. + {run: "runA"}'
+  line 2026-11-01T10:06:00Z 0002/signal-1.md 0002 conductor/on-signal-complete 1 finished 0 claude-code 0.2000 8 300 0 0 reported | jq -c '. + {run: "runA"}'
+  line 2026-11-02T10:00:00Z startup ""   conductor/reconcile            1 finished 0 claude-code 0.0100 1 1 0 0 reported | jq -c '. + {run: "runB"}'
+  line 2026-11-02T10:05:00Z 0001/signal-1.md 0001 conductor/on-signal-complete 1 finished 0 claude-code 0.3000 8 300 0 0 reported | jq -c '. + {run: "runB"}'
+} > "$CMB"
+run --file "$CMB" --by task
+assert_eq "exit 0" "$RC" "0"
+has '^runA/0001  *1  *\$0.1000' "task 0001 of the first run has its own row"
+has '^runB/0001  *1  *\$0.3000' "and task 0001 of the second run has its own"
+has '^runA/0002  *1  *\$0.2000' "a task only one run has is labelled with its run too"
+lacks '^0001 ' "no row merges them under the bare id"
+has '^(no task)  *2 ' "attempts with no task are not tasks: they stay one row"
+run --file "$CMB" --by task --since 2026-11-02T00:00:00Z
+has '^0001  *1  *\$0.3000' "with one run in range the label is the plain id again"
+lacks 'runB/0001' "and no run is shown"
+{ grep '"runA"' "$CMB"; } > "$TMP/one-run.jsonl"
+run --file "$TMP/one-run.jsonl" --by task
+has '^0001  *1  *\$0.1000' "a file with a single run prints plain ids"
+lacks 'runA/' "and no run"
+# A line with no run in a file of several keeps its bare id: a row of its own, not folded into a run's.
+{ cat "$CMB"; line 2026-11-03T10:00:00Z 0001/signal-1.md 0001 conductor/on-signal-complete 1 finished 0 claude-code 0.4000 8 300 0 0 reported; } > "$TMP/mixed.jsonl"
+run --file "$TMP/mixed.jsonl" --by task
+has '^0001  *1  *\$0.4000' "an attempt with no run keeps the bare id"
+has '^runA/0001  *1  *\$0.1000' "and the runs' rows are unchanged"
+
 section "4 · --since"
 run --file "$LOG" --since 2026-11-01T11
 has '(2 attempts, 2 events)' "only the later attempts"
