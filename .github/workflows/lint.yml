@@ -118,6 +118,9 @@ jobs:
       - name: test-base-branch
         run: bash scripts/test-base-branch.sh
 
+      - name: test-attribution-rebase
+        run: bash scripts/test-attribution-rebase.sh
+
       - name: test-wf-read
         run: bash scripts/test-wf-read.sh
 
