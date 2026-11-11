@@ -1,6 +1,6 @@
 # Commit attribution
 
-Status: **in progress**, for #130. The rebase-and-stamp script and the resolver are built; the merger skill runs it; the claude-code adapter flag is not built. It unblocks #137.
+Status: **in progress**, for #130. The rebase-and-stamp script and the resolver are built; the merger skill runs it; the claude-code launch switches Claude's own attribution off. It unblocks #137.
 
 ## The problem
 
@@ -110,13 +110,45 @@ have given, with a warning on stderr: the stamp is metadata, and a merge must no
 unstamped, with the warning as the only sign; this was chosen over stopping the merge. A
 `attribution:` value that is neither `trailer` nor `none` is an error, so a typo does not pass for off.
 
-## Claude Code is launched with its attribution off
+## Claude Code is launched with its attribution off (built)
 
 Because the stamp only adds missing lines, a commit that carries Claude Code's own
-`Co-Authored-By: <model> <noreply@anthropic.com>` would end up with that line and ours. So when the
-setting is `trailer`, the claude-code adapter adds
-`--settings '{"attribution":{"commit":"","pr":""}}'` to its launch, in the place where it already
-passes `--settings`. This is part of the decision, not an option. With `none` it changes nothing.
+`Co-Authored-By: <model> <noreply@anthropic.com>` would end up with that line and ours. So an
+interactive claude-code window (`adapter_launch`) is started with Claude's own attribution off,
+`{"attribution":{"commit":"","pr":""}}`, whenever `attribution` is not `none`. This is part of the
+decision, not an option.
+
+It goes in the same `--settings` that already carries the project's allow list. Whether a repeated
+`--settings` merges is not documented, so there is one. With the setting on, the adapter reads the
+project's `.claude/settings.json`, puts the attribution keys over it, and writes the result to
+`$CONDUCTOR_DIR/claude-settings.json`, readable only by its owner. That path is what `--settings`
+gets. With `none` the project's own file is passed by path, as before, and Claude's attribution is
+left alone.
+
+**Why a file and not inline JSON.** Inline would have worked and kept the adapter function free of
+side effects. But a project's settings can hold `env` entries, an `apiKeyHelper` and hook commands, and
+inline they would sit on the command line, where `ps` and the tmux window's command show them to every
+local user. A path shows nothing. The cost is that the function that builds the flags writes a file; it
+writes beside the target and renames, so two windows starting together never read half of it.
+
+**Where it is written, and where it is not.** Not into the project's own `.claude/settings.json`, which
+is the user's: it would also switch attribution off in their own Claude Code sessions in that
+repository. The merged file lives in the swarm's state dir and is rewritten at each launch.
+
+**When it falls back.** If the project's file is not a JSON object, or the merged file cannot be written,
+the project's file is passed as it is, with a warning on stderr, and attribution is then not turned
+off. The launch goes on: a settings problem must not stop a worker.
+
+**What it does not cover.**
+
+- The headless dispatch (`claude -p`, the conductor's handlers): it does not write the task's commits.
+- Managed settings. An organisation's managed `attribution` outranks `--settings`, so Claude's own line
+  would still be added and the commit would carry both.
+- The windows that do not commit. See Open.
+
+Not verified against a real `claude`: that an empty `commit` and `pr` really produce no trailer. The
+docs the check was made against did not say, and the test stubs `claude`. A live commit in a throwaway
+repository would settle it.
 
 ## Tests
 
@@ -132,5 +164,9 @@ of the suite:
 
 ## Open
 
+- Which windows commit. `adapter_launch` serves every interactive window (coder, architect, validator,
+  reviewer), so Claude's own attribution is off for all of them, while the stamp covers only the task's
+  commits through the merger's rebase. A commit made by another role outside that path would carry
+  neither. If any role does that, the launch has to learn the role, and the switch be limited to the coder.
 - Whether interactive Codex adds a trailer of its own. If it does, the stamp would add ours beside it
   and the result has two lines. Test an interactive session before enabling `trailer` for Codex.

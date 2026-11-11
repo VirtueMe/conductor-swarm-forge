@@ -107,8 +107,20 @@ EOF
 # passed with --settings, so a window in a worktree gets the allow list without depending on whether
 # claude finds the project root's file from there. Kept apart from adapter_params_to_flags on purpose:
 # that one also feeds the headless dispatch, which has its own fixed permissions.
+#
+# Claude's own commit and PR attribution is switched off in the same --settings (#130): the conductor
+# stamps the task's commits itself (docs/commit-attribution.md), and Claude's own Co-Authored-By would sit
+# beside ours. It is on unless config.md has `attribution: none`, and absent means trailer. Whether a
+# repeated --settings merges is not documented, so there is one: with the setting on, the project's file
+# is merged with the attribution keys over it and written to $state_dir/claude-settings.json, readable
+# only by its owner, and that path is passed. It is a file and not inline JSON because the project's
+# settings can hold env entries and helpers, which do not belong on a command line `ps` shows. With `none`
+# the project's file is passed by path as before and Claude's attribution is left alone. If the project's
+# file is not a JSON object, or the merged file cannot be written, the project's file is passed as it is
+# with a warning, and attribution is then not turned off. The headless dispatch is not covered: it runs the
+# conductor's handlers, which do not write the task's commits.
 # Prints the flags on one line; exits non-zero with a message on a mode that is not allowed.
-adapter_permission_flags() { # <params json> <root dir>
+adapter_permission_flags() { # <params json> <root dir> <state dir>
   local mode flags
   mode="$(python3 - "${1:-}" << 'PYEOF'
 import json, sys
@@ -127,7 +139,47 @@ PYEOF
     mode=acceptEdits
   fi
   flags="--permission-mode $mode"
-  [[ -f "${2:-}/.claude/settings.json" ]] && flags="$flags --settings '$2/.claude/settings.json'"
+  local project_settings="${2:-}/.claude/settings.json" attribution=""
+  if [[ -f "${3:-}/config.md" ]]; then
+    attribution="$(sed -n 's/^attribution:[[:space:]]*//p' "$3/config.md" | sed -n '1s/[[:space:]]*$//p')"
+  fi
+  if [[ "${attribution:-trailer}" == none ]]; then
+    [[ -f "$project_settings" ]] && flags="$flags --settings '$project_settings'"
+  else
+    flags="$flags $(python3 - "$project_settings" "${3:-}" << 'PYEOF'
+import json, os, sys, tempfile
+path, state_dir = sys.argv[1], sys.argv[2]
+def as_is(why):
+    sys.stderr.write(f"claude-code: {why}; passing the project's settings as they are, attribution is not turned off\n")
+    if os.path.isfile(path):
+        print(f"--settings '{path}'")
+    sys.exit(0)
+settings = {}
+if os.path.isfile(path):
+    try:
+        with open(path) as f:
+            settings = json.load(f)
+        if not isinstance(settings, dict):
+            raise ValueError("not a JSON object")
+    except (ValueError, OSError) as e:
+        as_is(f"{path} is not usable settings JSON ({e})")
+settings["attribution"] = {"commit": "", "pr": ""}
+target = os.path.join(state_dir, "claude-settings.json")
+try:
+    os.makedirs(state_dir, exist_ok=True)
+    # Written beside the target and moved into place, so two windows starting together never read half a file.
+    fd, tmp = tempfile.mkstemp(dir=state_dir, prefix=".claude-settings.")
+    with os.fdopen(fd, "w") as f:
+        json.dump(settings, f, separators=(",", ":"))
+        f.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, target)
+except OSError as e:
+    as_is(f"cannot write {target} ({e})")
+print(f"--settings '{target}'")
+PYEOF
+)"
+  fi
   printf '%s\n' "$flags"
 }
 
@@ -148,12 +200,12 @@ adapter_launch() {
   local briefing="$root_dir/$worktree/AGENTS.md"
   local param_flags permission_flags
   param_flags=$(adapter_params_to_flags "$params_json") || return 2
-  permission_flags=$(adapter_permission_flags "$params_json" "$root_dir") || return 2
   # Every script a worker calls resolves the project's state through CONDUCTOR_DIR, and the window starts
   # in its own worktree, where the default (a relative .conductor) is a different, empty place: the
   # architect's cards once landed there and the loop saw nothing (#181). So the window gets the absolute one.
   local state_dir="${CONDUCTOR_DIR:-.conductor}"
   [[ "$state_dir" == /* ]] || state_dir="$root_dir/$state_dir"
+  permission_flags=$(adapter_permission_flags "$params_json" "$root_dir" "$state_dir") || return 2
   local cmd
   cmd="cd '$root_dir/$worktree' && export CONDUCTOR_DIR=$(printf '%q' "$state_dir") && claude \
     ${permission_flags} \

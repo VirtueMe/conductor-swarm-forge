@@ -87,13 +87,72 @@ for m in bypassPermissions bananas; do
   assert_eq "$m: and the reason is on stderr" "$(grep -c 'permission_mode' "$TMP/launch.err" || true)" "1"
 done
 
+# The values of every --settings in a launch command, one per line: JSON as is, a path as is.
+settings_args() { python3 - "$1" << 'PYEOF'
+import shlex, sys
+t = shlex.split(sys.argv[1])
+for i, w in enumerate(t):
+    if w == "--settings" and i + 1 < len(t):
+        print(t[i + 1])
+PYEOF
+}
+set_attribution() { mkdir -p "$PROJECT/.conductor"; printf -- '---\nlang: bash\nattribution: %s\n---\n' "$1" > "$PROJECT/.conductor/config.md"; }
+OFF='{"commit":"","pr":""}'
+
 section "4 · The project's allow list reaches every window"
 printf '{"permissions":{"allow":["Bash(git *)"]}}\n' > "$PROJECT/.claude/settings.json"
+set_attribution none
 CMD="$(launch '{}')"
-case "$CMD" in *"--settings '$PROJECT/.claude/settings.json'"*) ok "passed with --settings, so a worker in a worktree does not depend on finding it" ;; *) fail "passed with --settings ($CMD)" ;; esac
+case "$CMD" in *"--settings '$PROJECT/.claude/settings.json'"*) ok "attribution none: passed with --settings, so a worker in a worktree does not depend on finding it" ;; *) fail "attribution none: passed with --settings ($CMD)" ;; esac
 rm -f "$PROJECT/.claude/settings.json"
 CMD="$(launch '{}')"
-case "$CMD" in *"--settings"*) fail "no project settings file: no --settings" ;; *) ok "no project settings file: no --settings" ;; esac
+case "$CMD" in *"--settings"*) fail "attribution none, no project settings file: no --settings" ;; *) ok "attribution none, no project settings file: no --settings" ;; esac
+
+section "4b · With attribution on, the swarm's windows do not add their own trailer (#130)"
+# claude-code adds Co-Authored-By to its commits. The conductor stamps the task's commits itself (docs/commit-attribution.md),
+# so the window is launched with Claude's own attribution off, in the same single --settings that carries the allow list. Whether
+# repeated --settings flags merge is not documented, so there is one, and the project's file is merged into it. The merge is
+# written to a file in the state dir and passed by path: the project's settings can hold env entries and helpers, which do not
+# belong on a command line that ps shows.
+MERGED="$PROJECT/.conductor/claude-settings.json"
+printf '{"permissions":{"allow":["Bash(git *)","Bash(echo '"'"'x'"'"')"]},"attribution":{"commit":"custom"}}\n' > "$PROJECT/.claude/settings.json"
+rm -f "$PROJECT/.conductor/config.md" "$MERGED"
+CMD="$(launch '{}')"
+ARGS="$(settings_args "$CMD")"
+assert_eq "no attribution key in config.md means trailer: one --settings" "$(printf '%s\n' "$ARGS" | grep -c .)" "1"
+assert_eq "it is the merged file in the state dir" "$ARGS" "$MERGED"
+case "$CMD" in *"Bash(git"*|*'"permissions"'*) fail "and none of the settings is on the command line" ;; *) ok "and none of the settings is on the command line" ;; esac
+assert_eq "the allow list is in the file, quotes and all" "$(jq -c '.permissions.allow' "$MERGED")" '["Bash(git *)","Bash(echo '"'"'x'"'"')"]'
+assert_eq "Claude's own attribution is off in it, over the project's own" "$(jq -c '.attribution' "$MERGED")" "$OFF"
+assert_eq "only its owner can read it" "$(stat -c %a "$MERGED")" "600"
+assert_eq "the project's own file is untouched" "$(jq -c '.attribution' "$PROJECT/.claude/settings.json")" '{"commit":"custom"}'
+set_attribution trailer
+rm -f "$MERGED"
+ARGS="$(settings_args "$(launch '{}')")"
+assert_eq "attribution: trailer: the same file" "$ARGS" "$MERGED"
+assert_eq "and the same attribution" "$(jq -c '.attribution' "$MERGED")" "$OFF"
+launch '{}' > /dev/null
+assert_eq "a second launch rewrites it the same" "$(jq -c '.attribution' "$MERGED")" "$OFF"
+rm -f "$PROJECT/.claude/settings.json" "$MERGED"
+ARGS="$(settings_args "$(launch '{}')")"
+assert_eq "trailer, no project file: one --settings, the file" "$ARGS" "$MERGED"
+assert_eq "carrying only the attribution" "$(jq -c . "$MERGED")" "{\"attribution\":$OFF}"
+rm -f "$MERGED"
+set_attribution none
+CMD="$(launch '{}')"
+case "$CMD" in *"--settings"*) fail "attribution none, no project file: Claude's own attribution is left alone" ;; *) ok "attribution none, no project file: Claude's own attribution is left alone" ;; esac
+assert_eq "and no merged file is written" "$([[ -e "$MERGED" ]] && echo yes || echo no)" "no"
+set_attribution trailer
+echo '{ not json' > "$PROJECT/.claude/settings.json"
+CMD="$(launch '{}')"
+case "$CMD" in *"--settings '$PROJECT/.claude/settings.json'"*) ok "a project file that is not JSON is passed as it is" ;; *) fail "a project file that is not JSON is passed as it is ($CMD)" ;; esac
+assert_eq "and the launch says attribution is not turned off" "$(grep -c 'attribution is not turned off' "$TMP/launch.err" || true)" "1"
+printf '{"permissions":{"allow":["Bash(git *)"]}}\n' > "$PROJECT/.claude/settings.json"
+rm -rf "$PROJECT/.conductor"; : > "$PROJECT/.conductor"      # a file where the state dir should be: nothing can be written there
+CMD="$(launch '{}')"
+case "$CMD" in *"--settings '$PROJECT/.claude/settings.json'"*) ok "a state dir that cannot be written: the project's file is passed as it is" ;; *) fail "a state dir that cannot be written ($CMD)" ;; esac
+assert_eq "and the launch says attribution is not turned off" "$(grep -c 'attribution is not turned off' "$TMP/launch.err" || true)" "1"
+rm -f "$PROJECT/.conductor" "$PROJECT/.claude/settings.json"; mkdir -p "$PROJECT/.conductor"
 
 section "5 · None of it reaches the headless dispatch"
 FLAGS="$(adapter_params_to_flags '{"model":"m","permission_mode":"auto"}')"
