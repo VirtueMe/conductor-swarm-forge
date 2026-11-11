@@ -124,6 +124,9 @@ jobs:
       - name: test-attribution-trailer
         run: bash scripts/test-attribution-trailer.sh
 
+      - name: test-merger-skill
+        run: bash scripts/test-merger-skill.sh
+
       - name: test-wf-read
         run: bash scripts/test-wf-read.sh
 
