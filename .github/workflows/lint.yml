@@ -124,6 +124,9 @@ jobs:
       - name: test-attribution-trailer
         run: bash scripts/test-attribution-trailer.sh
 
+      - name: test-claude-settings-merge
+        run: bash scripts/test-claude-settings-merge.sh
+
       - name: test-merger-skill
         run: bash scripts/test-merger-skill.sh
 

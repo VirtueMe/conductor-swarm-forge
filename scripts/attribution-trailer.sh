@@ -33,17 +33,11 @@ command -v jq > /dev/null 2>&1 || { echo "attribution-trailer.sh needs jq" >&2; 
 
 warn() { echo "attribution-trailer: $*" >&2; }
 
-# The first "attribution:" line of config.md, as config_field reads a key (handler-steps.sh).
-mode=""
-if [[ -f "$CONDUCTOR_DIR/config.md" ]]; then
-  mode="$(sed -n 's/^attribution:[[:space:]]*//p' "$CONDUCTOR_DIR/config.md" | sed -n '1s/[[:space:]]*$//p')"
-fi
-mode="${mode:-trailer}"
-case "$mode" in
-  none) exit 0 ;;
-  trailer) ;;
-  *) echo "attribution-trailer: attribution: '$mode' in config.md is neither trailer nor none" >&2; exit 1 ;;
-esac
+# shellcheck source=scripts/attribution-mode.sh
+source "$SCRIPTS_DIR/attribution-mode.sh"
+mode="$(attribution_mode "$CONDUCTOR_DIR")"
+attribution_valid "$mode" || { echo "attribution-trailer: attribution: '$mode' in config.md is not one of: $ATTRIBUTION_MODES" >&2; exit 1; }
+[[ "$mode" == none ]] && exit 0
 
 WORKFORCE="$CONDUCTOR_DIR/workforce.json"
 if [[ ! -f "$WORKFORCE" ]]; then warn "no $WORKFORCE: the task's commits get no attribution"; exit 0; fi
