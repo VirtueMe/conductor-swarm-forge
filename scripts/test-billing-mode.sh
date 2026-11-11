@@ -183,5 +183,44 @@ assert_eq "without --json a bad declaration is still an error" "$RC" "1"
 run pool nonesuch --json
 assert_eq "an adapter it does not know is an error with --json too" "$RC" "1"
 
+section "10 · A Pi message's pool: its provider and that provider's sign-in type"
+export PI_AUTH_FILE="$TMP/pi-auth.json"
+pi_login() { if [[ "$1" == - ]]; then rm -f "$PI_AUTH_FILE"; else printf '%s\n' "$1" > "$PI_AUTH_FILE"; fi; }
+PI_LOGINS="{\"openai-codex\":{\"type\":\"oauth\",\"access\":\"$TOKEN\",\"refresh\":\"$TOKEN\"},\"openai\":{\"type\":\"api_key\",\"key\":\"$SECRET\"},\"anthropic\":{\"type\":\"api_key\",\"key\":\"$SECRET\"}}"
+pi_login "$PI_LOGINS"
+run pi-pool openai-codex
+assert_eq "openai-codex on oauth: subscription:openai (the ChatGPT plan)" "$(out)" "subscription:openai"
+assert_eq "exit 0" "$RC" "0"
+run pi-pool openai
+assert_eq "openai on an api_key: api:openai" "$(out)" "api:openai"
+run pi-pool anthropic
+assert_eq "anthropic on an api_key: api:anthropic" "$(out)" "api:anthropic"
+assert_eq "no key or token reaches the output" "$(leaked)" "0"
+run pi-pool google
+assert_eq "a provider with no entry: unknown" "$(out)" "unknown"
+run pi-pool ""
+assert_eq "no provider named: unknown" "$(out)" "unknown"
+pi_login "{\"openai-codex\":{\"type\":\"api_key\",\"key\":\"$SECRET\"},\"openai\":{\"type\":\"oauth\",\"access\":\"$TOKEN\"},\"anthropic\":{\"type\":\"oauth\",\"access\":\"$TOKEN\"}}"
+run pi-pool openai-codex
+assert_eq "openai-codex on a key, a pairing not seen: unknown, not a guess" "$(out)" "unknown"
+run pi-pool openai
+assert_eq "openai on oauth, not seen either: unknown" "$(out)" "unknown"
+run pi-pool anthropic
+assert_eq "anthropic on oauth: unknown (a Claude login is not what pays for a Pi run, #156)" "$(out)" "unknown"
+pi_login "{\"openai-codex\":{\"type\":\"magic\"}}"
+run pi-pool openai-codex
+assert_eq "a type it does not know: unknown" "$(out)" "unknown"
+pi_login "not json"
+run pi-pool openai-codex
+assert_eq "not JSON: unknown, exit 0" "$(out) $RC" "unknown 0"
+pi_login "[]"
+run pi-pool openai-codex
+assert_eq "JSON of another shape: unknown" "$(out)" "unknown"
+pi_login -
+run pi-pool openai-codex
+assert_eq "no file: unknown, exit 0" "$(out) $RC" "unknown 0"
+run pi-pool
+assert_eq "no provider argument: usage, exit 1" "$RC" "1"
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All billing-mode checks passed."; else echo "$FAILS check(s) failed." >&2; exit 1; fi

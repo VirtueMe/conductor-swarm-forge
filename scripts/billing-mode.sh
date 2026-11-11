@@ -4,8 +4,10 @@ set -euo pipefail
 #
 # Usage: billing-mode.sh detect <adapter>
 #        billing-mode.sh pool <adapter> [--declared <pool>] [--json]
+#        billing-mode.sh pi-pool <provider>
 # Env:   ANTHROPIC_API_KEY, CLAUDE_CREDENTIALS_FILE (default ~/.claude/.credentials.json)
 #        CODEX_HOME (default ~/.codex), CODEX_AUTH_FILE (default $CODEX_HOME/auth.json)
+#        PI_AUTH_FILE (default ~/.pi/agent/auth.json)
 #
 # detect  prints api, subscription or unknown, from the harness's own sign-in:
 #           claude-code  CLAUDE_CODE_USE_BEDROCK, _VERTEX or _FOUNDRY set (not empty, 0 or false), or
@@ -34,6 +36,14 @@ set -euo pipefail
 #         detected mode overrode a different declared pool. rejected is true when the declared pool
 #         was not a pool, or not this adapter's vendor's; the declaration is then set aside, the exit is
 #         0, and the sign-in settles the pool as if nothing had been declared. No note goes to stderr.
+# pi-pool prints the pool of one Pi message, from its provider (the log names it on every assistant
+#         message) and the `type` Pi's auth.json holds for that provider; the log never names the
+#         sign-in. openai-codex with oauth is subscription:openai (the ChatGPT plan), openai with
+#         api_key is api:openai, anthropic with api_key is api:anthropic. Every other pairing, a
+#         provider with no entry, a type it does not know, a missing or unreadable file is "unknown",
+#         exit 0: a pairing nobody has seen is not guessed, and an Anthropic login is not what pays
+#         for a Pi run (#156). Only the type is read; no key or token reaches the output.
+#         auth.json is the best guess, not proof: a runtime --api-key outranks it and leaves no trace.
 
 POOLS="api:anthropic subscription:anthropic api:openai subscription:openai"
 
@@ -81,6 +91,20 @@ detect() { # <adapter>
     codex) detect_codex ;;
     pi) echo unknown ;;
     *) die "unknown adapter: $1" ;;
+  esac
+}
+
+# pi_pool <provider>: see the header. The provider is a name from Pi's log, never from a prompt.
+pi_pool() {
+  local provider="${1:-}" file="${PI_AUTH_FILE:-$HOME/.pi/agent/auth.json}" type=""
+  if [[ -n "$provider" && -r "$file" ]]; then
+    type="$(jq -r --arg p "$provider" 'if type == "object" and (.[$p] | type) == "object" and (.[$p].type | type) == "string" then .[$p].type else empty end' "$file" 2> /dev/null)" || type=""
+  fi
+  case "$provider:$type" in
+    openai-codex:oauth) echo subscription:openai ;;
+    openai:api_key) echo api:openai ;;
+    anthropic:api_key) echo api:anthropic ;;
+    *) echo unknown ;;
   esac
 }
 
@@ -140,6 +164,9 @@ main() {
         esac
       done
       pool "$adapter" "$declared" "$json" ;;
+    pi-pool)
+      [[ $# -eq 2 ]] || die "Usage: billing-mode.sh pi-pool <provider>"
+      pi_pool "$2" ;;
     -h|--help) sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
     *) die "Usage: billing-mode.sh detect <adapter> | pool <adapter> [--declared <pool>] [--json]" ;;
   esac
