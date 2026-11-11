@@ -1,6 +1,6 @@
 # Commit attribution
 
-Status: **draft**, for #130. Not implemented. It unblocks #137.
+Status: **in progress**, for #130. The rebase-and-stamp script is built; the rest is not. It unblocks #137.
 
 ## The problem
 
@@ -28,8 +28,8 @@ and before anything leaves the worktree, so the result is the same whatever the 
 
 One setting in the workforce, `attribution`:
 
-- `none` (the default until decided): the conductor adds nothing.
-- `trailer`: the conductor adds the trailers below to every commit of the task.
+- `trailer` (the default): the conductor adds the trailers below to every commit of the task.
+- `none`: the conductor adds nothing.
 
 There is no mode that leaves each tool's own attribution on: its output differs per adapter and
 cannot be enforced.
@@ -59,15 +59,23 @@ Why here and not earlier: a handler on `signal-complete` runs before review and 
 which add more commits, and a trailer added there would miss them. The rebase gives one rewrite,
 every commit covered, and no force-push.
 
-**The rebase and the stamp are one script**, `scripts/attribution-rebase.sh "$BASE_SHA"`. The merger
-skill runs that one line in place of `git rebase "$BASE_SHA"`. The policy is then in code: a test
-drives the script directly, and a model cannot run the rebase and skip the stamp. With the setting
-at `none` the script is the plain rebase.
+**The rebase and the stamp are one command, in two layers.**
+
+- The core, `scripts/attribution-rebase.sh <base-sha> [<trailer-line>...]` (built): rebases onto
+  `<base-sha>` and stamps each replayed commit with the given lines. With no lines it is the plain
+  rebase. It knows nothing about settings, adapters or models.
+- The resolver (not yet built): reads the setting, the task's adapter and its model, and prints the
+  lines for that task, or nothing for `none`. The merger skill runs the two as one command, in
+  place of `git rebase "$BASE_SHA"`.
+
+The policy is then in code: a test drives each layer directly, and a model cannot run the rebase and
+skip the stamp, because it never assembles the lines.
 
 ### The stamp skips what is already there
 
 The merger retries the rebase up to three times, so the stamp must be idempotent. It is by exact
-line: for each trailer, the stamp reads the commit's trailers (`git interpret-trailers --parse`) and
+line (and it adds with `--no-verify`, so a project's commit-msg hook or signing cannot fail the
+rebase and be mistaken for a conflict): for each trailer, the stamp reads the commit's trailers (`git interpret-trailers --parse`) and
 adds the line only if that exact line is missing. It never removes or rewrites a trailer. A human's
 `Co-Authored-By` is kept, and a second run changes nothing.
 
@@ -103,7 +111,6 @@ of the suite:
 
 ## Open
 
-- The default: `none` or `trailer`. No swarm-built repo exists yet to compare with.
 - Whether interactive Codex adds a trailer of its own. If it does, the stamp would add ours beside it
   and the result has two lines. Test an interactive session before enabling `trailer` for Codex.
 - The URL per adapter.
