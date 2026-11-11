@@ -85,6 +85,20 @@ worktree and with the same window name. Filter by start time (the spawn time, be
   with its own login, so the conductor never handles the token. It needs the Codex binary installed
   and signed in. The protocol is marked experimental (`codex app-server generate-json-schema` writes
   it); `account/usage/read` (token usage) exists and was not tried.
+  **Used since #225:** `codex-usage.sh` asks the app-server when the log cannot give a window (no
+  session at all, or the window reset since the last event) and Codex is installed. Its windows
+  replace the log's; `source` is `codex app-server` and `snapshot_at` the time of the read. A log
+  with both windows known is not replaced and nothing is started. `CODEX_BIN` names the binary,
+  `CODEX_APP_SERVER=off` turns it off, `CODEX_APP_SERVER_TIMEOUT` (15 s) bounds the wait. A sessions
+  directory given by `--sessions` or `CODEX_SESSIONS_DIR` never starts the codex on `PATH`, only one
+  named in `CODEX_BIN`: that rule is there so a test or a replay never wakes a real Codex. A real
+  install with a custom `CODEX_SESSIONS_DIR` must set `CODEX_BIN` (for example `CODEX_BIN=codex`) to
+  get the live reading. The version comes from `initialize`'s `userAgent`, and the exchange runs on
+  named pipes, so it needs no GNU `date` and no bash 4. Tested with a stand-in that speaks the protocol, and
+  against the schema from `codex app-server generate-json-schema` (0.166.0); not run end to end
+  against the real app-server from this script. **Not measured:** how long a real read takes. The
+  reader runs at every worker spawn and end, so with a stale log each one now starts a Codex
+  process; if that is slow, a read at most every few minutes is the next step.
 - **Killed.** The file is appended as events happen, so SIGKILL left it as it was and every
   completed turn is in it. Not tested: a kill in the middle of a turn, where that turn's counts
   are probably lost.
@@ -276,7 +290,8 @@ What the reader settled, and what it assumed:
     Codex. Reading the plan's usage with Pi's token directly is not done: nothing found says a
     third-party tool may reuse a ChatGPT OAuth token for it, and one third-party source quotes an
     anti-circumvention clause in OpenAI's terms (not confirmed on OpenAI's own page). Treat it as not
-    allowed until OpenAI says otherwise. A Pi-only swarm has no fresh window reading.
+    allowed until OpenAI says otherwise. A machine with only Pi, and no Codex binary, has no fresh window reading: both windows are
+    unknown, and the reason says there is no log and no binary to ask (#225).
 - **The window is the account's.** A person using Claude by hand moves it during a run too.
 
 ## Findings that change the price table

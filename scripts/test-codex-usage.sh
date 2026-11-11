@@ -132,6 +132,107 @@ assert_eq "a --now that is not a number: exit 1" "$RC" "1"
 RC=0; "$READER" --help > /dev/null 2>&1 || RC=$?
 assert_eq "--help: exit 0" "$RC" "0"
 
+section "9 · The app-server fills a window the log cannot give"
+# A stand-in for `codex`: --version, and `app-server`, which answers initialize and
+# account/rateLimits/read on stdio the way the real one does (no jsonrpc field, ids echoed). What it
+# was asked is written to $STUB_LOG, one method per line. The real Codex is never started.
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --version) echo "codex-cli 0.166.0"; exit 0 ;;
+  app-server) ;;
+  *) exit 2 ;;
+esac
+while IFS= read -r line; do
+  method="$(jq -r '.method // empty' <<< "$line")"; id="$(jq -r '.id // empty' <<< "$line")"
+  echo "$method" >> "$STUB_LOG"
+  case "$method" in
+    initialize) jq -nc --argjson id "$id" '{id: $id, result: {userAgent: "codex_cli_rs/0.166.0 (stub)"}}' ;;
+    account/rateLimits/read)
+      case "${STUB_MODE:-ok}" in
+        ok)      jq -nc --argjson id "$id" --slurpfile r "$STUB_RESULT" '{id: $id, result: $r[0]}' ;;
+        error)   jq -nc --argjson id "$id" '{id: $id, error: {code: -32000, message: "not signed in"}}' ;;
+        garbage) echo "this is not json"; exit 0 ;;
+        hang)    sleep 30 ;;
+      esac ;;
+  esac
+done
+STUB
+chmod +x "$TMP/bin/codex"
+export STUB_LOG="$TMP/stub.log" STUB_RESULT="$TMP/stub-result.json"
+cat > "$STUB_RESULT" <<'JSON'
+{"rateLimits":{"limitId":"codex","planType":"plus","rateLimitReachedType":null,
+ "primary":{"usedPercent":7,"windowDurationMins":300,"resetsAt":1793800000},
+ "secondary":{"usedPercent":12,"windowDurationMins":10080,"resetsAt":1794059735}},
+ "rateLimitsByLimitId":null}
+JSON
+live() { # <sessions-dir> [env...]: a reading with the stub as the Codex binary
+  local dir="$1"; shift
+  : > "$STUB_LOG"
+  RC=0; OUT="$(env CODEX_BIN="$TMP/bin/codex" CODEX_APP_SERVER_TIMEOUT=5 "$@" "$READER" --sessions "$dir" --now "$NOW" 2> "$TMP/err")" || RC=$?
+}
+EMPTY="$TMP/no-sessions"; mkdir -p "$EMPTY"
+
+live "$EMPTY"
+assert_eq "no session log at all: the app-server's windows are read" "$(j '[.five_hour.state, .weekly.state] | join(" ")')" "known known"
+assert_eq "the percentages it gave" "$(j '[.five_hour.used_percent, .weekly.used_percent] | map(tostring) | join(" ")')" "7 12"
+assert_eq "when each resets, and so when each opened" "$(j '[.five_hour.resets_at, .five_hour.opened_at, .weekly.resets_at] | map(tostring) | join(" ")')" "1793800000 1793782000 1794059735"
+assert_eq "the plan and the limit" "$(j '[.plan_type, .limit_id] | join(" ")')" "plus codex"
+assert_eq "the source says where it came from" "$(j .source)" "codex app-server"
+assert_eq "the Codex version is pinned in the reading" "$(j .codex_version)" "0.166.0"
+assert_eq "the snapshot is the time of the read" "$(j .snapshot_at)" "2026-11-04T11:00:00Z"
+assert_eq "it was asked to initialize, said initialized, then read the limits" "$(tr '\n' ' ' < "$STUB_LOG")" "initialize initialized account/rateLimits/read "
+assert_eq "exit 0" "$RC" "0"
+
+live "$(root "$FX/past-reset.jsonl")"
+assert_eq "a log whose five-hour window has reset: the live reading replaces it" "$(j '[.five_hour.state, .five_hour.used_percent, .source] | map(tostring) | join(" ")')" "known 7 codex app-server"
+
+live "$(root "$FX/normal.jsonl")"
+assert_eq "a log with both windows known: the app-server is not asked" "$(wc -c < "$STUB_LOG" | tr -d ' ')" "0"
+assert_eq "and the log's reading stands" "$(j '.source | endswith("rollout-1.jsonl")')" "true"
+
+cat > "$STUB_RESULT" <<'JSON'
+{"rateLimits":{"limitId":"codex","planType":"plus","primary":{"usedPercent":7,"windowDurationMins":300,"resetsAt":1793780000},
+ "secondary":{"usedPercent":12,"windowDurationMins":10080,"resetsAt":1794059735}}}
+JSON
+live "$EMPTY"
+assert_eq "a live window whose reset is in the past is still unknown" "$(j '.five_hour | [.state, (.used_percent | tostring)] | join(" ")')" "unknown null"
+assert_eq "the other live window is read" "$(j .weekly.state)" "known"
+cat > "$STUB_RESULT" <<'JSON'
+{"rateLimits":{"primary":{"usedPercent":7,"windowDurationMins":300,"resetsAt":1793800000},"secondary":null}}
+JSON
+live "$EMPTY"
+assert_eq "a live reading with no weekly window: that window is unknown, the other known" "$(j '[.five_hour.state, .weekly.state] | join(" ")')" "known unknown"
+assert_eq "and says why" "$(j .weekly.reason)" "no 10080-minute window in the reading"
+
+live "$EMPTY" CODEX_BIN="$TMP/does-not-exist"
+assert_eq "no codex binary: unknown, never a guess" "$(j '[.five_hour.state, .weekly.state] | join(" ")')" "unknown unknown"
+case "$(j .five_hour.reason)" in *"no rate_limits in any Codex session"*"no codex binary"*) ok "and the reason says both: no log, and no binary to ask" ;; *) fail "reason: $(j .five_hour.reason)" ;; esac
+assert_eq "that is an answer, not an error: exit 0" "$RC" "0"
+
+live "$EMPTY" STUB_MODE=error
+case "$(j .five_hour.reason)" in *"app-server answered with an error"*) ok "an error from the app-server (not signed in) is named in the reason" ;; *) fail "reason: $(j .five_hour.reason)" ;; esac
+assert_eq "and the windows are unknown" "$(j '[.five_hour.state, .weekly.state] | join(" ")')" "unknown unknown"
+live "$EMPTY" STUB_MODE=garbage
+case "$(j .five_hour.reason)" in *"app-server gave no reading"*) ok "an answer that is not JSON gives no reading" ;; *) fail "reason: $(j .five_hour.reason)" ;; esac
+START="$(date +%s)"
+live "$EMPTY" STUB_MODE=hang CODEX_APP_SERVER_TIMEOUT=1
+assert_eq "an app-server that never answers is given up on" "$(( $(date +%s) - START < 6 ))" "1"
+case "$(j .five_hour.reason)" in *"timed out"*) ok "and the reason says it timed out" ;; *) fail "reason: $(j .five_hour.reason)" ;; esac
+sleep 0.3; assert_eq "no stub process is left behind" "$(pgrep -f "$TMP/bin/codex" | wc -l | tr -d ' ')" "0"
+
+live "$EMPTY" CODEX_APP_SERVER=off
+assert_eq "CODEX_APP_SERVER=off: not asked" "$(wc -c < "$STUB_LOG" | tr -d ' ')" "0"
+assert_eq "and the reading is the log's: unknown" "$(j .five_hour.state)" "unknown"
+
+# A test or a replay names its own sessions directory. That never starts a real codex found on PATH.
+: > "$STUB_LOG"
+RC=0; OUT="$(PATH="$TMP/bin:$PATH" "$READER" --sessions "$EMPTY" --now "$NOW" 2> /dev/null)" || RC=$?
+assert_eq "a sessions directory given and no CODEX_BIN: the codex on PATH is not asked" "$(wc -c < "$STUB_LOG" | tr -d ' ')" "0"
+RC=0; OUT="$(CODEX_HOME="$TMP/no-home" PATH="$TMP/bin:$PATH" "$READER" --now "$NOW" 2> /dev/null)" || RC=$?
+assert_eq "the default sessions directory: the codex on PATH is asked" "$(tr '\n' ' ' < "$STUB_LOG")" "initialize initialized account/rateLimits/read "
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

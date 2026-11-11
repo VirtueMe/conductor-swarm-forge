@@ -203,6 +203,7 @@ printf 'lang: bash\npoll-interval: 1\n' > "$CONDUCTOR_DIR/config.md"
 # handlers directory would change meaning each time a handler is converted.
 mkdir -p "$TMP/no-handlers"; export CONDUCTOR_HANDLERS_DIR="$TMP/no-handlers"
 export CONDUCTOR_BACKLOG_CHECK=off   # the stub handler moves nothing; healing would start a worker (#170)
+export CODEX_APP_SERVER=off   # the stub codex is not an app-server; the loop's allowance reading would start it and overwrite its recorded arguments (#225)
 "$SCRIPTS_DIR/task-create.sh" --title T --type chore --description x > /dev/null
 PATH="$TMP/bin:$PATH" STUB_OUT="$TMP/fx/ok.jsonl" CONDUCTOR_ADAPTER_FILE="$ADAPTER" \
   bash "$SCRIPTS_DIR/conductor-loop.sh" --once > /dev/null 2>&1   # seeds the ledger (and runs the reconcile) with the stub
