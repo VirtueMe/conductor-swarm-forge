@@ -154,6 +154,28 @@ case "$CMD" in *"--settings '$PROJECT/.claude/settings.json'"*) ok "a state dir 
 assert_eq "and the launch says attribution is not turned off" "$(grep -c 'attribution is not turned off' "$TMP/launch.err" || true)" "1"
 rm -f "$PROJECT/.conductor" "$PROJECT/.claude/settings.json"; mkdir -p "$PROJECT/.conductor"
 
+section "4c · A bad attribution value is said so, and acts as trailer (#130)"
+# attribution-trailer.sh refuses a value that is neither trailer nor none. The window cannot refuse a launch
+# for it, so it says so on stderr and goes on as trailer, the default: Claude's own attribution off, as the
+# stamp expects. swarm-start.sh already blocks the value, so this is only for a config.md edited by hand.
+printf '{"permissions":{"allow":["Bash(git *)"]}}\n' > "$PROJECT/.claude/settings.json"
+rm -f "$MERGED"
+set_attribution banana
+CMD="$(launch '{}')"
+assert_eq "the launch names the value" "$(grep -c 'banana' "$TMP/launch.err" || true)" "1"
+assert_eq "and what it does instead" "$(grep -c 'as trailer' "$TMP/launch.err" || true)" "1"
+assert_eq "it acts as trailer: the merged file is passed" "$(settings_args "$CMD")" "$MERGED"
+assert_eq "with Claude's own attribution off" "$(jq -c '.attribution' "$MERGED")" "$OFF"
+for good in trailer none; do
+  set_attribution "$good"; launch '{}' > /dev/null
+  assert_eq "$good: no warning" "$(grep -c 'attribution' "$TMP/launch.err" || true)" "0"
+done
+rm -f "$PROJECT/.conductor/config.md"; launch '{}' > /dev/null
+assert_eq "no attribution key: no warning" "$(grep -c 'attribution' "$TMP/launch.err" || true)" "0"
+printf -- '---\nattribution:\n---\n' > "$PROJECT/.conductor/config.md"; launch '{}' > /dev/null
+assert_eq "an empty value: the default, no warning" "$(grep -c 'attribution' "$TMP/launch.err" || true)" "0"
+rm -f "$PROJECT/.claude/settings.json" "$PROJECT/.conductor/config.md" "$MERGED"
+
 section "5 · None of it reaches the headless dispatch"
 FLAGS="$(adapter_params_to_flags '{"model":"m","permission_mode":"auto"}')"
 assert_eq "the dispatch's flags are model and effort only" "$FLAGS" "--model m"
