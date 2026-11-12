@@ -95,10 +95,19 @@ worktree and with the same window name. Filter by start time (the spawn time, be
   install with a custom `CODEX_SESSIONS_DIR` must set `CODEX_BIN` (for example `CODEX_BIN=codex`) to
   get the live reading. The version comes from `initialize`'s `userAgent`, and the exchange runs on
   named pipes, so it needs no GNU `date` and no bash 4. Tested with a stand-in that speaks the protocol, and
-  against the schema from `codex app-server generate-json-schema` (0.166.0); not run end to end
-  against the real app-server from this script. **Not measured:** how long a real read takes. The
-  reader runs at every worker spawn and end, so with a stale log each one now starts a Codex
-  process; if that is slow, a read at most every few minutes is the next step.
+  against the schema from `codex app-server generate-json-schema` (0.166.0).
+  **Run for real on Linux (#228, 2026-11-12, Debian, bash 5.2.37, Codex 0.166.0, plan `plus`):**
+  `scripts/codex-app-server-check.sh` read three times from an empty sessions directory. Every
+  read came from the app-server with both windows known (0 % used on both, a fresh plan), the version
+  was found in `userAgent`, and no app-server process was left running. A read took 880, 983 and
+  1291 ms. The reader runs at every worker spawn and end, so with a stale log each costs about a
+  second; that is not worth a cache yet. If a swarm's startup or spawn latency ever shows it, a read
+  at most every few minutes is the next step.
+  **And on macOS (same day, Darwin 25.6.0 arm64, bash 3.2.57, Codex 0.167.2, plan `plus`):** the same
+  four PASS lines, with reads of 1658, 1053 and 901 ms. So the named pipes, `ps -axo` and the pid
+  comparison work under bash 3.2, and the version was found in `userAgent` on a newer Codex too.
+  The first read on each machine was the slowest (about 1.3 and 1.7 s), the next ones about a
+  second. **Not run:** a real Codex that ignores TERM or starts helper processes.
   **To check it for real (#228):** `scripts/codex-app-server-check.sh` reads n times from an empty
   sessions directory, so only the app-server can answer, and prints each reading, the fastest, median
   and slowest time, the machine and bash, and four verdicts (source, windows, version, cleanup). Run it
