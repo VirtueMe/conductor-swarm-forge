@@ -39,7 +39,9 @@ set -euo pipefail
 # app-server cannot answer (no binary, not signed in, no JSON, no answer in time) the log's reading
 # stands and its reason says why the app-server gave nothing. It is not asked when a test or replay
 # names its own sessions directory (--sessions or CODEX_SESSIONS_DIR) unless CODEX_BIN says which
-# codex to ask, so a codex on PATH is never started by accident. The protocol is experimental.
+# codex to ask, so a codex on PATH is never started by accident. With no directory named, any codex
+# on PATH is asked: a test that stubs `codex` there must set CODEX_APP_SERVER=off. The protocol is
+# experimental. scripts/codex-app-server-check.sh runs this against a real Codex, timed.
 #
 # The log format is Codex's own, not a documented interface. The Codex version the reading came
 # from (the session's cli_version) is in the output; when the shape changes the windows turn
@@ -110,7 +112,10 @@ live_exchange() { # <codex binary> <dir for the pipes> <seconds>
     if [[ "$id" == 2 ]]; then result="$line"; break; fi
   done
   exec 8>&- 9<&-
+  # Stop it: ask, give it two seconds, then insist. A plain wait would hang on one that ignores TERM.
   kill "$pid" 2> /dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2> /dev/null || break; sleep 0.2; done
+  if kill -0 "$pid" 2> /dev/null; then kill -9 "$pid" 2> /dev/null || true; fi
   wait "$pid" 2> /dev/null || true
   if [[ -z "$result" ]]; then
     if [[ "$(date +%s)" -ge "$deadline" ]]; then echo "the codex app-server timed out" >&3; else echo "the codex app-server gave no reading" >&3; fi

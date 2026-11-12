@@ -99,6 +99,19 @@ worktree and with the same window name. Filter by start time (the spawn time, be
   against the real app-server from this script. **Not measured:** how long a real read takes. The
   reader runs at every worker spawn and end, so with a stale log each one now starts a Codex
   process; if that is slow, a read at most every few minutes is the next step.
+  **To check it for real (#228):** `scripts/codex-app-server-check.sh` reads n times from an empty
+  sessions directory, so only the app-server can answer, and prints each reading, the fastest, median
+  and slowest time, the machine and bash, and four verdicts (source, windows, version, cleanup). Run it
+  on Linux and on macOS with its bash 3.2, and put the numbers here.
+  **The hole, decided:** with no sessions directory named and `CODEX_APP_SERVER` not `off`, any
+  `codex` on `PATH` is started with `app-server`. That is kept: for a real install it is the point,
+  and nothing cheap tells a real Codex from another binary. So a test that puts a stub `codex` on
+  `PATH` and runs the loop or the allowance reader must set `CODEX_APP_SERVER=off` (as
+  `test-codex-dispatch.sh` does), or name its sessions directory. The reader stops the app-server it
+  started with TERM, and with KILL after two seconds (only if it is still there), so one that ignores
+  TERM cannot hang it. **Known limit:** KILL reaches the app-server and not helper processes a real
+  Codex may have started; the check script's cleanup verdict compares `app-server` pids before and
+  after, by command line, so a helper under another name is not seen. The real run will show it.
 - **Killed.** The file is appended as events happen, so SIGKILL left it as it was and every
   completed turn is in it. Not tested: a kill in the middle of a turn, where that turn's counts
   are probably lost.
