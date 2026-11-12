@@ -155,6 +155,7 @@ while IFS= read -r line; do
         error)   jq -nc --argjson id "$id" '{id: $id, error: {code: -32000, message: "not signed in"}}' ;;
         garbage) echo "this is not json"; exit 0 ;;
         hang)    sleep 30 ;;
+        deaf)    trap '' TERM; sleep 30 ;;
       esac ;;
   esac
 done
@@ -221,6 +222,12 @@ live "$EMPTY" STUB_MODE=hang CODEX_APP_SERVER_TIMEOUT=1
 assert_eq "an app-server that never answers is given up on" "$(( $(date +%s) - START < 6 ))" "1"
 case "$(j .five_hour.reason)" in *"timed out"*) ok "and the reason says it timed out" ;; *) fail "reason: $(j .five_hour.reason)" ;; esac
 sleep 0.3; assert_eq "no stub process is left behind" "$(pgrep -f "$TMP/bin/codex" | wc -l | tr -d ' ')" "0"
+
+START="$(date +%s)"
+live "$EMPTY" STUB_MODE=deaf CODEX_APP_SERVER_TIMEOUT=1
+assert_eq "an app-server that ignores TERM does not hang the reader" "$(( $(date +%s) - START < 8 ))" "1"
+assert_eq "and the reading is still an answer: exit 0" "$RC" "0"
+sleep 0.3; assert_eq "and the stand-in itself is gone" "$(pgrep -f "$TMP/bin/codex" | wc -l | tr -d ' ')" "0"
 
 live "$EMPTY" CODEX_APP_SERVER=off
 assert_eq "CODEX_APP_SERVER=off: not asked" "$(wc -c < "$STUB_LOG" | tr -d ' ')" "0"
