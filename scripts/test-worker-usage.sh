@@ -443,6 +443,56 @@ reset
 assert_eq "a spawn with no declared pool records none" "$(jq -r '.declared_pool | tostring' "$CONDUCTOR_DIR/workers/coder-0043.json")" "null"
 assert_eq "and with no sign-in either, settles on unknown" "$(jq -r .pool_check.pool "$CONDUCTOR_DIR/workers/coder-0043.json")" "unknown"
 
+section "9b · A Pi line says where its messages went"
+# A session that mixes providers: the fixture's assistant message, once as anthropic, three times as
+# openai-codex, once with no provider at all. The sign-ins are a stub auth.json, never ~/.pi.
+export PI_AUTH_FILE="$TMP/pi-auth.json"
+printf '%s\n' '{"anthropic":{"type":"api_key","key":"k"},"openai-codex":{"type":"oauth","access":"a"}}' > "$PI_AUTH_FILE"
+MIXED="$TMP/mixed.jsonl"
+jq -c 'select(.type != "message" or .message.role != "assistant")' "$FX/pi/session.jsonl" > "$MIXED"
+jq -c 'select(.type == "message" and .message.role == "assistant")' "$FX/pi/session.jsonl" > "$TMP/assistant.jsonl"
+for prov in anthropic openai-codex openai-codex openai-codex none; do
+  jq -c --arg p "$prov" 'if $p == "none" then del(.message.provider) else .message.provider = $p end' "$TMP/assistant.jsonl" >> "$MIXED"
+done
+reset
+"$WU" spawned 0044 coder pi "$CWD" '{"model":"m"}' api:anthropic
+put pi "$MIXED" a.jsonl > /dev/null
+"$WU" read 0044
+assert_eq "messages are counted per pool, and a message with no provider is unknown, not dropped" "$(last '.message_pools | to_entries | map(.key + "=" + (.value | tostring)) | sort | join(",")')" "api:anthropic=1,subscription:openai=3,unknown=1"
+assert_eq "the counts add up to the turns" "$(last '(.message_pools | add) == .turns | tostring')" "true"
+assert_eq "the line's pool is still what the spawn settled" "$(last .pool)" "api:anthropic"
+assert_eq "one pool_mismatch record, for the pool the messages contradict it with" "$(jq -r 'select(.record == "pool_mismatch") | [.declared, .detected, .source, (.messages | tostring)] | join(",")' "$LOG")" "api:anthropic,subscription:openai,messages,3"
+reset
+"$WU" spawned 0045 coder pi "$CWD" '{"model":"m"}' subscription:openai
+put pi "$MIXED" a.jsonl > /dev/null
+"$WU" read 0045
+assert_eq "the other way round, the one anthropic message is what contradicts" "$(jq -r 'select(.record == "pool_mismatch") | [.declared, .detected, (.messages | tostring)] | join(",")' "$LOG")" "subscription:openai,api:anthropic,1"
+reset
+"$WU" spawned 0046 coder pi "$CWD" '{"model":"m"}'
+put pi "$MIXED" a.jsonl > /dev/null
+"$WU" read 0046
+assert_eq "a line whose own pool is unknown has nothing to contradict: no record" "$(jq -c 'select(.record == "pool_mismatch")' "$LOG" | wc -l | tr -d ' ')" "0"
+assert_eq "but its message_pools are still there" "$(last '.message_pools["subscription:openai"] | tostring')" "3"
+reset
+"$WU" spawned 0047 coder pi "$CWD" '{"model":"m"}' api:anthropic
+put pi "$FX/pi/session.jsonl" a.jsonl > /dev/null
+"$WU" read 0047
+assert_eq "a session that agrees with its line leaves no record" "$(jq -c 'select(.record == "pool_mismatch")' "$LOG" | wc -l | tr -d ' ')" "0"
+assert_eq "and says where its message went" "$(last '.message_pools | tostring')" '{"api:anthropic":1}'
+printf '%s\n' 'not json' > "$PI_AUTH_FILE"
+reset
+"$WU" spawned 0048 coder pi "$CWD" '{"model":"m"}' api:anthropic
+put pi "$MIXED" a.jsonl > /dev/null
+"$WU" read 0048
+assert_eq "an auth.json that cannot be read makes every message unknown, and unknown contradicts nothing" "$(last '.message_pools | tostring')" '{"unknown":5}'
+assert_eq "so there is no record" "$(jq -c 'select(.record == "pool_mismatch")' "$LOG" | wc -l | tr -d ' ')" "0"
+reset
+"$WU" spawned 0049 coder claude-code "$CWD" '{"model":"m"}'
+put claude-code "$FX/claude-code/exited.jsonl" a.jsonl > /dev/null
+"$WU" read 0049
+assert_eq "a line from another harness has no message_pools" "$(last '.message_pools | tostring')" "null"
+unset PI_AUTH_FILE
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then echo "All checks passed."; exit 0; fi
 echo "$FAILS check(s) failed." >&2; exit 1

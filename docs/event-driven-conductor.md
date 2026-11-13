@@ -668,8 +668,24 @@ The log holds the conductor's own dispatches and the workers' sessions (see "Wor
   `{"record": "pool_mismatch", "declared": ..., "detected": ..., "rejected": false}`, goes in the log just
   before it. A declaration that is not a pool (or not that harness's vendor's) is set aside the same way,
   with `rejected: true`, so a typo in a workforce is not invisible. A declaration that fills a gap (nothing
-  could be detected) is not a mismatch. The usage line itself carries only `pool` and `billing`, not the
+  could be detected) is not a mismatch. The usage line itself carries `pool` and `billing`, not the
   declaration.
+- **A Pi line also says where its messages went.** Pi names the provider on every assistant message and a
+  session can mix them, so a Pi line has `message_pools`: the messages per pool, e.g.
+  `{"subscription:openai": 3, "api:anthropic": 2}`, each provider's pool from `billing-mode.sh pi-pool`
+  against Pi's `auth.json` as it is when the window closes. A message with no provider, or a pairing nobody
+  has seen, counts under `unknown`, so the counts add up to `turns`. Other harnesses have `null`. The
+  line's own `pool` and `pool_check` are untouched: they are what the spawn settled. When messages were billed to a
+  known pool other than the line's, one `pool_mismatch` record per such pool goes in the log before the line, with
+  `declared` the line's pool, `detected` the messages' pool, `source: "messages"` and `messages` their number.
+  A line whose own pool is `unknown`, and messages whose pool is `unknown`, contradict nothing.
+  **A mixed session is still read as one pool by the summary, the budgets and `allowance.sh vendor`:** all
+  three read the line's `pool`, and `message_pools` and the mismatch records are how a mix shows. Splitting a
+  line's cost over its pools would need a per-pool cost the log does not have (Pi's cost is one sum), so
+  that is left until a mixed run is common enough to matter. The summary lists these records apart from
+  the sign-in ones ("messages said", counted in messages). A mismatch of this kind can also come from `auth.json`
+  changing between the spawn, which settled the line's pool, and the close, which counted the messages. `auth.json` is the best guess, not proof: a runtime
+  `--api-key` outranks it and leaves no trace.
 - **A worker's pool is settled when it is spawned.** `worker-usage.sh spawned` asks
   `billing-mode.sh pool --json` once, against the sign-in as it is then, and keeps the decision in the
   worker's record (`pool_check`). The line written when the window closes says what the worker was billed

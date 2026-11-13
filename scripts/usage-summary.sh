@@ -217,7 +217,8 @@ jq -R 'fromjson? // empty' "$FILE" \
          else empty end),
         (if want("pool") and ($pooled or ($poolmm | length) > 0) then
            (groups(poolkey) | .[] | row("pool"; .key; .a)),
-           ($poolmm | group_by([.declared, .detected]) | map(["pool_mismatch", .[0].declared, .[0].detected, length] | @tsv) | .[])
+           ($poolmm | group_by([.declared, .detected, (.source // "sign-in")])
+            | map(["pool_mismatch", .[0].declared, .[0].detected, (if .[0].source == "messages" then (map(.messages // 0) | add) else length end), (.[0].source // "sign-in")] | @tsv) | .[])
          else empty end),
         (if want("adapters") then (groups(.harness) | sort_by(.key) | .[] | row("adapters"; .key; .a)) else empty end)
       end),
@@ -255,6 +256,11 @@ jq -R 'fromjson? // empty' "$FILE" \
     $1 == "unfin_billing" {
       if (!unfin_head) { printf "  of the unfinished, by billing:\n"; unfin_head = 1 }
       printf "  %-13s %s reported + %s estimated over %d attempts%s\n", $2, money($4), money($5), $3, ($2 == "subscription" ? "  (notional)" : "")
+      next
+    }
+    $1 == "pool_mismatch" && $5 == "messages" {
+      if (!pool_msg_head) { printf "\n  %-62s %6s\n", "A Pi line'"'"'s pool -> what its messages were billed to (the line keeps its pool)", "messages"; pool_msg_head = 1 }
+      printf "  line pool %s, messages said %s  %d\n", $2, $3, $4
       next
     }
     $1 == "pool_mismatch" {

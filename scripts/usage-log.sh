@@ -19,7 +19,10 @@
 #     unknown that pool implies. A sign-in that disagrees with the declared pool wins, and a
 #     declaration that is not a pool is set aside; either leaves a record of its own,
 #     {"record": "pool_mismatch", ...}, just before the line. Field names and meanings are in
-#     docs/event-driven-conductor.md, "Usage log". Always returns 0: the log is a convenience, and a
+#     docs/event-driven-conductor.md, "Usage log". A Pi line may also carry message_pools, {"<pool>": <messages>},
+#     from the provider each message names. It does not change the line's pool, but a message billed to
+#     another known pool leaves a pool_mismatch record too, with source "messages" and their number.
+#     Always returns 0: the log is a convenience, and a
 #     line that cannot be written must not change what the caller does.
 
 # usage_pool_check <scripts dir> <record>: what was decided about the pool a line is billed to, as the object
@@ -64,6 +67,16 @@ usage_append() {
       { record: "pool_mismatch", ts: $ts, role: ($r.role // null), task: ($r.task // null), event: ($r.event // null),
         harness: ($r.harness // null), declared: $c.declared, detected: $c.pool, rejected: $c.rejected }' >> "$file" 2> /dev/null || true
   fi
+  # A Pi line that says where its messages went (message_pools): a message billed to a known pool other
+  # than the line's own contradicts it. One record per such pool, with the number of messages. A line
+  # whose pool is unknown, and messages whose pool is unknown, contradict nothing: a doubt is not a mismatch.
+  jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson r "$record" --arg pool "$pool" '
+    ($r.message_pools // null) as $mp
+    | if ($mp | type) == "object" and $pool != "unknown" then
+        ($mp | to_entries[] | select(.key != "unknown" and .key != $pool)
+         | { record: "pool_mismatch", ts: $ts, role: ($r.role // null), task: ($r.task // null), event: ($r.event // null),
+             harness: ($r.harness // null), declared: $pool, detected: .key, rejected: false, source: "messages", messages: .value })
+      else empty end' >> "$file" 2> /dev/null || true
   # Priced from the table; null when it cannot be, and the line is written either way.
   estimate="$("$here/usage-price.sh" estimate <<< "$record" 2> /dev/null)" || estimate=null
   jq -e 'type == "number" or . == null' <<< "$estimate" > /dev/null 2>&1 || estimate=null
@@ -90,6 +103,7 @@ usage_append() {
       cost_source: (if ($r.cost_usd // null) != null then "reported" elif $est != null then "estimated" else "unknown" end),
       pool: $pool,
       billing: $billing,
+      message_pools: ($r.message_pools // null),
       turns: ($r.turns // null),
       usage: ($r.usage // null),
       allowance: ($r.allowance // null),
