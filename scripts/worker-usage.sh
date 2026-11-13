@@ -129,7 +129,8 @@ read_pi() { # <file>
         cache_read_tokens: ($m | map(.usage.cacheRead // 0) | add // 0),
         cache_write_tokens: ($m | map(.usage.cacheWrite // 0) | add // 0),
         cost: (if ($m | length) > 0 then ($m | map(.usage.cost.total // 0) | add | (. * 1e8 | round) / 1e8) else null end),
-        turns: ($m | length) }' "$1"
+        turns: ($m | length),
+        providers: ($m | map(.provider // "") | group_by(.) | map({key: .[0], value: length}) | from_entries) }' "$1"
 }
 
 # Add up the sessions of one worker. No session with a reply in it gives null: nothing is known.
@@ -148,7 +149,23 @@ read_sessions() { # <adapter> <file>...
              cache_write_tokens: ($s | map(.cache_write_tokens) | add),
              cache_write_1h_tokens: ($s | map(.cache_write_1h_tokens // 0) | add),
              cost_usd: (if ($s | map(.cost) | any(. == null)) then null else ($s | map(.cost) | add) end),
-             turns: ($s | map(.turns) | add) } end'
+             turns: ($s | map(.turns) | add),
+             providers: ($s | map(.providers // {}) | map(to_entries) | add // [] | group_by(.key)
+                         | map({key: .[0].key, value: (map(.value) | add)}) | from_entries) } end'
+}
+
+# The messages of a Pi reading counted per pool, as {"<pool>": <messages>}: each provider asks
+# billing-mode.sh pi-pool once, against the auth.json as it is now. A message that names no provider is
+# "unknown", never dropped, so the counts add up to the turns. The fields are split on a unit separator,
+# not a tab: read folds a leading tab away, and a message with no provider has an empty first field.
+pi_message_pools() { # <reading json>
+  local reading="$1" provider n pool pairs="[]"
+  while IFS=$'\037' read -r provider n; do
+    pool="$("$SCRIPTS_DIR/billing-mode.sh" pi-pool "$provider" 2> /dev/null)" || pool=unknown
+    [[ -n "$pool" ]] || pool=unknown
+    pairs="$(jq -c --arg p "$pool" --argjson n "$n" '. + [{key: $p, value: $n}]' <<< "$pairs")"
+  done < <(jq -r '(.providers // {}) | to_entries[] | "\(.key)\u001f\(.value)"' <<< "$reading")
+  jq -c 'group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries' <<< "$pairs"
 }
 
 # Claude Code writes its cost when the process exits, a moment after the window is closed. Wait,
@@ -267,8 +284,14 @@ cmd_read() {
     answered="$(jq -r '.model // empty' <<< "$reading")"
   fi
 
+  # A Pi session can mix providers, and the pool follows the provider (and the sign-in it was used with),
+  # so a Pi line also says how many messages went to each pool. The line's own pool stays what the
+  # spawn settled; this is what the log shows about it.
+  local message_pools=null
+  [[ "$adapter" != pi || "$reading" == null ]] || message_pools="$(pi_message_pools "$reading")"
+
   local line
-  line="$(jq -nc --argjson r "$reading" --arg task "$task" --arg role "$role" --arg adapter "$adapter" \
+  line="$(jq -nc --argjson r "$reading" --argjson message_pools "$message_pools" --arg task "$task" --arg role "$role" --arg adapter "$adapter" \
     --arg outcome "$outcome" --argjson duration "$duration" --arg usage "$usage" --argjson allowance "$allowance" \
     --arg requested "$requested" --arg answered "$answered" --arg declared "$declared_pool" --argjson pool_check "$pool_check" '
     { event: ($task + "/worker-" + $role),
@@ -282,6 +305,7 @@ cmd_read() {
       harness: (if $adapter == "" then null else $adapter end),
       declared_pool: (if $declared == "" then null else $declared end),
       pool_check: $pool_check,
+      message_pools: $message_pools,
       model: $r.model,
       input_tokens: $r.input_tokens,
       output_tokens: $r.output_tokens,

@@ -364,6 +364,8 @@ pline() { # harness pool billing cost estimate outcome
   pline codex       api:openai             api          null 0.05 finished
   line 2026-11-02T09:00:00Z 0001/old.md 0001 conductor/old 1 finished 0 claude-code 0.40 5 5 0 0 reported
   jq -nc '{record: "pool_mismatch", ts: "2026-11-02T10:00:00Z", role: "coder", harness: "claude-code", declared: "api:anthropic", detected: "subscription:anthropic"}'
+  jq -nc '{record: "pool_mismatch", ts: "2026-11-02T10:00:00Z", role: "coder", harness: "pi", declared: "api:anthropic", detected: "subscription:openai", rejected: false, source: "messages", messages: 3}'
+  jq -nc '{record: "pool_mismatch", ts: "2026-11-02T10:01:00Z", role: "coder", harness: "pi", declared: "api:anthropic", detected: "subscription:openai", rejected: false, source: "messages", messages: 2}'
 } > "$PL"
 run --file "$PL"
 assert_eq "exit 0" "$RC" "0"
@@ -381,6 +383,8 @@ has '^api:openai  *1  *\$0.0000  *\$0.0500' "a pool with only an estimate shows 
 has '^unknown  *1  *\$0.4000' "a line with no pool is in unknown"
 has 'declared api:anthropic, sign-in said subscription:anthropic  *1' "a pool mismatch is listed, with a count"
 has 'not comparable' "and the other groupings say their dollars can span billing"
+has 'line pool api:anthropic, messages said subscription:openai  *5' "a mismatch found in a Pi line's messages is listed apart, counted in messages"
+lacks 'sign-in said subscription:openai' "and is never called a sign-in"
 run --file "$PL" --by pool
 has '^By pool' "--by pool shows it"
 lacks '^By harness' "and only it"

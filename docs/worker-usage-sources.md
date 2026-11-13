@@ -302,10 +302,11 @@ What the reader settled, and what it assumed:
     `billing-mode.sh pi-pool <provider>` prints that (and `api:anthropic` for `anthropic` with
     `api_key`), reading only the `type` from `auth.json` (`PI_AUTH_FILE`). Every other pairing is
     `unknown`: a pairing nobody has seen (`openai-codex` on a key, `openai` on oauth) is not guessed,
-    and `anthropic` on oauth is not what pays for a Pi run (#156). **Not wired in yet:** a Pi member's
-    pool on a usage line still comes only from its declaration (`billing-mode.sh pool`), and the
-    reader does not take the provider per message. A session can mix providers, so the line would
-    need the pool per message, not one. `auth.json` is the best guess, not proof: a runtime
+    and `anthropic` on oauth is not what pays for a Pi run (#156). **Wired in as `message_pools` (#226):** the
+    reader counts the provider of each assistant message, and the usage line says how many messages
+    went to each pool. A Pi member's `pool` still comes from its declaration (`billing-mode.sh pool`),
+    settled at the spawn; messages billed to another known pool leave a `pool_mismatch` record. See
+    "Usage log" in `docs/event-driven-conductor.md`. `auth.json` is the best guess, not proof: a runtime
     `--api-key` outranks it and leaves no trace in the log.
   - **The window without Codex's logs.** `codex app-server` (above) reads it live, but needs Codex
     installed and signed in. A machine with only Pi has Pi's own `openai-codex` sign-in and no
